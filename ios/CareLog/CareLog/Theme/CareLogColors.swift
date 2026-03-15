@@ -63,9 +63,10 @@ extension Color {
     }
 }
 
-// MARK: - Vital Type
+// MARK: - Dashboard Item
 
-enum VitalType: String, CaseIterable, Identifiable {
+/// Dashboard menu item types including vitals and actions.
+enum DashboardItem: String, CaseIterable, Identifiable {
     case bloodPressure = "blood_pressure"
     case glucose = "glucose"
     case temperature = "temperature"
@@ -130,12 +131,12 @@ enum VitalType: String, CaseIterable, Identifiable {
     }
 
     /// Returns only vitals (excludes upload and chat)
-    static var vitals: [VitalType] {
+    static var vitals: [DashboardItem] {
         [.bloodPressure, .glucose, .temperature, .weight, .pulse, .spO2]
     }
 
     /// Returns all dashboard items including actions
-    static var dashboardItems: [VitalType] {
+    static var dashboardItems: [DashboardItem] {
         allCases
     }
 }

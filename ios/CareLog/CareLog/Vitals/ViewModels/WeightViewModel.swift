@@ -116,14 +116,14 @@ final class WeightViewModel: ObservableObject {
             let valueInKg = unit == "lbs" ? weightValue / 2.20462 : weightValue
 
             // Create weight observation
-            let observation = LocalObservation(
-                id: UUID().uuidString,
+            let observation = FHIRObservation(
                 patientId: patientId,
                 type: .bodyWeight,
+                effectiveDateTime: Date(),
                 value: valueInKg,
                 unit: "kg",
-                effectiveDateTime: Date(),
-                performerName: user.name
+                performerId: user.userId,
+                performerType: .relatedPerson
             )
 
             // Save to local store (adds to sync queue)

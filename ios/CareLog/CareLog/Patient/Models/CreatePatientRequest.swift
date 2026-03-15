@@ -26,8 +26,8 @@ struct CreatePatientResponse: Codable {
     let message: String
 }
 
-/// Gender options for patient profile.
-enum PatientGender: String, CaseIterable, Identifiable {
+/// Gender options for patient profile UI display.
+enum PatientGenderOption: String, CaseIterable, Identifiable {
     case male = "Male"
     case female = "Female"
     case other = "Other"

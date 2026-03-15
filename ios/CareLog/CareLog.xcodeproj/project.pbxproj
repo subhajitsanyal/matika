@@ -13,7 +13,24 @@
 		8A1234560004 /* VitalType.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A1234550004 /* VitalType.swift */; };
 		8A1234560005 /* CareLogRoutes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A1234550005 /* CareLogRoutes.swift */; };
 		8A1234560006 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 8A1234550006 /* Assets.xcassets */; };
+		8A12345600T1 /* VitalTypeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A12345500T1 /* VitalTypeTests.swift */; };
+		8A12345600T2 /* AuthStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A12345500T2 /* AuthStateTests.swift */; };
+		8A12345600T3 /* BloodPressureViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A12345500T3 /* BloodPressureViewModelTests.swift */; };
+		8A12345600T4 /* GlucoseViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A12345500T4 /* GlucoseViewModelTests.swift */; };
+		8A12345600T5 /* MockAuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A12345500T5 /* MockAuthService.swift */; };
+		8A12345600T6 /* MockLocalFHIRRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A12345500T6 /* MockLocalFHIRRepository.swift */; };
+		8A12345600T7 /* MockVoicePlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A12345500T7 /* MockVoicePlayer.swift */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		8A12345400T1 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 8A1234520000 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 8A1234520001;
+			remoteInfo = CareLog;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		8A1234550000 /* CareLog.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CareLog.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -24,10 +41,25 @@
 		8A1234550005 /* CareLogRoutes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CareLogRoutes.swift; sourceTree = "<group>"; };
 		8A1234550006 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		8A1234550007 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		8A12345500T0 /* CareLogTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CareLogTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		8A12345500T1 /* VitalTypeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VitalTypeTests.swift; sourceTree = "<group>"; };
+		8A12345500T2 /* AuthStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthStateTests.swift; sourceTree = "<group>"; };
+		8A12345500T3 /* BloodPressureViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BloodPressureViewModelTests.swift; sourceTree = "<group>"; };
+		8A12345500T4 /* GlucoseViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlucoseViewModelTests.swift; sourceTree = "<group>"; };
+		8A12345500T5 /* MockAuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockAuthService.swift; sourceTree = "<group>"; };
+		8A12345500T6 /* MockLocalFHIRRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockLocalFHIRRepository.swift; sourceTree = "<group>"; };
+		8A12345500T7 /* MockVoicePlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockVoicePlayer.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		8A1234540001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		8A12345400T2 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -41,6 +73,7 @@
 			isa = PBXGroup;
 			children = (
 				8A1234530001 /* CareLog */,
+				8A12345300T1 /* CareLogTests */,
 				8A1234530002 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -65,6 +98,7 @@
 			isa = PBXGroup;
 			children = (
 				8A1234550000 /* CareLog.app */,
+				8A12345500T0 /* CareLogTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -131,6 +165,28 @@
 			path = Navigation;
 			sourceTree = "<group>";
 		};
+		8A12345300T1 /* CareLogTests */ = {
+			isa = PBXGroup;
+			children = (
+				8A12345500T1 /* VitalTypeTests.swift */,
+				8A12345500T2 /* AuthStateTests.swift */,
+				8A12345500T3 /* BloodPressureViewModelTests.swift */,
+				8A12345500T4 /* GlucoseViewModelTests.swift */,
+				8A12345300T2 /* Mocks */,
+			);
+			path = CareLogTests;
+			sourceTree = "<group>";
+		};
+		8A12345300T2 /* Mocks */ = {
+			isa = PBXGroup;
+			children = (
+				8A12345500T5 /* MockAuthService.swift */,
+				8A12345500T6 /* MockLocalFHIRRepository.swift */,
+				8A12345500T7 /* MockVoicePlayer.swift */,
+			);
+			path = Mocks;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -153,6 +209,24 @@
 			productReference = 8A1234550000 /* CareLog.app */;
 			productType = "com.apple.product-type.application";
 		};
+		8A12345200T1 /* CareLogTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 8A12345100T1 /* Build configuration list for PBXNativeTarget "CareLogTests" */;
+			buildPhases = (
+				8A12345400T3 /* Sources */,
+				8A12345400T2 /* Frameworks */,
+				8A12345400T4 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				8A12345300T3 /* PBXTargetDependency */,
+			);
+			name = CareLogTests;
+			productName = CareLogTests;
+			productReference = 8A12345500T0 /* CareLogTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -165,6 +239,10 @@
 				TargetAttributes = {
 					8A1234520001 = {
 						CreatedOnToolsVersion = 15.2;
+					};
+					8A12345200T1 = {
+						CreatedOnToolsVersion = 15.2;
+						TestTargetID = 8A1234520001;
 					};
 				};
 			};
@@ -184,6 +262,7 @@
 			projectRoot = "";
 			targets = (
 				8A1234520001 /* CareLog */,
+				8A12345200T1 /* CareLogTests */,
 			);
 		};
 /* End PBXProject section */
@@ -194,6 +273,13 @@
 			buildActionMask = 2147483647;
 			files = (
 				8A1234560006 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		8A12345400T4 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -212,7 +298,29 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		8A12345400T3 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8A12345600T1 /* VitalTypeTests.swift in Sources */,
+				8A12345600T2 /* AuthStateTests.swift in Sources */,
+				8A12345600T3 /* BloodPressureViewModelTests.swift in Sources */,
+				8A12345600T4 /* GlucoseViewModelTests.swift in Sources */,
+				8A12345600T5 /* MockAuthService.swift in Sources */,
+				8A12345600T6 /* MockLocalFHIRRepository.swift in Sources */,
+				8A12345600T7 /* MockVoicePlayer.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		8A12345300T3 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 8A1234520001 /* CareLog */;
+			targetProxy = 8A12345400T1 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		8A1234500000 /* Debug */ = {
@@ -396,6 +504,52 @@
 			};
 			name = Release;
 		};
+		8A12345000T1 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.carelog.app.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/CareLog.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/CareLog";
+			};
+			name = Debug;
+		};
+		8A12345000T2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.carelog.app.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/CareLog.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/CareLog";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -413,6 +567,15 @@
 			buildConfigurations = (
 				8A1234500002 /* Debug */,
 				8A1234500003 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		8A12345100T1 /* Build configuration list for PBXNativeTarget "CareLogTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8A12345000T1 /* Debug */,
+				8A12345000T2 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

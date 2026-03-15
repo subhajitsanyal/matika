@@ -19,7 +19,7 @@ struct PatientOnboardingView: View {
     // Form state
     @State private var name = ""
     @State private var dateOfBirth = ""
-    @State private var selectedGender: PatientGender?
+    @State private var selectedGender: PatientGenderOption?
     @State private var selectedBloodType: BloodType?
     @State private var medicalConditions = ""
     @State private var allergies = ""
@@ -130,7 +130,7 @@ struct PatientOnboardingView: View {
                 label: "Gender",
                 icon: "person.fill",
                 selection: $selectedGender,
-                options: PatientGender.allCases,
+                options: PatientGenderOption.allCases,
                 displayText: { $0?.rawValue ?? "Select gender" }
             )
 

@@ -96,66 +96,81 @@ final class FHIRSyncService {
 
         do {
             // Sync pending observations
-            let pendingObservations = try await localFHIRRepository.getPendingObservations()
+            let pendingObservations = try await MainActor.run {
+                try localFHIRRepository.getPendingObservations()
+            }
 
             for observation in pendingObservations {
                 do {
-                    let fhirJSON = try observation.toFHIRJSON()
+                    let fhirObservation = await MainActor.run {
+                        observation.toFHIRObservation()
+                    }
 
                     if observation.serverId == nil {
                         // New observation - POST
-                        let serverId = try await healthLakeClient.createObservation(fhirJSON)
-                        try await localFHIRRepository.markObservationSynced(
-                            id: observation.id,
-                            serverId: serverId
-                        )
+                        let serverId = try await healthLakeClient.createObservation(fhirObservation)
+                        try await MainActor.run {
+                            try localFHIRRepository.markObservationSynced(
+                                localId: observation.localId,
+                                serverId: serverId
+                            )
+                        }
                     } else {
-                        // Updated observation - PUT
-                        try await healthLakeClient.updateObservation(
-                            id: observation.serverId!,
-                            json: fhirJSON
-                        )
-                        try await localFHIRRepository.markObservationSynced(
-                            id: observation.id,
-                            serverId: observation.serverId!
-                        )
+                        // Updated observation - POST with existing ID
+                        _ = try await healthLakeClient.createObservation(fhirObservation)
+                        try await MainActor.run {
+                            try localFHIRRepository.markObservationSynced(
+                                localId: observation.localId,
+                                serverId: observation.serverId!
+                            )
+                        }
                     }
                 } catch {
-                    try? await localFHIRRepository.markObservationFailed(
-                        id: observation.id,
-                        error: error.localizedDescription
-                    )
+                    try? await MainActor.run {
+                        try localFHIRRepository.markObservationFailed(
+                            localId: observation.localId,
+                            error: error.localizedDescription
+                        )
+                    }
                 }
             }
 
             // Sync pending documents
-            let pendingDocuments = try await localFHIRRepository.getPendingDocuments()
+            let pendingDocuments = try await MainActor.run {
+                try localFHIRRepository.getPendingDocuments()
+            }
 
             for document in pendingDocuments {
                 do {
-                    let fhirJSON = try document.toFHIRJSON()
+                    let fhirDocument = await MainActor.run {
+                        document.toFHIRDocumentReference()
+                    }
 
                     if document.serverId == nil {
-                        let serverId = try await healthLakeClient.createDocumentReference(fhirJSON)
-                        try await localFHIRRepository.markDocumentSynced(
-                            id: document.id,
-                            serverId: serverId
-                        )
+                        let serverId = try await healthLakeClient.createDocumentReference(fhirDocument)
+                        try await MainActor.run {
+                            try localFHIRRepository.markDocumentSynced(
+                                localId: document.localId,
+                                serverId: serverId
+                            )
+                        }
                     } else {
-                        try await healthLakeClient.updateDocumentReference(
-                            id: document.serverId!,
-                            json: fhirJSON
-                        )
-                        try await localFHIRRepository.markDocumentSynced(
-                            id: document.id,
-                            serverId: document.serverId!
-                        )
+                        // Updated document - POST with existing ID
+                        _ = try await healthLakeClient.createDocumentReference(fhirDocument)
+                        try await MainActor.run {
+                            try localFHIRRepository.markDocumentSynced(
+                                localId: document.localId,
+                                serverId: document.serverId!
+                            )
+                        }
                     }
                 } catch {
-                    try? await localFHIRRepository.markDocumentFailed(
-                        id: document.id,
-                        error: error.localizedDescription
-                    )
+                    try? await MainActor.run {
+                        try localFHIRRepository.markDocumentFailed(
+                            localId: document.localId,
+                            error: error.localizedDescription
+                        )
+                    }
                 }
             }
 
@@ -177,7 +192,9 @@ final class FHIRSyncService {
     }
 
     private func updatePendingCount() async {
-        let count = await localFHIRRepository.getPendingCount()
+        let count = await MainActor.run {
+            (try? localFHIRRepository.getPendingCount()) ?? 0
+        }
         await MainActor.run {
             pendingCount = count
         }

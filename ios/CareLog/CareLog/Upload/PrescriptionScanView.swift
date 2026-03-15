@@ -181,6 +181,20 @@ struct OptionButton<Content: View>: View {
         self.content = { EmptyView() }
     }
 
+    init(
+        icon: String,
+        title: String,
+        subtitle: String,
+        color: Color
+    ) where Content == EmptyView {
+        self.icon = icon
+        self.title = title
+        self.subtitle = subtitle
+        self.color = color
+        self.action = nil
+        self.content = { EmptyView() }
+    }
+
     var body: some View {
         Button(action: { action?() }) {
             HStack(spacing: 16) {

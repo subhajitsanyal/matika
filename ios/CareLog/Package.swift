@@ -6,7 +6,7 @@ import PackageDescription
 let package = Package(
     name: "CareLog",
     platforms: [
-        .iOS(.v15)
+        .iOS(.v17)
     ],
     products: [
         .library(
@@ -43,11 +43,13 @@ let package = Package(
                 .product(name: "AWSCognitoAuthPlugin", package: "amplify-swift"),
                 .product(name: "AWSS3StoragePlugin", package: "amplify-swift"),
                 .product(name: "ModelsR4", package: "FHIRModels"),
-            ]
+            ],
+            path: "CareLog"
         ),
         .testTarget(
             name: "CareLogTests",
-            dependencies: ["CareLog"]
+            dependencies: ["CareLog"],
+            path: "CareLogTests"
         ),
     ]
 )

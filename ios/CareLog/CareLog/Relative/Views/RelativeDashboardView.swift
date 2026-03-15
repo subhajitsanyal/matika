@@ -361,31 +361,10 @@ private struct EmptyStateView: View {
 
 // MARK: - Placeholder Views
 
-struct AlertInboxView: View {
-    var body: some View {
-        Text("Alert Inbox")
-            .navigationTitle("Alerts")
-    }
-}
-
 struct RelativeSettingsView: View {
     var body: some View {
         Text("Settings")
             .navigationTitle("Settings")
-    }
-}
-
-struct TrendsView: View {
-    var body: some View {
-        Text("Trends View")
-            .navigationTitle("Trends")
-    }
-}
-
-struct CareTeamView: View {
-    var body: some View {
-        Text("Care Team")
-            .navigationTitle("Care Team")
     }
 }
 

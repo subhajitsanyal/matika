@@ -9,6 +9,7 @@ import Foundation
 import Amplify
 import AWSCognitoAuthPlugin
 import Combine
+import AWSPluginsCore
 
 /// Authentication state for the CareLog app.
 enum AuthState: Equatable {
@@ -84,6 +85,8 @@ enum PersonaType: String, CaseIterable, Codable {
 /// - User attribute management
 @MainActor
 class AuthService: ObservableObject {
+    static let shared = AuthService()
+
     @Published private(set) var authState: AuthState = .loading
     @Published private(set) var currentUser: CareLogUser?
 
@@ -94,6 +97,14 @@ class AuthService: ObservableObject {
     }
 
     // MARK: - Public Methods
+
+    /// Get the current user.
+    func getCurrentUser() async -> CareLogUser? {
+        if currentUser == nil {
+            await initialize()
+        }
+        return currentUser
+    }
 
     /// Initialize and check current authentication session.
     func initialize() async {
@@ -161,6 +172,8 @@ class AuthService: ObservableObject {
                 return false // Needs confirmation
             case .done:
                 return true // Already confirmed
+            @unknown default:
+                return false
             }
         } catch {
             print("AuthService: Sign up failed: \(error)")
@@ -178,6 +191,31 @@ class AuthService: ObservableObject {
         }
     }
 
+    /// Authenticate an attendant.
+    func authenticateAttendant(email: String, password: String) async throws -> AttendantAuthResult {
+        let user = try await signIn(email: email, password: password)
+
+        // Get user groups and access token from Cognito
+        let session = try await Amplify.Auth.fetchAuthSession()
+        var groups: [String] = []
+        var accessToken = ""
+
+        if let tokensProvider = session as? (any AuthCognitoTokensProvider) {
+            let tokens = try tokensProvider.getCognitoTokens().get()
+            accessToken = tokens.accessToken
+
+            // Parse groups from ID token claims
+            if let payload = tokens.idToken.split(separator: ".").dropFirst().first,
+               let data = Data(base64Encoded: String(payload) + "=="),
+               let claims = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let cognitoGroups = claims["cognito:groups"] as? [String] {
+                groups = cognitoGroups
+            }
+        }
+
+        return AttendantAuthResult(userId: user.userId, name: user.name, groups: groups, accessToken: accessToken)
+    }
+
     /// Sign out the current user.
     func signOut() async {
         _ = await Amplify.Auth.signOut()
@@ -189,11 +227,11 @@ class AuthService: ObservableObject {
     func getAccessToken() async throws -> String {
         let session = try await Amplify.Auth.fetchAuthSession()
 
-        guard let cognitoSession = session as? AuthCognitoTokensProvider,
-              let tokens = try cognitoSession.getCognitoTokens().get() else {
+        guard let tokensProvider = session as? (any AuthCognitoTokensProvider) else {
             throw AuthError.noTokens
         }
 
+        let tokens = try tokensProvider.getCognitoTokens().get()
         return tokens.accessToken
     }
 
@@ -201,11 +239,11 @@ class AuthService: ObservableObject {
     func getIdToken() async throws -> String {
         let session = try await Amplify.Auth.fetchAuthSession()
 
-        guard let cognitoSession = session as? AuthCognitoTokensProvider,
-              let tokens = try cognitoSession.getCognitoTokens().get() else {
+        guard let tokensProvider = session as? (any AuthCognitoTokensProvider) else {
             throw AuthError.noTokens
         }
 
+        let tokens = try tokensProvider.getCognitoTokens().get()
         return tokens.idToken
     }
 
@@ -269,6 +307,14 @@ class AuthService: ObservableObject {
             linkedPatientId: linkedPatientId
         )
     }
+}
+
+/// Result of attendant authentication.
+struct AttendantAuthResult {
+    let userId: String
+    let name: String
+    let groups: [String]
+    let accessToken: String
 }
 
 // MARK: - Auth Errors

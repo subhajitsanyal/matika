@@ -79,14 +79,14 @@ final class PulseViewModel: ObservableObject {
             }
 
             // Create heart rate observation
-            let observation = LocalObservation(
-                id: UUID().uuidString,
+            let observation = FHIRObservation(
                 patientId: patientId,
                 type: .heartRate,
+                effectiveDateTime: Date(),
                 value: Double(pulseValue),
                 unit: "/min",
-                effectiveDateTime: Date(),
-                performerName: user.name
+                performerId: user.userId,
+                performerType: .relatedPerson
             )
 
             // Save to local store (adds to sync queue)
