@@ -155,6 +155,51 @@ resource "aws_api_gateway_resource" "audit_log" {
 }
 
 # ============================================================
+# METHODS (placeholder MOCK integrations until Lambda backends are connected)
+# ============================================================
+
+resource "aws_api_gateway_method" "patients_get" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.patients.id
+  http_method   = "GET"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+}
+
+resource "aws_api_gateway_integration" "patients_get" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.patients.id
+  http_method = aws_api_gateway_method.patients_get.http_method
+  type        = "MOCK"
+
+  request_templates = {
+    "application/json" = "{\"statusCode\": 200}"
+  }
+}
+
+resource "aws_api_gateway_method_response" "patients_get_200" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.patients.id
+  http_method = aws_api_gateway_method.patients_get.http_method
+  status_code = "200"
+
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Origin" = true
+  }
+}
+
+resource "aws_api_gateway_integration_response" "patients_get_200" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.patients.id
+  http_method = aws_api_gateway_method.patients_get.http_method
+  status_code = aws_api_gateway_method_response.patients_get_200.status_code
+
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Origin" = "'${var.cors_origin}'"
+  }
+}
+
+# ============================================================
 # GATEWAY RESPONSES (CORS)
 # ============================================================
 
@@ -268,6 +313,8 @@ resource "aws_api_gateway_deployment" "main" {
       aws_api_gateway_resource.documents.id,
       aws_api_gateway_resource.thresholds.id,
       aws_api_gateway_resource.care_plans.id,
+      aws_api_gateway_method.patients_get.id,
+      aws_api_gateway_integration.patients_get.id,
     ]))
   }
 
