@@ -185,16 +185,17 @@ terraform plan -out=tfplan
 terraform apply tfplan
 ```
 
+> **Note:** RDS instance creation takes 5-15 minutes. S3 bucket creation may also take a few minutes due to KMS encryption setup. This is normal.
+
 **Expected resources created:**
 - VPC with public/private subnets
 - Cognito User Pool with 4 groups
 - API Gateway REST API
-- HealthLake FHIR data store
-- S3 bucket for unstructured data
+- S3 buckets for documents and access logs
 - SQS queues for async processing
-- RDS PostgreSQL instance
-- SNS topics for notifications
-- Lambda functions
+- RDS PostgreSQL 15 instance
+- Bastion EC2 instance (for SSM port-forwarding to RDS)
+- CloudWatch alarms and log groups
 
 ### 3.4 Note the Outputs
 
@@ -204,11 +205,46 @@ After deployment, note the important outputs:
 terraform output
 
 # Expected outputs:
-# api_gateway_url = "https://xxxxxxxx.execute-api.ap-south-1.amazonaws.com/dev"
-# cognito_user_pool_id = "ap-south-1_XXXXXXXXX"
-# cognito_client_id = "xxxxxxxxxxxxxxxxxxxxxxxxxx"
-# s3_bucket_name = "carelog-dev-documents-xxxxx"
+# vpc_id = "vpc-xxxxxxxxx"
+# public_subnet_ids = ["subnet-xxx", "subnet-xxx"]
+# private_subnet_ids = ["subnet-xxx", "subnet-xxx"]
+# bastion_instance_id = "i-xxxxxxxxx"
+# bastion_ssm_port_forward_command = "aws ssm start-session --target i-xxx ..."
 ```
+
+### 3.4.1 Troubleshooting Deployment Issues
+
+#### Secrets Manager: "secret already scheduled for deletion"
+
+If a previous deployment was destroyed, secrets enter a deletion waiting period. Force delete and re-apply:
+
+```bash
+aws secretsmanager delete-secret --secret-id carelog-dev-db-password --force-delete-without-recovery --region ap-south-1
+terraform apply
+```
+
+#### IAM Role/Instance Profile: "already exists"
+
+If resources exist from a previous manual or failed deployment, import them into Terraform state. Use quotes around resource addresses containing brackets (required for zsh):
+
+```bash
+terraform import 'module.carelog.module.bastion[0].aws_iam_role.bastion' carelog-dev-bastion-role
+terraform import 'module.carelog.module.bastion[0].aws_iam_instance_profile.bastion' carelog-dev-bastion-profile
+terraform apply
+```
+
+#### CloudWatch Log Group: "already exists"
+
+Import the existing log group into state:
+
+```bash
+terraform import module.carelog.module.vpc.aws_cloudwatch_log_group.vpc_flow_logs /aws/vpc/carelog-dev-flow-logs
+terraform apply
+```
+
+#### S3 Bucket: "OperationAborted" / 409 Conflict
+
+S3 bucket names are globally unique. If a previous bucket was recently deleted, S3 may take a few minutes to release the name. Wait 5-10 minutes and retry, or change `s3_bucket_prefix` in the dev config to use a different name.
 
 ### 3.5 Connect to RDS via Bastion (Port-Forwarding)
 
@@ -272,7 +308,7 @@ aws secretsmanager get-secret-value --secret-id carelog-dev-db-password --region
 
 This returns a JSON object with `username`, `password`, `host`, `port`, and `dbname`.
 
-> **Note:** The password may contain special characters. Unicode escapes in the output (e.g., `\u0026` = `&`, `\u003c` = `<`) must be decoded when used in the config file.
+> **Note:** The password may contain special characters. Unicode escapes in the output must be decoded when used in the config file: `\u0026` = `&`, `\u003c` = `<`, `\u003e` = `>`. You can pipe the output through `python3 -c "import sys,json; print(json.loads(sys.stdin.read())['password'])"` to get the decoded password directly.
 
 #### 3.6.2 Configure and Run Flyway
 
