@@ -1,18 +1,21 @@
 # CareLog HealthLake Module - Outputs
+#
+# Note: datastore_id, datastore_arn, and datastore_endpoint are placeholders
+# until the awscc provider is added for HealthLake FHIR datastore support.
 
 output "datastore_id" {
   description = "ID of the HealthLake FHIR data store"
-  value       = aws_healthlake_fhir_datastore.main.id
+  value       = null
 }
 
 output "datastore_arn" {
   description = "ARN of the HealthLake FHIR data store"
-  value       = aws_healthlake_fhir_datastore.main.arn
+  value       = null
 }
 
 output "datastore_endpoint" {
   description = "Endpoint URL of the HealthLake FHIR data store"
-  value       = aws_healthlake_fhir_datastore.main.datastore_endpoint
+  value       = null
 }
 
 output "kms_key_arn" {
