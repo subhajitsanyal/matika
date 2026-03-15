@@ -1,0 +1,462 @@
+# CareLog iOS Fastfile
+# Documentation: https://docs.fastlane.tools
+
+default_platform(:ios)
+
+# Constants
+APP_IDENTIFIER = "com.carelog.CareLog"
+SCHEME = "CareLog"
+PROJECT = "CareLog.xcodeproj"
+FIREBASE_APP_ID = ENV["FIREBASE_IOS_APP_ID"] || "1:000000000000:ios:0000000000000000000000"
+
+platform :ios do
+
+  before_all do
+    # Ensure we're on the right directory
+    ensure_git_status_clean unless ENV["CI"]
+  end
+
+  # ==========================================
+  # Build Lanes
+  # ==========================================
+
+  desc "Build for simulator (debug)"
+  lane :build_simulator do
+    build_app(
+      scheme: SCHEME,
+      project: PROJECT,
+      configuration: "Debug",
+      destination: "generic/platform=iOS Simulator",
+      derived_data_path: "./build/DerivedData",
+      output_directory: "./build",
+      output_name: "CareLog-Simulator.app",
+      skip_archive: true,
+      skip_codesigning: true
+    )
+
+    UI.success "Simulator build completed!"
+  end
+
+  desc "Build debug IPA for device testing"
+  lane :build_debug do
+    setup_signing(type: "development")
+
+    build_app(
+      scheme: SCHEME,
+      project: PROJECT,
+      configuration: "Debug",
+      export_method: "development",
+      output_directory: "./build",
+      output_name: "CareLog-Debug.ipa"
+    )
+
+    UI.success "Debug IPA built successfully!"
+    UI.message "IPA location: ./build/CareLog-Debug.ipa"
+  end
+
+  desc "Build release IPA for ad-hoc distribution"
+  lane :build_adhoc do
+    setup_signing(type: "adhoc")
+
+    increment_build_number_if_needed
+
+    build_app(
+      scheme: SCHEME,
+      project: PROJECT,
+      configuration: "Release",
+      export_method: "ad-hoc",
+      output_directory: "./build",
+      output_name: "CareLog.ipa",
+      include_bitcode: false,
+      include_symbols: true
+    )
+
+    UI.success "Ad-hoc IPA built successfully!"
+    UI.message "IPA location: ./build/CareLog.ipa"
+  end
+
+  desc "Build release IPA for App Store"
+  lane :build_appstore do
+    setup_signing(type: "appstore")
+
+    increment_build_number_if_needed
+
+    build_app(
+      scheme: SCHEME,
+      project: PROJECT,
+      configuration: "Release",
+      export_method: "app-store",
+      output_directory: "./build",
+      output_name: "CareLog-AppStore.ipa",
+      include_bitcode: false,
+      include_symbols: true
+    )
+
+    UI.success "App Store IPA built successfully!"
+    UI.message "IPA location: ./build/CareLog-AppStore.ipa"
+  end
+
+  # ==========================================
+  # Test Lanes
+  # ==========================================
+
+  desc "Run unit tests"
+  lane :test do
+    run_tests(
+      scheme: SCHEME,
+      project: PROJECT,
+      device: "iPhone 15 Pro",
+      clean: true,
+      code_coverage: true,
+      result_bundle: true,
+      output_directory: "./build/test_results"
+    )
+
+    UI.success "Tests passed!"
+  end
+
+  desc "Run UI tests"
+  lane :ui_test do
+    run_tests(
+      scheme: SCHEME,
+      project: PROJECT,
+      device: "iPhone 15 Pro",
+      clean: true,
+      test_without_building: false,
+      only_testing: ["CareLogUITests"],
+      result_bundle: true,
+      output_directory: "./build/ui_test_results"
+    )
+
+    UI.success "UI tests passed!"
+  end
+
+  desc "Run SwiftLint"
+  lane :lint do
+    swiftlint(
+      mode: :lint,
+      config_file: ".swiftlint.yml",
+      raise_if_swiftlint_error: true,
+      ignore_exit_status: false
+    )
+
+    UI.success "Lint checks passed!"
+  end
+
+  # ==========================================
+  # Firebase Distribution Lanes
+  # ==========================================
+
+  desc "Distribute debug build to Firebase App Distribution"
+  lane :distribute_debug do |options|
+    build_debug
+
+    release_notes = options[:notes] || generate_release_notes
+
+    firebase_app_distribution(
+      app: FIREBASE_APP_ID,
+      ipa_path: "./build/CareLog-Debug.ipa",
+      groups: options[:groups] || "internal-testers",
+      release_notes: release_notes,
+      firebase_cli_token: ENV["FIREBASE_TOKEN"]
+    )
+
+    UI.success "Debug build distributed to Firebase App Distribution!"
+  end
+
+  desc "Distribute release build to Firebase App Distribution"
+  lane :distribute do |options|
+    build_adhoc
+
+    release_notes = options[:notes] || generate_release_notes
+
+    firebase_app_distribution(
+      app: FIREBASE_APP_ID,
+      ipa_path: "./build/CareLog.ipa",
+      groups: options[:groups] || "internal-testers, qa-team",
+      release_notes: release_notes,
+      firebase_cli_token: ENV["FIREBASE_TOKEN"]
+    )
+
+    UI.success "Release build distributed to Firebase App Distribution!"
+    notify_slack(message: "New iOS build available for testing!") if ENV["SLACK_WEBHOOK_URL"]
+  end
+
+  desc "Distribute to beta testers"
+  lane :beta do |options|
+    build_adhoc
+
+    release_notes = options[:notes] || generate_release_notes
+
+    firebase_app_distribution(
+      app: FIREBASE_APP_ID,
+      ipa_path: "./build/CareLog.ipa",
+      groups: "beta-testers",
+      release_notes: release_notes,
+      firebase_cli_token: ENV["FIREBASE_TOKEN"]
+    )
+
+    UI.success "Beta build distributed!"
+  end
+
+  # ==========================================
+  # App Store Lanes
+  # ==========================================
+
+  desc "Upload to TestFlight"
+  lane :testflight_upload do |options|
+    build_appstore
+
+    upload_to_testflight(
+      skip_waiting_for_build_processing: options[:skip_waiting] || false,
+      distribute_external: false,
+      notify_external_testers: false,
+      changelog: options[:notes] || generate_release_notes
+    )
+
+    UI.success "Uploaded to TestFlight!"
+  end
+
+  desc "Deploy to TestFlight and notify testers"
+  lane :deploy_testflight do |options|
+    build_appstore
+
+    upload_to_testflight(
+      skip_waiting_for_build_processing: false,
+      distribute_external: true,
+      groups: options[:groups] || ["Internal Testers"],
+      notify_external_testers: true,
+      changelog: options[:notes] || generate_release_notes
+    )
+
+    UI.success "Deployed to TestFlight and notified testers!"
+  end
+
+  desc "Submit to App Store for review"
+  lane :deploy_appstore do |options|
+    build_appstore
+
+    upload_to_app_store(
+      skip_metadata: options[:skip_metadata] || false,
+      skip_screenshots: options[:skip_screenshots] || true,
+      submit_for_review: options[:submit] || false,
+      automatic_release: false,
+      force: true,
+      precheck_include_in_app_purchases: false
+    )
+
+    UI.success "Uploaded to App Store Connect!"
+  end
+
+  desc "Upload metadata and screenshots only"
+  lane :upload_metadata do
+    deliver(
+      skip_binary_upload: true,
+      skip_screenshots: false,
+      skip_metadata: false,
+      force: true
+    )
+
+    UI.success "Metadata and screenshots uploaded!"
+  end
+
+  # ==========================================
+  # Code Signing Lanes
+  # ==========================================
+
+  desc "Sync all certificates and profiles"
+  lane :sync_signing do
+    match(type: "development", readonly: true)
+    match(type: "adhoc", readonly: true)
+    match(type: "appstore", readonly: true)
+
+    UI.success "All signing assets synced!"
+  end
+
+  desc "Create new certificates and profiles"
+  lane :create_signing do
+    match(type: "development", readonly: false)
+    match(type: "adhoc", readonly: false)
+    match(type: "appstore", readonly: false)
+
+    UI.success "New signing assets created!"
+  end
+
+  desc "Revoke and recreate all certificates"
+  lane :nuke_signing do
+    match_nuke(type: "development")
+    match_nuke(type: "adhoc")
+    match_nuke(type: "appstore")
+
+    create_signing
+
+    UI.success "All signing assets recreated!"
+  end
+
+  # ==========================================
+  # Utility Lanes
+  # ==========================================
+
+  desc "Increment build number"
+  lane :bump_build do
+    new_build = increment_build_number(
+      build_number: Time.now.strftime("%Y%m%d%H%M")
+    )
+
+    UI.success "Build number set to #{new_build}"
+    new_build
+  end
+
+  desc "Increment version number"
+  lane :bump_version do |options|
+    bump_type = options[:type] || "patch"
+
+    new_version = increment_version_number(
+      bump_type: bump_type
+    )
+
+    UI.success "Version bumped to #{new_version}"
+    new_version
+  end
+
+  desc "Set version number"
+  lane :set_version do |options|
+    version = options[:version]
+    UI.user_error!("Version parameter required") unless version
+
+    new_version = increment_version_number(
+      version_number: version
+    )
+
+    UI.success "Version set to #{new_version}"
+    new_version
+  end
+
+  desc "Clean build artifacts"
+  lane :clean do
+    clear_derived_data
+    FileUtils.rm_rf("./build")
+
+    UI.success "Build artifacts cleaned!"
+  end
+
+  desc "Register new device"
+  lane :register_device do |options|
+    device_name = options[:name] || UI.input("Device name: ")
+    device_udid = options[:udid] || UI.input("Device UDID: ")
+
+    register_devices(
+      devices: {
+        device_name => device_udid
+      }
+    )
+
+    # Refresh provisioning profiles
+    match(type: "development", force_for_new_devices: true)
+    match(type: "adhoc", force_for_new_devices: true)
+
+    UI.success "Device registered and profiles updated!"
+  end
+
+  # ==========================================
+  # CI/CD Lanes
+  # ==========================================
+
+  desc "CI: Run all checks"
+  lane :ci do
+    lint
+    test
+    build_simulator
+
+    UI.success "CI checks passed!"
+  end
+
+  desc "CI: Build and distribute"
+  lane :ci_distribute do |options|
+    ci
+
+    if options[:track] == "appstore"
+      deploy_appstore
+    elsif options[:track] == "testflight"
+      deploy_testflight
+    else
+      distribute
+    end
+  end
+
+  # ==========================================
+  # Helper Methods
+  # ==========================================
+
+  private_lane :setup_signing do |options|
+    type = options[:type]
+
+    if is_ci?
+      # Use match for CI
+      match(
+        type: type,
+        readonly: true,
+        git_url: ENV["MATCH_GIT_URL"],
+        app_identifier: APP_IDENTIFIER
+      )
+    else
+      # Use automatic signing for local development
+      update_code_signing_settings(
+        use_automatic_signing: true,
+        team_id: ENV["TEAM_ID"] || CredentialsManager::AppfileConfig.try_fetch_value(:team_id)
+      )
+    end
+  end
+
+  private_lane :increment_build_number_if_needed do
+    if is_ci?
+      # Use CI build number or timestamp
+      build_number = ENV["CI_BUILD_NUMBER"] || Time.now.strftime("%Y%m%d%H%M")
+      increment_build_number(build_number: build_number)
+    else
+      # Increment locally
+      increment_build_number
+    end
+  end
+
+  private_lane :generate_release_notes do
+    # Get recent commits for release notes
+    changelog = changelog_from_git_commits(
+      commits_count: 10,
+      pretty: "- %s",
+      date_format: "short",
+      match_lightweight_tag: false,
+      merge_commit_filtering: "exclude_merges"
+    )
+
+    version = get_version_number(target: SCHEME)
+    build = get_build_number
+
+    notes = "Version: #{version} (#{build})\n"
+    notes += "Built: #{Time.now.strftime('%Y-%m-%d %H:%M')}\n\n"
+    notes += "Changes:\n#{changelog}"
+
+    notes
+  end
+
+  private_lane :notify_slack do |options|
+    return unless ENV["SLACK_WEBHOOK_URL"]
+
+    slack(
+      message: options[:message],
+      slack_url: ENV["SLACK_WEBHOOK_URL"],
+      default_payloads: [:git_branch, :last_git_commit]
+    )
+  end
+
+  # ==========================================
+  # Error Handling
+  # ==========================================
+
+  error do |lane, exception|
+    UI.error "Lane #{lane} failed with error: #{exception.message}"
+
+    notify_slack(message: "iOS build failed: #{exception.message}") if ENV["SLACK_WEBHOOK_URL"]
+  end
+
+end

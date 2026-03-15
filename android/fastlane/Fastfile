@@ -1,0 +1,373 @@
+# CareLog Android Fastfile
+# Documentation: https://docs.fastlane.tools
+
+default_platform(:android)
+
+# Constants
+PACKAGE_NAME = "com.carelog"
+FIREBASE_APP_ID = ENV["FIREBASE_ANDROID_APP_ID"] || "1:000000000000:android:0000000000000000000000"
+
+platform :android do
+
+  # ==========================================
+  # Build Lanes
+  # ==========================================
+
+  desc "Build debug APK"
+  lane :build_debug do
+    gradle(
+      task: "clean assembleDebug",
+      print_command: false,
+      properties: {
+        "android.injected.signing.store.file" => ENV["KEYSTORE_PATH"],
+        "android.injected.signing.store.password" => ENV["KEYSTORE_PASSWORD"],
+        "android.injected.signing.key.alias" => ENV["KEY_ALIAS"],
+        "android.injected.signing.key.password" => ENV["KEY_PASSWORD"]
+      }
+    )
+
+    UI.success "Debug APK built successfully!"
+    UI.message "APK location: app/build/outputs/apk/debug/app-debug.apk"
+  end
+
+  desc "Build release APK"
+  lane :build_release do
+    # Ensure we have signing credentials
+    ensure_env_vars(
+      env_vars: ["KEYSTORE_PATH", "KEYSTORE_PASSWORD", "KEY_ALIAS", "KEY_PASSWORD"]
+    ) unless ENV["CI"].nil?
+
+    gradle(
+      task: "clean assembleRelease",
+      print_command: false,
+      properties: {
+        "android.injected.signing.store.file" => ENV["KEYSTORE_PATH"],
+        "android.injected.signing.store.password" => ENV["KEYSTORE_PASSWORD"],
+        "android.injected.signing.key.alias" => ENV["KEY_ALIAS"],
+        "android.injected.signing.key.password" => ENV["KEY_PASSWORD"]
+      }
+    )
+
+    UI.success "Release APK built successfully!"
+    UI.message "APK location: app/build/outputs/apk/release/app-release.apk"
+  end
+
+  desc "Build release AAB (Android App Bundle)"
+  lane :build_bundle do
+    ensure_env_vars(
+      env_vars: ["KEYSTORE_PATH", "KEYSTORE_PASSWORD", "KEY_ALIAS", "KEY_PASSWORD"]
+    ) unless ENV["CI"].nil?
+
+    gradle(
+      task: "clean bundleRelease",
+      print_command: false,
+      properties: {
+        "android.injected.signing.store.file" => ENV["KEYSTORE_PATH"],
+        "android.injected.signing.store.password" => ENV["KEYSTORE_PASSWORD"],
+        "android.injected.signing.key.alias" => ENV["KEY_ALIAS"],
+        "android.injected.signing.key.password" => ENV["KEY_PASSWORD"]
+      }
+    )
+
+    UI.success "Release AAB built successfully!"
+    UI.message "AAB location: app/build/outputs/bundle/release/app-release.aab"
+  end
+
+  # ==========================================
+  # Test Lanes
+  # ==========================================
+
+  desc "Run unit tests"
+  lane :test do
+    gradle(
+      task: "test",
+      print_command: false
+    )
+
+    UI.success "Unit tests passed!"
+  end
+
+  desc "Run instrumentation tests"
+  lane :instrumentation_test do
+    gradle(
+      task: "connectedAndroidTest",
+      print_command: false
+    )
+
+    UI.success "Instrumentation tests passed!"
+  end
+
+  desc "Run lint checks"
+  lane :lint do
+    gradle(
+      task: "lint",
+      print_command: false
+    )
+
+    UI.success "Lint checks completed!"
+  end
+
+  # ==========================================
+  # Firebase Distribution Lanes
+  # ==========================================
+
+  desc "Distribute debug build to Firebase App Distribution"
+  lane :distribute_debug do |options|
+    build_debug
+
+    release_notes = options[:notes] || generate_release_notes
+
+    firebase_app_distribution(
+      app: FIREBASE_APP_ID,
+      apk_path: "app/build/outputs/apk/debug/app-debug.apk",
+      groups: options[:groups] || "internal-testers",
+      release_notes: release_notes,
+      firebase_cli_token: ENV["FIREBASE_TOKEN"]
+    )
+
+    UI.success "Debug build distributed to Firebase App Distribution!"
+  end
+
+  desc "Distribute release build to Firebase App Distribution"
+  lane :distribute do |options|
+    build_release
+
+    release_notes = options[:notes] || generate_release_notes
+
+    firebase_app_distribution(
+      app: FIREBASE_APP_ID,
+      apk_path: "app/build/outputs/apk/release/app-release.apk",
+      groups: options[:groups] || "internal-testers, qa-team",
+      release_notes: release_notes,
+      firebase_cli_token: ENV["FIREBASE_TOKEN"]
+    )
+
+    UI.success "Release build distributed to Firebase App Distribution!"
+    notify_slack(message: "New Android build available for testing!") if ENV["SLACK_WEBHOOK_URL"]
+  end
+
+  desc "Distribute to beta testers"
+  lane :beta do |options|
+    build_release
+
+    release_notes = options[:notes] || generate_release_notes
+
+    firebase_app_distribution(
+      app: FIREBASE_APP_ID,
+      apk_path: "app/build/outputs/apk/release/app-release.apk",
+      groups: "beta-testers",
+      release_notes: release_notes,
+      firebase_cli_token: ENV["FIREBASE_TOKEN"]
+    )
+
+    UI.success "Beta build distributed!"
+  end
+
+  # ==========================================
+  # Play Store Lanes
+  # ==========================================
+
+  desc "Deploy to Google Play internal testing track"
+  lane :deploy_internal do
+    build_bundle
+
+    upload_to_play_store(
+      track: "internal",
+      aab: "app/build/outputs/bundle/release/app-release.aab",
+      skip_upload_apk: true,
+      skip_upload_metadata: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true
+    )
+
+    UI.success "Deployed to internal testing track!"
+  end
+
+  desc "Deploy to Google Play alpha track"
+  lane :deploy_alpha do
+    build_bundle
+
+    upload_to_play_store(
+      track: "alpha",
+      aab: "app/build/outputs/bundle/release/app-release.aab",
+      skip_upload_apk: true,
+      skip_upload_metadata: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true
+    )
+
+    UI.success "Deployed to alpha track!"
+  end
+
+  desc "Deploy to Google Play beta track"
+  lane :deploy_beta do
+    build_bundle
+
+    upload_to_play_store(
+      track: "beta",
+      aab: "app/build/outputs/bundle/release/app-release.aab",
+      skip_upload_apk: true,
+      skip_upload_metadata: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true
+    )
+
+    UI.success "Deployed to beta track!"
+  end
+
+  desc "Deploy to Google Play production"
+  lane :deploy_production do
+    build_bundle
+
+    upload_to_play_store(
+      track: "production",
+      aab: "app/build/outputs/bundle/release/app-release.aab",
+      skip_upload_apk: true
+    )
+
+    UI.success "Deployed to production!"
+  end
+
+  desc "Upload metadata to Google Play"
+  lane :upload_metadata do
+    upload_to_play_store(
+      skip_upload_apk: true,
+      skip_upload_aab: true,
+      skip_upload_images: false,
+      skip_upload_screenshots: false
+    )
+
+    UI.success "Metadata uploaded!"
+  end
+
+  # ==========================================
+  # Utility Lanes
+  # ==========================================
+
+  desc "Increment version code"
+  lane :bump_version_code do
+    # Read current version code from build.gradle.kts
+    path = "../app/build.gradle.kts"
+    content = File.read(path)
+
+    current_version = content.match(/versionCode\s*=\s*(\d+)/)[1].to_i
+    new_version = current_version + 1
+
+    new_content = content.gsub(
+      /versionCode\s*=\s*\d+/,
+      "versionCode = #{new_version}"
+    )
+
+    File.write(path, new_content)
+
+    UI.success "Version code bumped from #{current_version} to #{new_version}"
+    new_version
+  end
+
+  desc "Set version name"
+  lane :set_version_name do |options|
+    version = options[:version]
+    UI.user_error!("Version parameter required") unless version
+
+    path = "../app/build.gradle.kts"
+    content = File.read(path)
+
+    new_content = content.gsub(
+      /versionName\s*=\s*"[^"]+"/,
+      "versionName = \"#{version}\""
+    )
+
+    File.write(path, new_content)
+
+    UI.success "Version name set to #{version}"
+  end
+
+  desc "Clean build artifacts"
+  lane :clean do
+    gradle(task: "clean")
+    UI.success "Build artifacts cleaned!"
+  end
+
+  # ==========================================
+  # CI/CD Lanes
+  # ==========================================
+
+  desc "CI: Run all checks"
+  lane :ci do
+    lint
+    test
+    build_debug
+
+    UI.success "CI checks passed!"
+  end
+
+  desc "CI: Build and distribute"
+  lane :ci_distribute do |options|
+    ci
+
+    if options[:track] == "production"
+      deploy_production
+    elsif options[:track] == "beta"
+      deploy_beta
+    else
+      distribute
+    end
+  end
+
+  # ==========================================
+  # Helper Methods
+  # ==========================================
+
+  private_lane :generate_release_notes do
+    # Get recent commits for release notes
+    changelog = changelog_from_git_commits(
+      commits_count: 10,
+      pretty: "- %s",
+      date_format: "short",
+      match_lightweight_tag: false,
+      merge_commit_filtering: "exclude_merges"
+    )
+
+    build_number = get_version_code
+    version_name = get_version_name
+
+    notes = "Version: #{version_name} (#{build_number})\n"
+    notes += "Built: #{Time.now.strftime('%Y-%m-%d %H:%M')}\n\n"
+    notes += "Changes:\n#{changelog}"
+
+    notes
+  end
+
+  private_lane :get_version_code do
+    path = "../app/build.gradle.kts"
+    content = File.read(path)
+    content.match(/versionCode\s*=\s*(\d+)/)[1]
+  end
+
+  private_lane :get_version_name do
+    path = "../app/build.gradle.kts"
+    content = File.read(path)
+    content.match(/versionName\s*=\s*"([^"]+)"/)[1]
+  end
+
+  private_lane :notify_slack do |options|
+    return unless ENV["SLACK_WEBHOOK_URL"]
+
+    slack(
+      message: options[:message],
+      slack_url: ENV["SLACK_WEBHOOK_URL"],
+      default_payloads: [:git_branch, :last_git_commit]
+    )
+  end
+
+  # ==========================================
+  # Error Handling
+  # ==========================================
+
+  error do |lane, exception|
+    UI.error "Lane #{lane} failed with error: #{exception.message}"
+
+    notify_slack(message: "Android build failed: #{exception.message}") if ENV["SLACK_WEBHOOK_URL"]
+  end
+
+end

@@ -1,0 +1,57 @@
+# CareLog iOS Gymfile
+# Documentation: https://docs.fastlane.tools/actions/gym/
+
+# Scheme to build
+scheme("CareLog")
+
+# Project file
+project("CareLog.xcodeproj")
+
+# Build configuration
+configuration("Release")
+
+# Output directory
+output_directory("./build")
+
+# Output name
+output_name("CareLog")
+
+# Include bitcode
+include_bitcode(false)
+
+# Include symbols
+include_symbols(true)
+
+# Silent build (reduce output)
+silent(false)
+
+# Clean before build
+clean(true)
+
+# Build for specific SDK
+sdk("iphoneos")
+
+# Destination
+destination("generic/platform=iOS")
+
+# Derived data path
+derived_data_path("./build/DerivedData")
+
+# Result bundle
+result_bundle(true)
+result_bundle_path("./build/result_bundle")
+
+# Build timing summary
+buildlog_path("./build/logs")
+
+# Xcode build settings
+xcargs("COMPILER_INDEX_STORE_ENABLE=NO")
+
+# Export options for different methods
+export_options({
+  compileBitcode: false,
+  uploadBitcode: false,
+  uploadSymbols: true,
+  signingStyle: "automatic",
+  stripSwiftSymbols: true
+})

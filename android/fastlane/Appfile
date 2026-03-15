@@ -1,0 +1,12 @@
+# CareLog Android Appfile
+# Documentation: https://docs.fastlane.tools/advanced/#appfile
+
+# Package name
+package_name("com.carelog")
+
+# Google Play service account JSON key file
+# Download from Google Play Console > Setup > API access
+json_key_file(ENV["GOOGLE_PLAY_JSON_KEY"] || "fastlane/google-play-key.json")
+
+# For Firebase App Distribution
+# Set FIREBASE_ANDROID_APP_ID in environment variables

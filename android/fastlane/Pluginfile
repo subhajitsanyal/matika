@@ -1,0 +1,8 @@
+# CareLog Android Pluginfile
+# Documentation: https://docs.fastlane.tools/plugins/available-plugins
+
+# Firebase App Distribution plugin
+gem 'fastlane-plugin-firebase_app_distribution'
+
+# Versioning plugin (optional - for advanced version management)
+# gem 'fastlane-plugin-versioning_android'

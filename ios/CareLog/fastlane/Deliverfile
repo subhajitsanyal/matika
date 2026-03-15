@@ -1,0 +1,83 @@
+# CareLog iOS Deliverfile
+# Documentation: https://docs.fastlane.tools/actions/deliver/
+
+# App identifier
+app_identifier("com.carelog.CareLog")
+
+# Apple ID
+username(ENV["APPLE_ID"] || "your-apple-id@example.com")
+
+# Metadata path
+metadata_path("./fastlane/metadata")
+
+# Screenshots path
+screenshots_path("./fastlane/screenshots")
+
+# Skip screenshots by default
+skip_screenshots(true)
+
+# Skip metadata by default
+skip_metadata(false)
+
+# Automatically submit for review
+submit_for_review(false)
+
+# Release automatically after approval
+automatic_release(false)
+
+# Force update (skip HTML preview)
+force(true)
+
+# Pricing tier (free)
+price_tier(0)
+
+# App rating configuration
+app_rating_config_path("./fastlane/rating_config.json")
+
+# Submission information
+submission_information({
+  add_id_info_serves_ads: false,
+  add_id_info_tracks_action: false,
+  add_id_info_tracks_install: false,
+  add_id_info_uses_idfa: false,
+  content_rights_has_rights: true,
+  content_rights_contains_third_party_content: true,
+  export_compliance_platform: "ios",
+  export_compliance_compliance_required: false,
+  export_compliance_encryption_updated: false,
+  export_compliance_uses_encryption: true,
+  export_compliance_is_exempt: true,
+  export_compliance_contains_third_party_cryptography: false,
+  export_compliance_contains_proprietary_cryptography: false
+})
+
+# Precheck settings
+precheck_include_in_app_purchases(false)
+
+# Languages to submit
+languages(["en-US"])
+
+# Copyright
+copyright("#{Time.now.year} CareLog Health Technologies")
+
+# Primary category
+primary_category("MED_HEALTH_AND_FITNESS")
+
+# Secondary category
+secondary_category("MED_MEDICAL")
+
+# App privacy details (required)
+app_privacy_details({
+  privacy_categories: [
+    {
+      identifier: "HEALTH_AND_FITNESS",
+      data_uses: ["ANALYTICS", "APP_FUNCTIONALITY"],
+      data_purposes: ["PRODUCT_PERSONALIZATION", "ANALYTICS"]
+    },
+    {
+      identifier: "USER_CONTENT",
+      data_uses: ["ANALYTICS", "APP_FUNCTIONALITY"],
+      data_purposes: ["APP_FUNCTIONALITY"]
+    }
+  ]
+})

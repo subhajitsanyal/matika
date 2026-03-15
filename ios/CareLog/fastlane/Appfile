@@ -1,0 +1,23 @@
+# CareLog iOS Appfile
+# Documentation: https://docs.fastlane.tools/advanced/#appfile
+
+# App identifier (bundle ID)
+app_identifier("com.carelog.CareLog")
+
+# Apple ID email
+apple_id(ENV["APPLE_ID"] || "your-apple-id@example.com")
+
+# iTunes Connect Team ID (numeric)
+itc_team_id(ENV["ITC_TEAM_ID"] || "123456789")
+
+# Developer Portal Team ID
+team_id(ENV["TEAM_ID"] || "XXXXXXXXXX")
+
+# For App Store Connect API (recommended for CI/CD)
+# Generate at: https://appstoreconnect.apple.com/access/api
+# api_key_path(ENV["APP_STORE_CONNECT_API_KEY_PATH"])
+
+# For all lanes
+for_platform :ios do
+  app_identifier("com.carelog.CareLog")
+end
