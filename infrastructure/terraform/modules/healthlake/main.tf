@@ -7,6 +7,11 @@
 # - Data encrypted at rest using KMS
 # - FHIR R4 compliant data store
 # - Audit logging enabled
+#
+# TODO: The hashicorp/aws provider does not support aws_healthlake_fhir_datastore.
+# To provision HealthLake, add the hashicorp/awscc provider and use
+# awscc_healthlake_fhir_datastore instead. For now, this module provisions
+# supporting resources (KMS key, IAM role) and outputs placeholders.
 
 # KMS Key for HealthLake encryption
 resource "aws_kms_key" "healthlake" {
@@ -56,28 +61,6 @@ resource "aws_kms_alias" "healthlake" {
   target_key_id = aws_kms_key.healthlake.key_id
 }
 
-# HealthLake FHIR Data Store
-resource "aws_healthlake_fhir_datastore" "main" {
-  datastore_name         = "carelog-${var.environment}"
-  datastore_type_version = "R4"
-
-  sse_configuration {
-    kms_encryption_config {
-      cmk_type   = "CUSTOMER_MANAGED_KMS_KEY"
-      kms_key_id = aws_kms_key.healthlake.arn
-    }
-  }
-
-  preload_data_config {
-    preload_data_type = "SYNTHEA"
-  }
-
-  tags = {
-    Name        = "carelog-${var.environment}-fhir-datastore"
-    Environment = var.environment
-  }
-}
-
 # IAM Role for Lambda to access HealthLake
 resource "aws_iam_role" "healthlake_access" {
   name = "carelog-${var.environment}-healthlake-access"
@@ -119,7 +102,7 @@ resource "aws_iam_role_policy" "healthlake_access" {
           "healthlake:SearchWithPost",
           "healthlake:UpdateResource"
         ]
-        Resource = aws_healthlake_fhir_datastore.main.arn
+        Resource = "*"
       },
       {
         Effect = "Allow"

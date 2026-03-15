@@ -7,7 +7,7 @@
 # including encryption at rest, encryption in transit, and audit logging.
 
 terraform {
-  required_version = ">= 1.6.0"
+  required_version = ">= 1.5.0"
 
   required_providers {
     aws = {
