@@ -28,6 +28,9 @@ module "carelog" {
   public_subnet_cidrs  = ["10.0.1.0/24", "10.0.2.0/24"]
   private_subnet_cidrs = ["10.0.11.0/24", "10.0.12.0/24"]
 
+  # S3 bucket prefix - unique to avoid name conflicts
+  s3_bucket_prefix = "carelog-v2"
+
   # Database - smaller instance for dev
   db_instance_class = "db.t3.micro"
   db_name           = "carelog_dev"
