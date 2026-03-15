@@ -210,7 +210,122 @@ terraform output
 # s3_bucket_name = "carelog-dev-documents-xxxxx"
 ```
 
-### 3.5 Run Database Migrations
+### 3.5 Launch Bastion EC2 Instance for RDS Access
+
+The RDS instance is in a private subnet and not publicly accessible. To connect (e.g., for running Flyway migrations), launch a bastion EC2 instance in the same VPC with SSM Session Manager access.
+
+#### 3.5.1 Create IAM Role for SSM
+
+```bash
+# Create the trust policy
+cat > ssm-trust-policy.json << 'EOF'
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "ec2.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+EOF
+
+# Create the IAM role
+aws iam create-role \
+    --role-name carelog-dev-bastion-role \
+    --assume-role-policy-document file://ssm-trust-policy.json \
+    --region ap-south-1
+
+# Attach the SSM managed policy
+aws iam attach-role-policy \
+    --role-name carelog-dev-bastion-role \
+    --policy-arn arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+# Create an instance profile and add the role
+aws iam create-instance-profile \
+    --instance-profile-name carelog-dev-bastion-profile
+
+aws iam add-role-to-instance-profile \
+    --instance-profile-name carelog-dev-bastion-profile \
+    --role-name carelog-dev-bastion-role
+
+# Wait a few seconds for IAM propagation
+sleep 10
+```
+
+#### 3.5.2 Launch the Bastion Instance
+
+Launch a small EC2 instance in one of the VPC's **public subnets** (from `terraform output public_subnet_ids`):
+
+```bash
+# Get the latest Amazon Linux 2023 AMI
+AMI_ID=$(aws ec2 describe-images \
+    --owners amazon \
+    --filters "Name=name,Values=al2023-ami-*-arm64" "Name=state,Values=available" \
+    --query 'sort_by(Images, &CreationDate)[-1].ImageId' \
+    --output text \
+    --region ap-south-1)
+
+# Launch the instance in a public subnet
+# Replace SUBNET_ID with one of the public subnet IDs from terraform output
+# Replace SG_ID with the RDS security group ID (so it can reach the database)
+aws ec2 run-instances \
+    --image-id $AMI_ID \
+    --instance-type t4g.micro \
+    --subnet-id SUBNET_ID \
+    --iam-instance-profile Name=carelog-dev-bastion-profile \
+    --associate-public-ip-address \
+    --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=carelog-dev-bastion}]' \
+    --region ap-south-1
+
+# Note the InstanceId from the output
+```
+
+> **Note:** Ensure the instance's security group allows outbound HTTPS (port 443) for SSM to work, and that the RDS security group allows inbound PostgreSQL (port 5432) from the bastion's security group.
+
+#### 3.5.3 Connect via SSM Session Manager
+
+```bash
+# Wait for the instance to be running, then connect
+aws ssm start-session \
+    --target INSTANCE_ID \
+    --region ap-south-1
+```
+
+#### 3.5.4 Port-Forward to RDS for Local Flyway Access
+
+Instead of running Flyway on the bastion, you can port-forward RDS to your local machine:
+
+```bash
+# Forward local port 5432 to the RDS endpoint
+aws ssm start-session \
+    --target INSTANCE_ID \
+    --document-name AWS-StartPortForwardingSessionToRemoteHost \
+    --parameters '{
+      "host": ["carelog-dev.c30qocsuk0zl.ap-south-1.rds.amazonaws.com"],
+      "portNumber": ["5432"],
+      "localPortNumber": ["5432"]
+    }' \
+    --region ap-south-1
+```
+
+Then in another terminal, run Flyway against `localhost:5432`:
+
+```bash
+flyway.url=jdbc:postgresql://localhost:5432/carelog_dev
+```
+
+#### 3.5.5 Clean Up the Bastion (When Done)
+
+```bash
+# Terminate the instance when no longer needed
+aws ec2 terminate-instances --instance-ids INSTANCE_ID --region ap-south-1
+```
+
+### 3.6 Run Database Migrations
 
 ```bash
 # Install Flyway
@@ -231,7 +346,7 @@ EOF
 flyway migrate
 ```
 
-### 3.6 Deploy Lambda Functions
+### 3.7 Deploy Lambda Functions
 
 ```bash
 cd ../lambdas
@@ -250,7 +365,7 @@ done
 # If using Terraform, the Lambdas are deployed with infrastructure
 ```
 
-### 3.7 Configure Amplify
+### 3.8 Configure Amplify
 
 Update the Amplify configuration files with your Cognito and API Gateway details:
 
