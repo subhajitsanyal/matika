@@ -79,26 +79,28 @@ class AttendantSessionManager @Inject constructor(
     suspend fun loginAsAttendant(email: String, password: String): Result<AttendantInfo> {
         return try {
             // Authenticate with Cognito
-            val result = authRepository.authenticateAttendant(email, password)
+            val result = authRepository.signIn(email, password)
 
             if (result.isSuccess) {
-                val authResult = result.getOrThrow()
+                val user = result.getOrThrow()
 
-                // Verify user is in attendants group
-                if (!authResult.groups.contains("attendants")) {
+                // Verify user is an attendant
+                if (user.personaType != PersonaType.ATTENDANT) {
                     return Result.failure(AttendantSessionException("User is not an attendant"))
                 }
 
                 // Store session
                 val attendantInfo = AttendantInfo(
-                    id = authResult.userId,
-                    name = authResult.name
+                    id = user.userId,
+                    name = user.name
                 )
+
+                val token = authRepository.getAccessToken() ?: ""
 
                 prefs.edit()
                     .putString(KEY_ATTENDANT_ID, attendantInfo.id)
                     .putString(KEY_ATTENDANT_NAME, attendantInfo.name)
-                    .putString(KEY_ATTENDANT_TOKEN, authResult.accessToken)
+                    .putString(KEY_ATTENDANT_TOKEN, token)
                     .putLong(KEY_SESSION_EXPIRY, System.currentTimeMillis() + SESSION_DURATION_MS)
                     .apply()
 

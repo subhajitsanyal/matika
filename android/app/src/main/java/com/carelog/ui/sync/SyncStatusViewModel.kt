@@ -60,7 +60,7 @@ class SyncStatusViewModel @Inject constructor(
                 localFhirRepository.getPendingDocumentCount(),
                 localFhirRepository.getFailedObservationCount(),
                 localFhirRepository.getFailedDocumentCount()
-            ) { pendingObs, pendingDocs, failedObs, failedDocs ->
+            ) { pendingObs: Int, pendingDocs: Int, failedObs: Int, failedDocs: Int ->
                 PendingCounts(
                     observations = pendingObs,
                     documents = pendingDocs,
@@ -88,9 +88,9 @@ class SyncStatusViewModel @Inject constructor(
 
     private fun observeLastSyncTime() {
         viewModelScope.launch {
-            localFhirRepository.getLastSyncTime().collect { timestamp ->
-                _uiState.update {
-                    it.copy(lastSyncTime = timestamp?.let { formatTimestamp(it) })
+            localFhirRepository.getLastSyncTime().collect { timestamp: Long? ->
+                _uiState.update { state ->
+                    state.copy(lastSyncTime = timestamp?.let { ts -> formatTimestamp(ts) })
                 }
             }
         }
@@ -111,7 +111,8 @@ class SyncStatusViewModel @Inject constructor(
         }
     }
 
-    private fun formatTimestamp(instant: Instant): String {
+    private fun formatTimestamp(timestamp: Long): String {
+        val instant = Instant.ofEpochMilli(timestamp)
         val localDateTime = instant.atZone(ZoneId.systemDefault()).toLocalDateTime()
         val formatter = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT)
         return localDateTime.format(formatter)

@@ -101,7 +101,7 @@ class BloodPressureViewModel @Inject constructor(
                     value = null, // BP uses components instead
                     unit = "mmHg",
                     effectiveDateTime = Instant.now().toString(),
-                    performerName = user.name,
+                    performerId = user?.userId,
                     components = listOf(
                         ObservationComponent(
                             type = ObservationType.SYSTOLIC_BP,

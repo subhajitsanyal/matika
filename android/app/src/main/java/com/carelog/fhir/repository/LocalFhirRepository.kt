@@ -113,6 +113,41 @@ class LocalFhirRepository @Inject constructor(
         observationDao.deleteById(localId)
     }
 
+    /**
+     * Get all observations pending sync as a Flow.
+     */
+    fun getPendingObservations(): Flow<List<LocalObservation>> {
+        return observationDao.getPendingSyncFlow(SyncStatus.PENDING)
+    }
+
+    /**
+     * Get all observations for a patient.
+     */
+    fun getAllObservations(patientId: String): Flow<List<LocalObservation>> {
+        return observationDao.getByPatientId(patientId)
+    }
+
+    /**
+     * Get count of failed observation syncs.
+     */
+    fun getFailedObservationCount(): Flow<Int> {
+        return observationDao.countByStatus(SyncStatus.FAILED)
+    }
+
+    /**
+     * Update an observation's sync status.
+     */
+    suspend fun updateObservation(observation: LocalObservation) {
+        observationDao.update(observation)
+    }
+
+    /**
+     * Mark observation as failed with error.
+     */
+    suspend fun markObservationFailed(localId: String, error: String) {
+        observationDao.markSyncFailed(localId, error)
+    }
+
     // ==================== DocumentReference Operations ====================
 
     /**
@@ -210,6 +245,48 @@ class LocalFhirRepository @Inject constructor(
         documentReferenceDao.deleteById(localId)
     }
 
+    /**
+     * Get all documents pending sync as a Flow.
+     */
+    fun getPendingDocuments(): Flow<List<LocalDocumentReference>> {
+        return documentReferenceDao.getPendingFhirSyncFlow(SyncStatus.PENDING)
+    }
+
+    /**
+     * Get count of failed document syncs.
+     */
+    fun getFailedDocumentCount(): Flow<Int> {
+        return documentReferenceDao.countByStatus(SyncStatus.FAILED)
+    }
+
+    /**
+     * Update a document reference.
+     */
+    suspend fun updateDocumentReference(document: LocalDocumentReference) {
+        documentReferenceDao.update(document)
+    }
+
+    /**
+     * Mark document as synced.
+     */
+    suspend fun markDocumentSynced(localId: String, serverId: String) {
+        documentReferenceDao.markFhirSynced(localId, serverId)
+    }
+
+    /**
+     * Mark document sync as failed.
+     */
+    suspend fun markDocumentFailed(localId: String, error: String) {
+        documentReferenceDao.markFhirSyncFailed(localId, error)
+    }
+
+    /**
+     * Get last sync time (most recent synced observation).
+     */
+    fun getLastSyncTime(): Flow<Long?> {
+        return observationDao.getLastSyncTime()
+    }
+
     // ==================== Conversion Extensions ====================
 
     private fun FhirObservation.toLocalEntity(localId: String): LocalObservation {
@@ -218,7 +295,7 @@ class LocalFhirRepository @Inject constructor(
             serverId = id,
             patientId = patientId,
             type = type,
-            effectiveDateTime = effectiveDateTime.toEpochSecond(java.time.ZoneOffset.UTC),
+            effectiveDateTime = java.time.Instant.parse(effectiveDateTime).epochSecond,
             value = value,
             unit = unit,
             systolicValue = components?.find { it.type == ObservationType.SYSTOLIC_BP }?.value,

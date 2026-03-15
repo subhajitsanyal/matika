@@ -380,7 +380,7 @@ private fun PlaybackContent(
             modifier = Modifier.padding(horizontal = 48.dp)
         ) {
             LinearProgressIndicator(
-                progress = { playbackPosition.toFloat() / duration.coerceAtLeast(1) },
+                progress = playbackPosition.toFloat() / duration.coerceAtLeast(1),
                 modifier = Modifier.fillMaxWidth(),
                 color = CareLogColors.Primary
             )

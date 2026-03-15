@@ -3,13 +3,22 @@ package com.carelog.sync
 import android.content.Context
 import androidx.hilt.work.HiltWorker
 import androidx.work.*
-import com.carelog.fhir.client.HealthLakeFhirClient
-import com.carelog.fhir.local.entities.SyncStatus
+import com.carelog.fhir.client.FhirClient
+import com.carelog.fhir.client.ObservationType
+import com.carelog.fhir.local.entities.LocalObservation
+import com.carelog.fhir.local.entities.LocalDocumentReference
+import com.carelog.fhir.models.FhirDocumentReference
+import com.carelog.fhir.models.FhirObservation
+import com.carelog.fhir.models.MeasurementContext
+import com.carelog.fhir.models.ObservationComponent
 import com.carelog.fhir.repository.LocalFhirRepository
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.time.Instant
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
 import java.util.concurrent.TimeUnit
 
 /**
@@ -23,7 +32,7 @@ class FhirSyncWorker @AssistedInject constructor(
     @Assisted context: Context,
     @Assisted workerParams: WorkerParameters,
     private val localFhirRepository: LocalFhirRepository,
-    private val healthLakeClient: HealthLakeFhirClient,
+    private val fhirClient: FhirClient,
     private val networkMonitor: NetworkMonitor
 ) : CoroutineWorker(context, workerParams) {
 
@@ -35,46 +44,37 @@ class FhirSyncWorker @AssistedInject constructor(
             }
 
             // Process pending observations
-            val pendingObservations = localFhirRepository.getPendingObservations()
+            val pendingObservations = localFhirRepository.getPendingSyncObservations()
             var allSucceeded = true
 
             for (observation in pendingObservations) {
                 try {
-                    // Convert to FHIR JSON and send to HealthLake
-                    val fhirJson = observation.toFhirJson()
+                    // Convert LocalObservation to FhirObservation
+                    val fhirObservation = observation.toFhirObservation()
 
-                    if (observation.serverId == null) {
-                        // New observation - POST
-                        val serverId = healthLakeClient.createObservation(fhirJson)
-                        localFhirRepository.markObservationSynced(observation.id, serverId)
-                    } else {
-                        // Updated observation - PUT
-                        healthLakeClient.updateObservation(observation.serverId, fhirJson)
-                        localFhirRepository.markObservationSynced(observation.id, observation.serverId)
-                    }
+                    // Create on server (always create for now - no update method in client)
+                    val serverId = fhirClient.createObservation(fhirObservation)
+                    localFhirRepository.markObservationSynced(observation.localId, serverId)
                 } catch (e: Exception) {
                     // Mark as failed and continue with others
-                    localFhirRepository.markObservationFailed(observation.id, e.message)
+                    localFhirRepository.markObservationSyncFailed(observation.localId, e.message ?: "Unknown error")
                     allSucceeded = false
                 }
             }
 
             // Process pending documents
-            val pendingDocuments = localFhirRepository.getPendingDocuments()
+            val pendingDocuments = localFhirRepository.getPendingFhirSync()
 
             for (document in pendingDocuments) {
                 try {
-                    val fhirJson = document.toFhirJson()
+                    // Convert LocalDocumentReference to FhirDocumentReference
+                    val fhirDocument = document.toFhirDocumentReference()
 
-                    if (document.serverId == null) {
-                        val serverId = healthLakeClient.createDocumentReference(fhirJson)
-                        localFhirRepository.markDocumentSynced(document.id, serverId)
-                    } else {
-                        healthLakeClient.updateDocumentReference(document.serverId, fhirJson)
-                        localFhirRepository.markDocumentSynced(document.id, document.serverId)
-                    }
+                    // Create on server
+                    val serverId = fhirClient.createDocumentReference(fhirDocument)
+                    localFhirRepository.markDocumentFhirSynced(document.localId, serverId)
                 } catch (e: Exception) {
-                    localFhirRepository.markDocumentFailed(document.id, e.message)
+                    localFhirRepository.markDocumentFhirSyncFailed(document.localId, e.message ?: "Unknown error")
                     allSucceeded = false
                 }
             }
@@ -88,6 +88,58 @@ class FhirSyncWorker @AssistedInject constructor(
         } catch (e: Exception) {
             Result.retry()
         }
+    }
+
+    /**
+     * Convert LocalObservation to FhirObservation.
+     */
+    private fun LocalObservation.toFhirObservation(): FhirObservation {
+        val components = if (type == ObservationType.BLOOD_PRESSURE) {
+            listOfNotNull(
+                systolicValue?.let { ObservationComponent(ObservationType.SYSTOLIC_BP, it, "mmHg") },
+                diastolicValue?.let { ObservationComponent(ObservationType.DIASTOLIC_BP, it, "mmHg") }
+            ).takeIf { it.isNotEmpty() }
+        } else null
+
+        return FhirObservation(
+            id = serverId,
+            patientId = patientId,
+            type = type,
+            effectiveDateTime = Instant.ofEpochSecond(effectiveDateTime)
+                .atZone(ZoneOffset.UTC)
+                .format(DateTimeFormatter.ISO_INSTANT),
+            value = value,
+            unit = unit,
+            components = components,
+            interpretation = interpretation,
+            performerId = performerId,
+            performerType = performerType,
+            note = note,
+            context = MeasurementContext(fasting = isFasting, postMeal = isPostMeal),
+            status = status
+        )
+    }
+
+    /**
+     * Convert LocalDocumentReference to FhirDocumentReference.
+     */
+    private fun LocalDocumentReference.toFhirDocumentReference(): FhirDocumentReference {
+        return FhirDocumentReference(
+            id = serverId,
+            patientId = patientId,
+            documentId = documentId,
+            type = type,
+            title = title,
+            description = description,
+            contentUrl = contentUrl ?: localFilePath,
+            contentType = contentType,
+            size = size,
+            date = Instant.ofEpochMilli(date).toString(),
+            authorId = authorId,
+            authorName = authorName,
+            authorType = authorType,
+            status = status
+        )
     }
 
     companion object {
