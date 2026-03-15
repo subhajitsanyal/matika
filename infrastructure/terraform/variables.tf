@@ -87,3 +87,9 @@ variable "enable_waf" {
   type        = bool
   default     = true
 }
+
+variable "enable_bastion" {
+  description = "Enable bastion EC2 instance for SSM port-forwarding to RDS"
+  type        = bool
+  default     = false
+}

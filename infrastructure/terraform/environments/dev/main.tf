@@ -39,6 +39,7 @@ module "carelog" {
   # Feature flags
   enable_healthlake = false # Disable for dev to save costs
   enable_waf        = false # Disable for dev
+  enable_bastion    = true  # Enable bastion for RDS access via SSM
 }
 
 output "vpc_id" {
@@ -51,4 +52,13 @@ output "public_subnet_ids" {
 
 output "private_subnet_ids" {
   value = module.carelog.private_subnet_ids
+}
+
+output "bastion_instance_id" {
+  value = module.carelog.bastion_instance_id
+}
+
+output "bastion_ssm_port_forward_command" {
+  description = "Run this command to port-forward RDS to localhost:5432"
+  value       = module.carelog.bastion_ssm_port_forward_command
 }
