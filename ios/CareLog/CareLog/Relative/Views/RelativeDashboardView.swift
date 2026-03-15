@@ -98,11 +98,10 @@ private struct VitalsSummaryList: View {
                 )
 
                 // Vital cards
-                ForEach(VitalTypeAPI.allCases, id: \.self) { vitalType ->
-                    let vital = summary.latestVitals[vitalType.rawValue.lowercased()]
+                ForEach(VitalTypeAPI.allCases, id: \.self) { vitalType in
                     VitalSummaryCard(
                         vitalType: vitalType,
-                        vital: vital
+                        vital: summary.latestVitals[vitalType.rawValue.lowercased()]
                     )
                 }
             }
