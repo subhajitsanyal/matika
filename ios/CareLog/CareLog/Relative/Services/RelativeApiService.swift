@@ -27,7 +27,7 @@ actor RelativeApiService {
 
     func getObservations(
         patientId: String,
-        vitalType: VitalType? = nil,
+        vitalType: VitalTypeAPI? = nil,
         startDate: Date? = nil,
         endDate: Date? = nil
     ) async throws -> [VitalObservation] {

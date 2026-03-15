@@ -116,14 +116,14 @@ final class TemperatureViewModel: ObservableObject {
             let valueInCelsius = unit == "\u{00B0}F" ? (tempValue - 32) * 5 / 9 : tempValue
 
             // Create temperature observation
-            let observation = LocalObservation(
-                id: UUID().uuidString,
+            let observation = FHIRObservation(
                 patientId: patientId,
                 type: .bodyTemperature,
+                effectiveDateTime: Date(),
                 value: valueInCelsius,
                 unit: "Cel",
-                effectiveDateTime: Date(),
-                performerName: user.name
+                performerId: user.userId,
+                performerType: .relatedPerson
             )
 
             // Save to local store (adds to sync queue)

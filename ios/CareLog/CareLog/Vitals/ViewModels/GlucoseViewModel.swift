@@ -117,15 +117,15 @@ final class GlucoseViewModel: ObservableObject {
             let valueInMgDl = unit == "mmol/L" ? glucoseValue * 18.0 : glucoseValue
 
             // Create glucose observation
-            let observation = LocalObservation(
-                id: UUID().uuidString,
+            let observation = FHIRObservation(
                 patientId: patientId,
                 type: .bloodGlucose,
+                effectiveDateTime: Date(),
                 value: valueInMgDl,
                 unit: "mg/dL",
-                effectiveDateTime: Date(),
-                performerName: user.name,
-                notes: mealTiming?.displayName
+                performerId: user.userId,
+                performerType: .relatedPerson,
+                note: mealTiming?.displayName
             )
 
             // Save to local store (adds to sync queue)

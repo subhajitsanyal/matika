@@ -56,18 +56,16 @@ struct HistoryView: View {
 // MARK: - Vital Type Filter Bar
 
 struct VitalTypeFilterBar: View {
-    @Binding var selectedType: VitalType?
-    let onTypeSelected: (VitalType?) -> Void
+    @Binding var selectedType: DashboardItem?
+    let onTypeSelected: (DashboardItem?) -> Void
 
-    private let vitalTypes: [VitalType] = [
-        .bloodPressure, .glucose, .temperature, .weight, .pulse, .spO2
-    ]
+    private let vitalTypes: [DashboardItem] = DashboardItem.vitals
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 // "All" chip
-                FilterChipView(
+                VitalFilterChip(
                     title: "All",
                     isSelected: selectedType == nil,
                     color: CareLogColors.primary
@@ -78,7 +76,7 @@ struct VitalTypeFilterBar: View {
 
                 // Vital type chips
                 ForEach(vitalTypes) { type in
-                    FilterChipView(
+                    VitalFilterChip(
                         title: type.displayName,
                         isSelected: selectedType == type,
                         color: type.color
@@ -95,7 +93,7 @@ struct VitalTypeFilterBar: View {
     }
 }
 
-struct FilterChipView: View {
+private struct VitalFilterChip: View {
     let title: String
     let isSelected: Bool
     let color: Color
@@ -230,7 +228,7 @@ struct HistoryEntryRow: View {
             Spacer()
 
             // Sync status
-            SyncStatusIndicator(status: entry.syncStatus)
+            SyncStatusIcon(status: entry.syncStatus)
         }
         .padding(.vertical, 8)
     }
@@ -243,9 +241,9 @@ struct HistoryEntryRow: View {
     }
 }
 
-// MARK: - Sync Status Indicator
+// MARK: - Sync Status Icon
 
-struct SyncStatusIndicator: View {
+private struct SyncStatusIcon: View {
     let status: SyncStatus
 
     var body: some View {

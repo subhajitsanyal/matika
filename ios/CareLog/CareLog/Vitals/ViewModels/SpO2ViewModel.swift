@@ -82,14 +82,14 @@ final class SpO2ViewModel: ObservableObject {
             }
 
             // Create SpO2 observation
-            let observation = LocalObservation(
-                id: UUID().uuidString,
+            let observation = FHIRObservation(
                 patientId: patientId,
                 type: .oxygenSaturation,
+                effectiveDateTime: Date(),
                 value: Double(spo2Value),
                 unit: "%",
-                effectiveDateTime: Date(),
-                performerName: user.name
+                performerId: user.userId,
+                performerType: .relatedPerson
             )
 
             // Save to local store (adds to sync queue)

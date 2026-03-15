@@ -268,8 +268,8 @@ final class SyncStatusViewModel: ObservableObject {
     }
 
     private func updateStatus() async {
-        let pending = await localFHIRRepository.getPendingCount()
-        let failed = await localFHIRRepository.getFailedCount()
+        let pending = await MainActor.run { (try? localFHIRRepository.getPendingCount()) ?? 0 }
+        let failed = await MainActor.run { (try? localFHIRRepository.getFailedCount()) ?? 0 }
 
         pendingCount = pending
         failedCount = failed

@@ -123,6 +123,60 @@ final class LocalObservation {
         get { SyncStatus(rawValue: syncStatusRawValue) ?? .pending }
         set { syncStatusRawValue = newValue.rawValue }
     }
+
+    /// Convert to FHIR JSON representation.
+    func toFHIRJSON() throws -> [String: Any] {
+        var resource: [String: Any] = [
+            "resourceType": "Observation",
+            "status": status.rawValue,
+            "code": [
+                "coding": [[
+                    "system": "http://loinc.org",
+                    "code": type.loincCode
+                ]]
+            ],
+            "subject": [
+                "reference": "Patient/\(patientId)"
+            ],
+            "effectiveDateTime": ISO8601DateFormatter().string(from: effectiveDateTime)
+        ]
+
+        if let id = serverId {
+            resource["id"] = id
+        }
+
+        if let value = value, let unit = unit {
+            resource["valueQuantity"] = [
+                "value": value,
+                "unit": unit,
+                "system": "http://unitsofmeasure.org"
+            ]
+        }
+
+        // Blood pressure components
+        if type == .bloodPressure, let sys = systolicValue, let dia = diastolicValue {
+            resource["component"] = [
+                [
+                    "code": ["coding": [["system": "http://loinc.org", "code": "8480-6"]]],
+                    "valueQuantity": ["value": sys, "unit": "mmHg"]
+                ],
+                [
+                    "code": ["coding": [["system": "http://loinc.org", "code": "8462-4"]]],
+                    "valueQuantity": ["value": dia, "unit": "mmHg"]
+                ]
+            ]
+        }
+
+        if let performerId = performerId {
+            resource["performer"] = [["reference": "RelatedPerson/\(performerId)"]]
+        }
+
+        if let note = note {
+            resource["note"] = [["text": note]]
+        }
+
+        return resource
+    }
 }
 
 // MARK: - Local Document Reference
@@ -223,5 +277,44 @@ final class LocalDocumentReference {
     var fhirSyncStatus: SyncStatus {
         get { SyncStatus(rawValue: fhirSyncStatusRawValue) ?? .pending }
         set { fhirSyncStatusRawValue = newValue.rawValue }
+    }
+
+    /// Convert to FHIR JSON representation.
+    func toFHIRJSON() throws -> [String: Any] {
+        var resource: [String: Any] = [
+            "resourceType": "DocumentReference",
+            "status": documentStatus.rawValue,
+            "type": [
+                "coding": [[
+                    "system": "http://loinc.org",
+                    "code": type.loincCode
+                ]]
+            ],
+            "subject": [
+                "reference": "Patient/\(patientId)"
+            ],
+            "date": ISO8601DateFormatter().string(from: date),
+            "content": [[
+                "attachment": [
+                    "contentType": contentType,
+                    "url": contentUrl ?? localFilePath,
+                    "title": title
+                ]
+            ]]
+        ]
+
+        if let id = serverId {
+            resource["id"] = id
+        }
+
+        if let description = documentDescription {
+            resource["description"] = description
+        }
+
+        if let authorName = authorName {
+            resource["author"] = [["display": authorName]]
+        }
+
+        return resource
     }
 }

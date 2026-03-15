@@ -15,6 +15,14 @@ import SwiftData
 /// when connectivity is available.
 @MainActor
 class LocalFHIRRepository: ObservableObject {
+    static let shared: LocalFHIRRepository = {
+        do {
+            return try LocalFHIRRepository()
+        } catch {
+            fatalError("Failed to initialize LocalFHIRRepository: \(error)")
+        }
+    }()
+
     private let modelContainer: ModelContainer
     private let modelContext: ModelContext
 
@@ -289,6 +297,31 @@ class LocalFHIRRepository: ObservableObject {
         try modelContext.save()
     }
 
+    /// Mark a document as synced. Alias for markDocumentFHIRSynced.
+    func markDocumentSynced(localId: String, serverId: String) throws {
+        try markDocumentFHIRSynced(localId: localId, serverId: serverId)
+    }
+
+    /// Mark a document sync as failed.
+    func markDocumentFailed(localId: String, error: String) throws {
+        let descriptor = FetchDescriptor<LocalDocumentReference>(
+            predicate: #Predicate { $0.localId == localId }
+        )
+        guard let document = try modelContext.fetch(descriptor).first else { return }
+
+        document.fhirSyncStatus = .failed
+        document.syncError = error
+        document.syncAttempts += 1
+        document.updatedAt = Date()
+
+        try modelContext.save()
+    }
+
+    /// Mark an observation as failed. Alias for markObservationSyncFailed.
+    func markObservationFailed(localId: String, error: String) throws {
+        try markObservationSyncFailed(localId: localId, error: error)
+    }
+
     /// Delete a document reference.
     func deleteDocumentReference(localId: String) throws {
         let descriptor = FetchDescriptor<LocalDocumentReference>(
@@ -355,5 +388,51 @@ extension LocalDocumentReference {
             authorType: authorType,
             status: documentStatus
         )
+    }
+}
+
+// MARK: - LocalFHIRRepository Sync Status Extension
+
+extension LocalFHIRRepository {
+    /// Get pending observations for sync.
+    func getPendingObservations(limit: Int = 10) throws -> [LocalObservation] {
+        var descriptor = FetchDescriptor<LocalObservation>(
+            predicate: #Predicate { $0.syncStatusRawValue == "pending" },
+            sortBy: [SortDescriptor(\.createdAt)]
+        )
+        descriptor.fetchLimit = limit
+        return try modelContext.fetch(descriptor)
+    }
+
+    /// Get pending documents for sync.
+    func getPendingDocuments(limit: Int = 10) throws -> [LocalDocumentReference] {
+        var descriptor = FetchDescriptor<LocalDocumentReference>(
+            predicate: #Predicate { $0.fhirSyncStatusRawValue == "pending" },
+            sortBy: [SortDescriptor(\.createdAt)]
+        )
+        descriptor.fetchLimit = limit
+        return try modelContext.fetch(descriptor)
+    }
+
+    /// Get total pending count.
+    func getPendingCount() throws -> Int {
+        let obsDescriptor = FetchDescriptor<LocalObservation>(
+            predicate: #Predicate { $0.syncStatusRawValue == "pending" }
+        )
+        let docDescriptor = FetchDescriptor<LocalDocumentReference>(
+            predicate: #Predicate { $0.fhirSyncStatusRawValue == "pending" }
+        )
+        return try modelContext.fetchCount(obsDescriptor) + modelContext.fetchCount(docDescriptor)
+    }
+
+    /// Get total failed count.
+    func getFailedCount() throws -> Int {
+        let obsDescriptor = FetchDescriptor<LocalObservation>(
+            predicate: #Predicate { $0.syncStatusRawValue == "failed" }
+        )
+        let docDescriptor = FetchDescriptor<LocalDocumentReference>(
+            predicate: #Predicate { $0.fhirSyncStatusRawValue == "failed" }
+        )
+        return try modelContext.fetchCount(obsDescriptor) + modelContext.fetchCount(docDescriptor)
     }
 }

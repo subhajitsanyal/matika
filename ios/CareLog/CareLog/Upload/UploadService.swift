@@ -66,27 +66,29 @@ final class UploadService {
             throw UploadError.uploadFailed(error.localizedDescription)
         }
 
-        // 3. Create local DocumentReference
-        let documentRef = LocalDocumentReference(
-            id: UUID().uuidString,
+        // 3. Create FHIRDocumentReference
+        let documentId = UUID().uuidString
+        let tempFilePath = FileManager.default.temporaryDirectory.appendingPathComponent(documentId).path
+        let documentRef = FHIRDocumentReference(
             patientId: patientId,
-            type: fileType.fhirCode,
+            documentId: documentId,
+            type: fileType.toDocumentType(),
+            title: description ?? fileType.displayName,
+            description: description,
+            contentUrl: presignedResponse.s3Key,
             contentType: contentType,
-            s3Key: presignedResponse.s3Key,
-            description: description ?? fileType.displayName,
-            createdAt: Date(),
-            authorName: user.name,
-            syncStatus: .pending
+            date: Date(),
+            authorName: user.name
         )
 
         // 4. Save to local store (adds to sync queue)
-        try await localFHIRRepository.saveDocumentReference(documentRef)
+        let localId = try await localFHIRRepository.saveDocumentReference(documentRef, localFilePath: tempFilePath)
 
         // 5. Play success acknowledgement
         voicePlayer.playUploadSuccess()
 
         return UploadResult(
-            documentId: documentRef.id,
+            documentId: localId,
             s3Key: presignedResponse.s3Key
         )
     }
@@ -118,9 +120,7 @@ final class UploadService {
         fileType: FileType,
         contentType: String
     ) async throws -> PresignedURLResponse {
-        guard let token = await authService.getAccessToken() else {
-            throw UploadError.notAuthenticated
-        }
+        let token = try await authService.getAccessToken()
 
         var request = URLRequest(url: URL(string: "\(apiBaseURL)/upload/presigned-url")!)
         request.httpMethod = "POST"
@@ -195,6 +195,16 @@ enum FileType: String, CaseIterable {
     case document
 
     var apiValue: String { rawValue }
+
+    /// Convert to DocumentType for FHIR storage.
+    func toDocumentType() -> DocumentType {
+        switch self {
+        case .prescription: return .prescription
+        case .woundPhoto, .urinePhoto, .stoolPhoto, .vomitPhoto, .medicalPhoto: return .imaging
+        case .voiceNote, .videoNote: return .other
+        case .document: return .other
+        }
+    }
 
     var fhirCode: String {
         switch self {

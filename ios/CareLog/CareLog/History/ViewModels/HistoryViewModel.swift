@@ -8,7 +8,7 @@ final class HistoryViewModel: ObservableObject {
     // MARK: - Published Properties
 
     @Published var entries: [HistoryEntry] = []
-    @Published var selectedVitalType: VitalType?
+    @Published var selectedVitalType: DashboardItem?
     @Published var showDateFilter: Bool = false
     @Published var startDate: Date?
     @Published var endDate: Date?
@@ -51,7 +51,7 @@ final class HistoryViewModel: ObservableObject {
 
     // MARK: - Actions
 
-    func selectVitalType(_ type: VitalType?) {
+    func selectVitalType(_ type: DashboardItem?) {
         selectedVitalType = type
         Task {
             await loadHistory()
@@ -82,17 +82,12 @@ final class HistoryViewModel: ObservableObject {
 
             // Get observations based on filter
             let observationType = selectedVitalType?.toObservationType()
-            let observations: [LocalObservation]
+            let observations: [FHIRObservation]
 
             if let type = observationType {
-                observations = try await localFHIRRepository.getObservationsByType(
-                    patientId: patientId,
-                    type: type
-                )
+                observations = try localFHIRRepository.getObservationsByType(patientId, type: type)
             } else {
-                observations = try await localFHIRRepository.getAllObservations(
-                    patientId: patientId
-                )
+                observations = try localFHIRRepository.getObservationsForPatient(patientId)
             }
 
             // Filter by date range if set
@@ -108,12 +103,12 @@ final class HistoryViewModel: ObservableObject {
             // Convert to history entries
             entries = filteredObservations.map { obs in
                 HistoryEntry(
-                    id: obs.id,
-                    vitalType: obs.type.toVitalType(),
+                    id: obs.id ?? UUID().uuidString,
+                    vitalType: obs.type.toDashboardItem(),
                     displayValue: formatDisplayValue(obs),
                     timestamp: obs.effectiveDateTime,
-                    performerName: obs.performerName,
-                    syncStatus: obs.syncStatus
+                    performerName: obs.performerId,
+                    syncStatus: .synced
                 )
             }.sorted { $0.timestamp > $1.timestamp }
 
@@ -125,7 +120,7 @@ final class HistoryViewModel: ObservableObject {
         }
     }
 
-    private func formatDisplayValue(_ obs: LocalObservation) -> String {
+    private func formatDisplayValue(_ obs: FHIRObservation) -> String {
         switch obs.type {
         case .bloodPressure:
             let systolic = obs.components?.first(where: { $0.type == .systolicBP })?.value
@@ -176,7 +171,7 @@ final class HistoryViewModel: ObservableObject {
 
 struct HistoryEntry: Identifiable {
     let id: String
-    let vitalType: VitalType
+    let vitalType: DashboardItem
     let displayValue: String
     let timestamp: Date
     let performerName: String?
@@ -185,7 +180,7 @@ struct HistoryEntry: Identifiable {
 
 // MARK: - Extensions
 
-extension VitalType {
+extension DashboardItem {
     func toObservationType() -> ObservationType? {
         switch self {
         case .bloodPressure: return .bloodPressure
@@ -200,7 +195,7 @@ extension VitalType {
 }
 
 extension ObservationType {
-    func toVitalType() -> VitalType {
+    func toDashboardItem() -> DashboardItem {
         switch self {
         case .bloodPressure, .systolicBP, .diastolicBP: return .bloodPressure
         case .bloodGlucose: return .glucose

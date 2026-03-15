@@ -101,18 +101,17 @@ final class BloodPressureViewModel: ObservableObject {
             }
 
             // Create blood pressure observation with components
-            let observation = LocalObservation(
-                id: UUID().uuidString,
+            let observation = FHIRObservation(
                 patientId: patientId,
                 type: .bloodPressure,
-                value: nil, // BP uses components
-                unit: "mmHg",
                 effectiveDateTime: Date(),
-                performerName: user.name,
+                unit: "mmHg",
                 components: [
                     ObservationComponent(type: .systolicBP, value: Double(sys), unit: "mmHg"),
                     ObservationComponent(type: .diastolicBP, value: Double(dia), unit: "mmHg")
-                ]
+                ],
+                performerId: user.userId,
+                performerType: .relatedPerson
             )
 
             // Save to local store (adds to sync queue)

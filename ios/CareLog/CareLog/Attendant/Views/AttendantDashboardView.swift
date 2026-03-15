@@ -28,7 +28,7 @@ struct AttendantDashboardView: View {
                         GridItem(.flexible())
                     ], spacing: 12) {
                         ForEach(VitalTypePatient.allCases, id: \.self) { vitalType in
-                            VitalButton(
+                            VitalActionButton(
                                 title: vitalType.displayName,
                                 icon: vitalType.iconName,
                                 color: vitalType.color
@@ -38,7 +38,7 @@ struct AttendantDashboardView: View {
                         }
 
                         // Upload button
-                        VitalButton(
+                        VitalActionButton(
                             title: "Upload",
                             icon: "arrow.up.doc",
                             color: CareLogColors.primary
@@ -47,7 +47,7 @@ struct AttendantDashboardView: View {
                         }
 
                         // Notes button (attendant-specific)
-                        VitalButton(
+                        VitalActionButton(
                             title: "Add Note",
                             icon: "note.text.badge.plus",
                             color: CareLogColors.secondary
@@ -125,9 +125,9 @@ private struct AttendantBanner: View {
     }
 }
 
-// MARK: - Vital Button
+// MARK: - Vital Action Button
 
-private struct VitalButton: View {
+private struct VitalActionButton: View {
     let title: String
     let icon: String
     let color: Color

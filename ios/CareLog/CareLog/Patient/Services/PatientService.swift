@@ -79,7 +79,7 @@ class PatientService: ObservableObject {
     }
 
     /// Fetch patients linked to the current user.
-    func fetchLinkedPatients() async throws -> [PatientSummary] {
+    func fetchLinkedPatients() async throws -> [PatientListItem] {
         let token = try await authService.getAccessToken()
 
         guard let url = URL(string: "\(baseURL)/patients") else {
@@ -98,7 +98,7 @@ class PatientService: ObservableObject {
         }
 
         let decoder = JSONDecoder()
-        return try decoder.decode([PatientSummary].self, from: data)
+        return try decoder.decode([PatientListItem].self, from: data)
     }
 
     private func parseErrorMessage(from data: Data) -> String {
@@ -111,7 +111,7 @@ class PatientService: ObservableObject {
 }
 
 /// Summary of a patient for list display.
-struct PatientSummary: Codable, Identifiable {
+struct PatientListItem: Codable, Identifiable {
     let id: String
     let patientId: String
     let name: String

@@ -131,7 +131,7 @@ class VerificationViewModel: ObservableObject {
 
     private let authService: AuthService
 
-    init(authService: AuthService = AuthService()) {
+    init(authService: AuthService = .shared) {
         self.authService = authService
     }
 

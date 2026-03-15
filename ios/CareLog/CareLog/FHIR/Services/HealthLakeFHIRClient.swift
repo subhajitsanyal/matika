@@ -13,6 +13,8 @@ import Foundation
 /// which proxies to HealthLake.
 @MainActor
 class HealthLakeFHIRClient: FHIRClient, ObservableObject {
+    static let shared = HealthLakeFHIRClient(authService: .shared)
+
     private let authService: AuthService
     private let baseURL: String
 

@@ -71,7 +71,7 @@ struct DashboardView: View {
                 // Missed reminder banner
                 if let reminder = viewModel.missedReminder {
                     MissedReminderBanner(
-                        vitalType: reminder,
+                        dashboardItem: reminder,
                         onDismiss: { viewModel.dismissReminder() },
                         onLogNow: { /* Navigate to vital */ }
                     )
@@ -85,11 +85,11 @@ struct DashboardView: View {
                     ],
                     spacing: 16
                 ) {
-                    ForEach(VitalType.dashboardItems) { vitalType in
-                        NavigationLink(destination: destinationView(for: vitalType)) {
+                    ForEach(DashboardItem.dashboardItems) { item in
+                        NavigationLink(destination: destinationView(for: item)) {
                             VitalButton(
-                                vitalType: vitalType,
-                                lastValue: viewModel.lastValues[vitalType]
+                                dashboardItem: item,
+                                lastValue: viewModel.lastValues[item]
                             )
                         }
                         .buttonStyle(PlainButtonStyle())
@@ -108,8 +108,8 @@ struct DashboardView: View {
     // MARK: - Navigation Destinations
 
     @ViewBuilder
-    private func destinationView(for vitalType: VitalType) -> some View {
-        switch vitalType {
+    private func destinationView(for item: DashboardItem) -> some View {
+        switch item {
         case .bloodPressure:
             BloodPressureInputView()
         case .glucose:
@@ -150,7 +150,7 @@ struct SyncBadge: View {
 // MARK: - Missed Reminder Banner
 
 struct MissedReminderBanner: View {
-    let vitalType: VitalType
+    let dashboardItem: DashboardItem
     let onDismiss: () -> Void
     let onLogNow: () -> Void
 
@@ -164,7 +164,7 @@ struct MissedReminderBanner: View {
                 Text("Reminder")
                     .font(.headline)
                     .foregroundColor(CareLogColors.warning)
-                Text("Time to log your \(vitalType.displayName)")
+                Text("Time to log your \(dashboardItem.displayName)")
                     .font(.subheadline)
                     .foregroundColor(CareLogColors.onSurface)
             }
@@ -193,7 +193,7 @@ struct MissedReminderBanner: View {
 // MARK: - Vital Button
 
 struct VitalButton: View {
-    let vitalType: VitalType
+    let dashboardItem: DashboardItem
     let lastValue: String?
 
     var body: some View {
@@ -201,16 +201,16 @@ struct VitalButton: View {
             // Icon container
             ZStack {
                 RoundedRectangle(cornerRadius: 16)
-                    .fill(vitalType.color)
+                    .fill(dashboardItem.color)
                     .frame(width: 64, height: 64)
 
-                Image(systemName: vitalType.iconName)
+                Image(systemName: dashboardItem.iconName)
                     .font(.system(size: 28, weight: .medium))
                     .foregroundColor(.white)
             }
 
             // Label
-            Text(vitalType.label)
+            Text(dashboardItem.label)
                 .font(.headline)
                 .multilineTextAlignment(.center)
                 .foregroundColor(CareLogColors.onSurface)
@@ -227,7 +227,7 @@ struct VitalButton: View {
         .frame(maxWidth: .infinity)
         .aspectRatio(1, contentMode: .fit)
         .padding(16)
-        .background(vitalType.color.opacity(0.12))
+        .background(dashboardItem.color.opacity(0.12))
         .cornerRadius(16)
         .shadow(color: .black.opacity(0.05), radius: 2, x: 0, y: 1)
     }
@@ -235,22 +235,17 @@ struct VitalButton: View {
 
 // MARK: - Placeholder Views
 
+struct AlertsView: View {
+    var body: some View {
+        Text("Alerts")
+            .navigationTitle("Alerts")
+    }
+}
+
 struct SettingsView: View {
     var body: some View {
         Text("Settings")
             .navigationTitle("Settings")
-    }
-}
-
-struct HistoryView: View {
-    var body: some View {
-        Text("History View")
-    }
-}
-
-struct AlertsView: View {
-    var body: some View {
-        Text("Alerts View")
     }
 }
 
