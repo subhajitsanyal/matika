@@ -3,7 +3,7 @@
 
 CREATE TABLE IF NOT EXISTS attendant_invites (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    patient_id INTEGER NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+    patient_id UUID NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
     invite_token VARCHAR(64) UNIQUE NOT NULL,
     attendant_name VARCHAR(100) NOT NULL,
     attendant_email VARCHAR(255),
@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS attendant_invites (
     invited_by VARCHAR(255) NOT NULL,  -- Cognito sub of inviter
     expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
     status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'expired', 'revoked')),
-    accepted_by_user_id INTEGER REFERENCES users(id),
+    accepted_by_user_id UUID REFERENCES users(id),
     accepted_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
@@ -32,7 +32,7 @@ CREATE TRIGGER update_attendant_invites_updated_at
 -- Add similar table for doctor invites
 CREATE TABLE IF NOT EXISTS doctor_invites (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    patient_id INTEGER NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+    patient_id UUID NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
     invite_token VARCHAR(64) UNIQUE NOT NULL,
     doctor_name VARCHAR(100) NOT NULL,
     doctor_email VARCHAR(255) NOT NULL,
@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS doctor_invites (
     invited_by VARCHAR(255) NOT NULL,  -- Cognito sub of inviter
     expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
     status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'expired', 'revoked')),
-    accepted_by_user_id INTEGER REFERENCES users(id),
+    accepted_by_user_id UUID REFERENCES users(id),
     accepted_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP

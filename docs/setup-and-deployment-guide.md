@@ -212,9 +212,15 @@ terraform output
 
 ### 3.5 Launch Bastion EC2 Instance for RDS Access
 
-The RDS instance is in a private subnet and not publicly accessible. To connect (e.g., for running Flyway migrations), launch a bastion EC2 instance in the same VPC with SSM Session Manager access.
+The RDS instance is in a private subnet and not publicly accessible. To connect (e.g., for running Flyway migrations), you need a bastion EC2 instance in the same VPC with SSM Session Manager for port-forwarding.
 
-#### 3.5.1 Create IAM Role for SSM
+#### 3.5.1 Install SSM Session Manager Plugin (Local Machine)
+
+```bash
+brew install --cask session-manager-plugin
+```
+
+#### 3.5.2 Create IAM Role for SSM
 
 ```bash
 # Create the trust policy
@@ -234,91 +240,82 @@ cat > ssm-trust-policy.json << 'EOF'
 EOF
 
 # Create the IAM role
-aws iam create-role \
-    --role-name carelog-dev-bastion-role \
-    --assume-role-policy-document file://ssm-trust-policy.json \
-    --region ap-south-1
+aws iam create-role --role-name carelog-dev-bastion-role --assume-role-policy-document file://ssm-trust-policy.json
 
 # Attach the SSM managed policy
-aws iam attach-role-policy \
-    --role-name carelog-dev-bastion-role \
-    --policy-arn arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+aws iam attach-role-policy --role-name carelog-dev-bastion-role --policy-arn arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
 
 # Create an instance profile and add the role
-aws iam create-instance-profile \
-    --instance-profile-name carelog-dev-bastion-profile
+aws iam create-instance-profile --instance-profile-name carelog-dev-bastion-profile
+aws iam add-role-to-instance-profile --instance-profile-name carelog-dev-bastion-profile --role-name carelog-dev-bastion-role
 
-aws iam add-role-to-instance-profile \
-    --instance-profile-name carelog-dev-bastion-profile \
-    --role-name carelog-dev-bastion-role
-
-# Wait a few seconds for IAM propagation
+# Wait for IAM propagation
 sleep 10
 ```
 
-#### 3.5.2 Launch the Bastion Instance
-
-Launch a small EC2 instance in one of the VPC's **public subnets** (from `terraform output public_subnet_ids`):
+#### 3.5.3 Launch the Bastion Instance
 
 ```bash
-# Get the latest Amazon Linux 2023 AMI
-AMI_ID=$(aws ec2 describe-images \
-    --owners amazon \
-    --filters "Name=name,Values=al2023-ami-*-arm64" "Name=state,Values=available" \
-    --query 'sort_by(Images, &CreationDate)[-1].ImageId' \
-    --output text \
-    --region ap-south-1)
+# Get a public subnet ID from terraform output
+cd infrastructure/terraform/environments/dev
+PUBLIC_SUBNET_ID=$(terraform output -json public_subnet_ids | jq -r '.[0]')
 
-# Launch the instance in a public subnet
-# Replace SUBNET_ID with one of the public subnet IDs from terraform output
-# Replace SG_ID with the RDS security group ID (so it can reach the database)
+# Get the latest Amazon Linux 2023 ARM64 AMI
+AMI_ID=$(aws ec2 describe-images --owners amazon --filters "Name=name,Values=al2023-ami-*-arm64" "Name=state,Values=available" --query 'sort_by(Images, &CreationDate)[-1].ImageId' --output text --region ap-south-1)
+
+# Launch the bastion instance
 aws ec2 run-instances \
     --image-id $AMI_ID \
     --instance-type t4g.micro \
-    --subnet-id SUBNET_ID \
+    --subnet-id $PUBLIC_SUBNET_ID \
     --iam-instance-profile Name=carelog-dev-bastion-profile \
     --associate-public-ip-address \
     --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=carelog-dev-bastion}]' \
     --region ap-south-1
 
-# Note the InstanceId from the output
+# Note the InstanceId from the output (e.g., i-0c3faa75b542e7a05)
 ```
 
-> **Note:** Ensure the instance's security group allows outbound HTTPS (port 443) for SSM to work, and that the RDS security group allows inbound PostgreSQL (port 5432) from the bastion's security group.
+#### 3.5.4 Allow Bastion to Access RDS
 
-#### 3.5.3 Connect via SSM Session Manager
+The RDS security group must allow inbound PostgreSQL traffic from the bastion's security group:
 
 ```bash
-# Wait for the instance to be running, then connect
-aws ssm start-session \
-    --target INSTANCE_ID \
-    --region ap-south-1
+# Find the RDS security group
+RDS_SG=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=*carelog*rds*" --query 'SecurityGroups[0].GroupId' --output text --region ap-south-1)
+
+# Find the bastion's security group
+BASTION_SG=$(aws ec2 describe-instances --instance-ids INSTANCE_ID --query 'Reservations[0].Instances[0].SecurityGroups[0].GroupId' --output text --region ap-south-1)
+
+# Add inbound rule: allow port 5432 from bastion SG to RDS SG
+aws ec2 authorize-security-group-ingress --group-id $RDS_SG --protocol tcp --port 5432 --source-group $BASTION_SG --region ap-south-1
 ```
 
-#### 3.5.4 Port-Forward to RDS for Local Flyway Access
+#### 3.5.5 Start Port-Forwarding to RDS (Terminal 1)
 
-Instead of running Flyway on the bastion, you can port-forward RDS to your local machine:
+Get the RDS endpoint:
 
 ```bash
-# Forward local port 5432 to the RDS endpoint
+aws rds describe-db-instances --db-instance-identifier carelog-dev --region ap-south-1 --query 'DBInstances[0].Endpoint.Address' --output text
+```
+
+Start the port-forward session (keep this terminal open):
+
+```bash
 aws ssm start-session \
     --target INSTANCE_ID \
     --document-name AWS-StartPortForwardingSessionToRemoteHost \
-    --parameters '{
-      "host": ["carelog-dev.c30qocsuk0zl.ap-south-1.rds.amazonaws.com"],
-      "portNumber": ["5432"],
-      "localPortNumber": ["5432"]
-    }' \
+    --parameters '{"host":["YOUR_RDS_ENDPOINT"],"portNumber":["5432"],"localPortNumber":["5432"]}' \
     --region ap-south-1
 ```
 
-Then in another terminal, run Flyway against `localhost:5432`:
-
-```bash
-flyway.url=jdbc:postgresql://localhost:5432/carelog_dev
+You should see:
+```
+Port 5432 opened for sessionId ...
+Waiting for connections...
 ```
 
-#### 3.5.5 Clean Up the Bastion (When Done)
+#### 3.5.6 Clean Up the Bastion (When Done)
 
 ```bash
 # Terminate the instance when no longer needed
@@ -327,24 +324,45 @@ aws ec2 terminate-instances --instance-ids INSTANCE_ID --region ap-south-1
 
 ### 3.6 Run Database Migrations
 
+Open a **second terminal** (while port-forwarding is active in Terminal 1).
+
+#### 3.6.1 Install Flyway
+
 ```bash
-# Install Flyway
 brew install flyway
+```
 
-# Configure Flyway (update with your RDS endpoint)
-cd ../../backend/database
+#### 3.6.2 Retrieve Database Credentials
 
-# Edit flyway.conf with your database credentials
+The database password was auto-generated by Terraform and stored in AWS Secrets Manager:
+
+```bash
+aws secretsmanager get-secret-value --secret-id carelog-dev-db-password --region ap-south-1 --query 'SecretString' --output text
+```
+
+This returns a JSON object with `username`, `password`, `host`, `port`, and `dbname`. Note the `username` and `password` values.
+
+> **Note:** The password may contain special characters. Unicode escapes in the output (e.g., `\u0026` = `&`, `\u003c` = `<`) must be decoded when used in the config file.
+
+#### 3.6.3 Configure and Run Flyway
+
+```bash
+cd backend/database
+
+# Create flyway.conf using credentials from Secrets Manager
+# The port-forward makes RDS available at localhost:5432
 cat > flyway.conf << 'EOF'
-flyway.url=jdbc:postgresql://YOUR_RDS_ENDPOINT:5432/carelog
-flyway.user=carelog_admin
-flyway.password=YOUR_PASSWORD
+flyway.url=jdbc:postgresql://localhost:5432/carelog_dev
+flyway.user=carelog_dev_admin
+flyway.password=YOUR_PASSWORD_FROM_SECRETS_MANAGER
 flyway.locations=filesystem:./migrations
 EOF
 
 # Run migrations
 flyway migrate
 ```
+
+> **Important:** Do not commit `flyway.conf` to version control as it contains database credentials. It is already listed in `.gitignore`.
 
 ### 3.7 Deploy Lambda Functions
 
