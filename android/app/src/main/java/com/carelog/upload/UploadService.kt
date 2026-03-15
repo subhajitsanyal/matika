@@ -3,7 +3,7 @@ package com.carelog.upload
 import android.content.Context
 import android.net.Uri
 import com.carelog.auth.AuthRepository
-import com.carelog.fhir.local.entities.SyncStatus
+import com.carelog.fhir.client.DocumentType
 import com.carelog.fhir.models.FhirDocumentReference
 import com.carelog.fhir.repository.LocalFhirRepository
 import com.carelog.voice.VoiceAcknowledgementPlayer
@@ -87,23 +87,24 @@ class UploadService @Inject constructor(
             val documentRef = FhirDocumentReference(
                 id = UUID.randomUUID().toString(),
                 patientId = patientId,
-                type = fileType.fhirCode,
+                documentId = UUID.randomUUID().toString(),
+                type = fileType.toDocumentType(),
+                title = description ?: fileType.displayName,
+                description = description,
+                contentUrl = presignedResponse.uploadUrl,
                 contentType = contentType,
-                s3Key = presignedResponse.s3Key,
-                description = description ?: fileType.displayName,
-                createdAt = Instant.now().toString(),
-                authorName = user.name,
-                syncStatus = SyncStatus.PENDING
+                date = Instant.now().toString(),
+                authorName = user.name
             )
 
             // 4. Save to local store (adds to sync queue)
-            localFhirRepository.saveDocumentReference(documentRef)
+            localFhirRepository.saveDocumentReference(documentRef, uri.path ?: "")
 
             // 5. Play success acknowledgement
             voicePlayer.playUploadSuccess()
 
             UploadResult.Success(
-                documentId = documentRef.id,
+                documentId = documentRef.id ?: documentRef.documentId,
                 s3Key = presignedResponse.s3Key
             )
         } catch (e: Exception) {
@@ -222,4 +223,15 @@ sealed class UploadResult {
     ) : UploadResult()
 
     data class Error(val message: String) : UploadResult()
+}
+
+/**
+ * Convert FileType to DocumentType.
+ */
+private fun FileType.toDocumentType(): DocumentType {
+    return when (this) {
+        FileType.PRESCRIPTION -> DocumentType.PRESCRIPTION
+        FileType.DOCUMENT -> DocumentType.OTHER
+        else -> DocumentType.OTHER
+    }
 }

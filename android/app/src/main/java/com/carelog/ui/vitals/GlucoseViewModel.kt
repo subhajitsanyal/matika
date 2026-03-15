@@ -120,8 +120,8 @@ class GlucoseViewModel @Inject constructor(
                     value = valueInMgDl,
                     unit = "mg/dL",
                     effectiveDateTime = Instant.now().toString(),
-                    performerName = user.name,
-                    notes = state.mealTiming?.displayName
+                    performerId = user?.userId,
+                    note = state.mealTiming?.displayName
                 )
 
                 // Save to local store (adds to sync queue)

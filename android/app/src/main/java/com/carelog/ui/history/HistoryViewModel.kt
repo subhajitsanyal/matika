@@ -11,6 +11,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.time.Instant
@@ -75,14 +76,17 @@ class HistoryViewModel @Inject constructor(
 
                 // Get observations based on filter
                 val observationType = state.selectedVitalType?.toObservationType()
-                val observations = if (observationType != null) {
+                val observationsFlow = if (observationType != null) {
                     localFhirRepository.getObservationsByType(patientId, observationType)
                 } else {
-                    localFhirRepository.getAllObservations(patientId)
+                    localFhirRepository.getObservationsForPatient(patientId)
                 }
 
+                // Collect the first emission from the flow
+                val observations = observationsFlow.first()
+
                 // Filter by date range if set
-                val filteredObservations = observations.filter { obs ->
+                val filteredObservations = observations.filter { obs: com.carelog.fhir.models.FhirObservation ->
                     val obsDate = Instant.parse(obs.effectiveDateTime)
                         .atZone(ZoneId.systemDefault())
                         .toLocalDate()
@@ -94,14 +98,14 @@ class HistoryViewModel @Inject constructor(
                 }
 
                 // Convert to history entries
-                val entries = filteredObservations.map { obs ->
+                val entries = filteredObservations.map { obs: com.carelog.fhir.models.FhirObservation ->
                     HistoryEntry(
-                        id = obs.id,
+                        id = obs.id ?: "",
                         vitalType = obs.type.toVitalType(),
                         displayValue = formatDisplayValue(obs.type, obs.value, obs.unit, obs.components),
                         timestamp = Instant.parse(obs.effectiveDateTime),
-                        performerName = obs.performerName,
-                        syncStatus = obs.syncStatus
+                        performerName = null,
+                        syncStatus = SyncStatus.SYNCED
                     )
                 }.sortedByDescending { it.timestamp }
 

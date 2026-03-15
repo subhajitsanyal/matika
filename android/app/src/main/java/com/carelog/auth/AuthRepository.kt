@@ -203,6 +203,11 @@ class AuthRepository @Inject constructor(
     }
 
     /**
+     * Get the currently authenticated user synchronously.
+     */
+    fun getCurrentUser(): CareLogUser? = _currentUser.value
+
+    /**
      * Get the current access token for API calls.
      */
     suspend fun getAccessToken(): String? {

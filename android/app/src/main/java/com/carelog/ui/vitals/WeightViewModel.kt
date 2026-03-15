@@ -116,7 +116,7 @@ class WeightViewModel @Inject constructor(
                     value = valueInKg,
                     unit = "kg",
                     effectiveDateTime = Instant.now().toString(),
-                    performerName = user.name
+                    performerId = user?.userId
                 )
 
                 // Save to local store (adds to sync queue)

@@ -116,7 +116,7 @@ class TemperatureViewModel @Inject constructor(
                     value = valueInCelsius,
                     unit = "Cel",
                     effectiveDateTime = Instant.now().toString(),
-                    performerName = user.name
+                    performerId = user?.userId
                 )
 
                 // Save to local store (adds to sync queue)

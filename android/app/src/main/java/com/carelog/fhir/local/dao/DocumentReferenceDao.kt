@@ -143,6 +143,16 @@ interface DocumentReferenceDao {
     @Query("SELECT COUNT(*) FROM document_references WHERE fhir_sync_status != :status")
     fun countPendingFhirSync(status: SyncStatus = SyncStatus.SYNCED): Flow<Int>
 
+    @Query("""
+        SELECT * FROM document_references
+        WHERE fhir_sync_status = :status
+        ORDER BY created_at ASC
+    """)
+    fun getPendingFhirSyncFlow(status: SyncStatus): Flow<List<LocalDocumentReference>>
+
+    @Query("SELECT COUNT(*) FROM document_references WHERE fhir_sync_status = :status")
+    fun countByStatus(status: SyncStatus): Flow<Int>
+
     // ==================== Delete ====================
 
     @Delete

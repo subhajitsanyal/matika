@@ -3,6 +3,8 @@ package com.carelog.ui.consent
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -11,7 +13,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.carelog.ui.theme.CareLogColors
-import kotlinx.coroutines.flow.collectAsState
 
 /**
  * DPDP Consent screen shown during onboarding.
@@ -40,7 +41,7 @@ fun ConsentScreen(
                 navigationIcon = {
                     IconButton(onClick = onCancel) {
                         Icon(
-                            imageVector = androidx.compose.material.icons.Icons.Default.Close,
+                            imageVector = Icons.Default.Close,
                             contentDescription = "Cancel"
                         )
                     }

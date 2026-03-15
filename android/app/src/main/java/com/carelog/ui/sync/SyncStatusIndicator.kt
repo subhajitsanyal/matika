@@ -161,7 +161,7 @@ fun SyncStatusDetailScreen(
                     }
 
                     if (uiState.pendingCount > 0) {
-                        HorizontalDivider()
+                        Divider()
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
@@ -185,7 +185,7 @@ fun SyncStatusDetailScreen(
                     }
 
                     if (uiState.failedCount > 0) {
-                        HorizontalDivider()
+                        Divider()
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween

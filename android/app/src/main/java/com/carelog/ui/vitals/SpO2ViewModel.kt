@@ -73,7 +73,7 @@ class SpO2ViewModel @Inject constructor(
                     value = value.toDouble(),
                     unit = "%",
                     effectiveDateTime = Instant.now().toString(),
-                    performerName = user.name
+                    performerId = user?.userId
                 )
 
                 // Save to local store (adds to sync queue)

@@ -129,6 +129,16 @@ interface ObservationDao {
     @Query("SELECT COUNT(*) FROM observations WHERE sync_status != :status")
     fun countPendingSync(status: SyncStatus = SyncStatus.SYNCED): Flow<Int>
 
+    @Query("""
+        SELECT * FROM observations
+        WHERE sync_status = :syncStatus
+        ORDER BY created_at ASC
+    """)
+    fun getPendingSyncFlow(syncStatus: SyncStatus): Flow<List<LocalObservation>>
+
+    @Query("SELECT MAX(updated_at) FROM observations WHERE sync_status = 'SYNCED'")
+    fun getLastSyncTime(): Flow<Long?>
+
     // ==================== Delete ====================
 
     @Delete
