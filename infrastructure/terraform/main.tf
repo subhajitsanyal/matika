@@ -129,3 +129,14 @@ module "rds" {
   db_name               = var.db_name
   db_username           = var.db_username
 }
+
+# Bastion Module (for SSM port-forwarding to RDS)
+module "bastion" {
+  count  = var.enable_bastion ? 1 : 0
+  source = "./modules/bastion"
+
+  environment           = var.environment
+  vpc_id                = module.vpc.vpc_id
+  public_subnet_id      = module.vpc.public_subnet_ids[0]
+  rds_security_group_id = module.vpc.rds_security_group_id
+}

@@ -68,3 +68,14 @@ output "lambda_security_group_id" {
 #   value       = module.rds.endpoint
 #   sensitive   = true
 # }
+
+# Bastion Outputs
+output "bastion_instance_id" {
+  description = "ID of the bastion EC2 instance (empty if bastion disabled)"
+  value       = var.enable_bastion ? module.bastion[0].instance_id : null
+}
+
+output "bastion_ssm_port_forward_command" {
+  description = "AWS CLI command to port-forward RDS via the bastion"
+  value       = var.enable_bastion ? module.bastion[0].ssm_port_forward_command : null
+}
