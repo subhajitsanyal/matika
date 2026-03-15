@@ -128,7 +128,7 @@ resource "aws_sqs_queue_policy" "document_processing" {
 
 # S3 bucket notification to SQS
 resource "aws_s3_bucket_notification" "document_upload" {
-  count  = var.documents_bucket_id != "" ? 1 : 0
+  count  = var.enable_s3_notifications ? 1 : 0
   bucket = var.documents_bucket_id
 
   queue {

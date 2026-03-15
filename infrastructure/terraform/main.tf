@@ -112,9 +112,10 @@ module "s3" {
 module "sqs" {
   source = "./modules/sqs"
 
-  environment          = var.environment
-  documents_bucket_id  = module.s3.documents_bucket_id
-  documents_bucket_arn = module.s3.documents_bucket_arn
+  environment            = var.environment
+  enable_s3_notifications = true
+  documents_bucket_id    = module.s3.documents_bucket_id
+  documents_bucket_arn   = module.s3.documents_bucket_arn
 }
 
 # RDS Module
