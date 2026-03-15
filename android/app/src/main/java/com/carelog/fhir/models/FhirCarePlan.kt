@@ -120,7 +120,7 @@ data class ActivitySchedule(
     val period: Int = 1,
     val periodUnit: PeriodUnit = PeriodUnit.DAY,
     val timeOfDay: List<String> = emptyList(),  // HH:mm:ss format
-    val when: List<TimingEvent> = emptyList()
+    val `when`: List<TimingEvent> = emptyList()
 )
 
 /**
