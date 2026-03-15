@@ -4,7 +4,7 @@
 # Uses smaller instance sizes and reduced redundancy for cost optimization.
 
 terraform {
-  required_version = ">= 1.6.0"
+  required_version = ">= 1.5.0"
 
   # Backend configuration for dev
   # backend "s3" {
