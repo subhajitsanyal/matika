@@ -159,6 +159,7 @@ class UploadService @Inject constructor(
     /**
      * Upload file to S3 using presigned URL.
      */
+    @Suppress("UNUSED_PARAMETER")
     private suspend fun uploadToS3(
         presignedUrl: String,
         uri: Uri,

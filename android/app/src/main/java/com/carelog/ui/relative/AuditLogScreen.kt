@@ -8,6 +8,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Login
+import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -470,8 +472,8 @@ private fun getActionIcon(action: String): ImageVector {
         "CREATE" -> Icons.Default.Add
         "UPDATE" -> Icons.Default.Edit
         "DELETE" -> Icons.Default.Delete
-        "LOGIN" -> Icons.Default.Login
-        "LOGOUT" -> Icons.Default.Logout
+        "LOGIN" -> Icons.AutoMirrored.Filled.Login
+        "LOGOUT" -> Icons.AutoMirrored.Filled.Logout
         else -> Icons.Default.Info
     }
 }

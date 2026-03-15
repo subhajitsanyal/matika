@@ -303,6 +303,7 @@ private fun RecordingContent(
     }
 }
 
+@Suppress("UNUSED_PARAMETER")
 @Composable
 private fun PlaybackContent(
     context: Context,

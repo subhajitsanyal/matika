@@ -56,6 +56,7 @@ fun VideoRecorderScreen(
     onRecordingComplete: (Uri) -> Unit
 ) {
     val context = LocalContext.current
+    @Suppress("UNUSED_VARIABLE")
     val lifecycleOwner = LocalLifecycleOwner.current
 
     val permissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -225,6 +226,7 @@ fun VideoRecorderScreen(
     }
 }
 
+@Suppress("UNUSED_PARAMETER")
 @Composable
 private fun VideoRecordingContent(
     context: Context,

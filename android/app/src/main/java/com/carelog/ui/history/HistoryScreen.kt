@@ -33,6 +33,7 @@ import java.time.format.FormatStyle
  * Filterable by vital type and date range.
  */
 @OptIn(ExperimentalMaterial3Api::class)
+@Suppress("UNUSED_PARAMETER")
 @Composable
 fun HistoryScreen(
     onNavigateBack: () -> Unit,
@@ -171,6 +172,7 @@ fun VitalTypeFilterTabs(
 /**
  * Date range filter section.
  */
+@Suppress("UNUSED_PARAMETER")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DateRangeFilter(

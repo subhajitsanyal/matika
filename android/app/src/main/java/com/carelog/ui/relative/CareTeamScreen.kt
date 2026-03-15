@@ -567,10 +567,9 @@ class CareTeamViewModel @Inject constructor(
         }
     }
 
+    @Suppress("UNUSED_PARAMETER")
     fun sendInvite(email: String, name: String, role: String) {
         viewModelScope.launch {
-            val patientId = _uiState.value.patientId ?: return@launch
-
             try {
                 // Note: Would call invite API here
                 // For now, just show success and refresh
@@ -584,10 +583,12 @@ class CareTeamViewModel @Inject constructor(
         }
     }
 
+    @Suppress("UNUSED_PARAMETER")
     fun resendInvite(inviteId: String) {
         // Implementation would call API to resend invite
     }
 
+    @Suppress("UNUSED_PARAMETER")
     fun cancelInvite(inviteId: String) {
         // Implementation would call API to cancel invite
         // Then refresh care team
