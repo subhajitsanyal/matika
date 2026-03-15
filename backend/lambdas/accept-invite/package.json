@@ -1,0 +1,14 @@
+{
+  "name": "carelog-accept-invite",
+  "version": "1.0.0",
+  "description": "CareLog Accept Invite Lambda",
+  "main": "index.js",
+  "dependencies": {
+    "@aws-sdk/client-cognito-identity-provider": "^3.400.0",
+    "@aws-sdk/client-secrets-manager": "^3.400.0",
+    "pg": "^8.11.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

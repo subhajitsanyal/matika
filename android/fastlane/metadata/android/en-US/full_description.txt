@@ -1,0 +1,55 @@
+CareLog is a comprehensive health monitoring app designed for elderly patients and their caregivers. Track vital signs, share health data with family members and doctors, and receive timely alerts when health metrics need attention.
+
+KEY FEATURES
+
+For Patients:
+- Easy-to-use interface with large buttons designed for elderly users
+- Track 6 essential vitals: Blood Pressure, Blood Glucose, Temperature, Weight, Pulse, and SpO2
+- Voice confirmation when readings are saved
+- Upload prescriptions, medical photos, and voice/video notes
+- Works offline - data syncs automatically when connected
+
+For Caregivers & Family:
+- Real-time dashboard showing patient's latest health metrics
+- Customizable threshold alerts for each vital type
+- Trend charts to visualize health patterns over time
+- Push notifications for concerning readings
+- Care team management - invite doctors and other caregivers
+
+For Doctors:
+- Web portal access to patient records
+- Review health trends and uploaded documents
+- Set clinical threshold overrides
+- Add notes to patient observations
+- Create and manage care plans
+
+PRIVACY & SECURITY
+
+CareLog is built with healthcare-grade security:
+- HIPAA and DPDP compliant data handling
+- End-to-end encryption for all health data
+- Data stored securely in certified healthcare cloud infrastructure
+- Full audit trail of all data access
+- Your data is never sold or shared without consent
+
+DESIGNED FOR SENIORS
+
+We understand that technology can be challenging. That's why CareLog features:
+- Extra-large buttons and text
+- High contrast visual design
+- Voice feedback for all actions
+- Simple, single-tap workflows
+- Offline-first design for unreliable connections
+
+GET STARTED
+
+1. Download CareLog
+2. Create an account (or have a family member set one up for you)
+3. Start logging your daily vitals
+4. Invite family members to your care team
+5. Share access with your healthcare providers
+
+Your health journey, simplified.
+
+For support: support@carelog.health
+Privacy Policy: https://carelog.health/privacy

@@ -1,0 +1,70 @@
+{
+    "UserAgent": "aws-amplify-cli/2.0",
+    "Version": "1.0",
+    "auth": {
+        "plugins": {
+            "awsCognitoAuthPlugin": {
+                "UserAgent": "aws-amplify-cli/0.1.0",
+                "Version": "0.1.0",
+                "IdentityManager": {
+                    "Default": {}
+                },
+                "CognitoUserPool": {
+                    "Default": {
+                        "PoolId": "${COGNITO_USER_POOL_ID}",
+                        "AppClientId": "${COGNITO_APP_CLIENT_ID}",
+                        "Region": "${AWS_REGION}"
+                    }
+                },
+                "Auth": {
+                    "Default": {
+                        "OAuth": {
+                            "WebDomain": "carelog-dev.auth.us-east-1.amazoncognito.com",
+                            "AppClientId": "${COGNITO_APP_CLIENT_ID}",
+                            "SignInRedirectURI": "carelog://callback",
+                            "SignOutRedirectURI": "carelog://signout",
+                            "Scopes": [
+                                "email",
+                                "openid",
+                                "profile"
+                            ]
+                        },
+                        "authenticationFlowType": "USER_SRP_AUTH",
+                        "socialProviders": [],
+                        "usernameAttributes": [
+                            "EMAIL"
+                        ],
+                        "signupAttributes": [
+                            "EMAIL",
+                            "NAME"
+                        ],
+                        "passwordProtectionSettings": {
+                            "passwordPolicyMinLength": 8,
+                            "passwordPolicyCharacters": [
+                                "REQUIRES_LOWERCASE",
+                                "REQUIRES_UPPERCASE",
+                                "REQUIRES_NUMBERS",
+                                "REQUIRES_SYMBOLS"
+                            ]
+                        },
+                        "mfaConfiguration": "OPTIONAL",
+                        "mfaTypes": [
+                            "TOTP"
+                        ],
+                        "verificationMechanisms": [
+                            "EMAIL"
+                        ]
+                    }
+                }
+            }
+        }
+    },
+    "storage": {
+        "plugins": {
+            "awsS3StoragePlugin": {
+                "bucket": "${S3_BUCKET_NAME}",
+                "region": "${AWS_REGION}"
+            }
+        }
+    }
+}

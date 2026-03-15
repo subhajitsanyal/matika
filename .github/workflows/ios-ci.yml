@@ -1,0 +1,227 @@
+name: iOS CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'ios/**'
+      - '.github/workflows/ios-ci.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'ios/**'
+      - '.github/workflows/ios-ci.yml'
+
+env:
+  XCODE_VERSION: '15.2'
+  IOS_DEPLOYMENT_TARGET: '15.0'
+
+jobs:
+  lint:
+    name: SwiftLint
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install SwiftLint
+        run: brew install swiftlint
+
+      - name: Run SwiftLint
+        working-directory: ios/CareLog
+        run: swiftlint lint --reporter github-actions-logging
+
+  build-and-test:
+    name: Build & Test
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: ios/CareLog
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Select Xcode version
+        run: sudo xcode-select -s /Applications/Xcode_${{ env.XCODE_VERSION }}.app
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Cache Swift Package Manager
+        uses: actions/cache@v4
+        with:
+          path: |
+            ios/CareLog/.build
+            ~/Library/Developer/Xcode/DerivedData
+          key: ${{ runner.os }}-spm-${{ hashFiles('ios/CareLog/Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-
+
+      - name: Resolve Swift packages
+        run: xcodebuild -resolvePackageDependencies -scheme CareLog -project CareLog.xcodeproj
+
+      - name: Build for testing
+        run: |
+          xcodebuild build-for-testing \
+            -scheme CareLog \
+            -project CareLog.xcodeproj \
+            -destination "platform=iOS Simulator,name=iPhone 15,OS=17.2" \
+            -configuration Debug \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            | xcpretty
+
+      - name: Run unit tests
+        run: |
+          xcodebuild test \
+            -scheme CareLog \
+            -project CareLog.xcodeproj \
+            -destination "platform=iOS Simulator,name=iPhone 15,OS=17.2" \
+            -configuration Debug \
+            -resultBundlePath TestResults \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            | xcpretty
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: ios/CareLog/TestResults
+
+  build-release:
+    name: Build Release
+    runs-on: macos-14
+    needs: [lint, build-and-test]
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
+    defaults:
+      run:
+        working-directory: ios/CareLog
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Select Xcode version
+        run: sudo xcode-select -s /Applications/Xcode_${{ env.XCODE_VERSION }}.app
+
+      - name: Install Fastlane
+        run: gem install fastlane
+
+      - name: Cache Swift Package Manager
+        uses: actions/cache@v4
+        with:
+          path: |
+            ios/CareLog/.build
+            ~/Library/Developer/Xcode/DerivedData
+          key: ${{ runner.os }}-spm-${{ hashFiles('ios/CareLog/Package.resolved') }}
+
+      - name: Install certificates and profiles
+        env:
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          MATCH_GIT_BASIC_AUTHORIZATION: ${{ secrets.MATCH_GIT_AUTH }}
+        run: |
+          fastlane match appstore --readonly
+
+      - name: Build archive
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          xcodebuild archive \
+            -scheme CareLog \
+            -project CareLog.xcodeproj \
+            -archivePath build/CareLog.xcarchive \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            DEVELOPMENT_TEAM=$APPLE_TEAM_ID
+
+      - name: Export IPA
+        run: |
+          xcodebuild -exportArchive \
+            -archivePath build/CareLog.xcarchive \
+            -exportPath build/export \
+            -exportOptionsPlist ExportOptions.plist
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-ipa
+          path: ios/CareLog/build/export/CareLog.ipa
+
+  deploy-testflight:
+    name: Deploy to TestFlight
+    runs-on: macos-14
+    needs: build-release
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
+    environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'internal' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download IPA
+        uses: actions/download-artifact@v4
+        with:
+          name: release-ipa
+          path: ./
+
+      - name: Install Fastlane
+        run: gem install fastlane
+
+      - name: Upload to TestFlight
+        env:
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          APP_STORE_CONNECT_API_KEY: ${{ secrets.ASC_API_KEY }}
+        run: |
+          fastlane pilot upload \
+            --ipa CareLog.ipa \
+            --skip_waiting_for_build_processing \
+            --changelog "Build from ${{ github.ref_name }} - ${{ github.sha }}"
+
+  ui-tests:
+    name: UI Tests
+    runs-on: macos-14
+    needs: build-and-test
+    if: github.event_name == 'pull_request'
+    defaults:
+      run:
+        working-directory: ios/CareLog
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Select Xcode version
+        run: sudo xcode-select -s /Applications/Xcode_${{ env.XCODE_VERSION }}.app
+
+      - name: Cache Swift Package Manager
+        uses: actions/cache@v4
+        with:
+          path: |
+            ios/CareLog/.build
+            ~/Library/Developer/Xcode/DerivedData
+          key: ${{ runner.os }}-spm-${{ hashFiles('ios/CareLog/Package.resolved') }}
+
+      - name: Run UI tests
+        run: |
+          xcodebuild test \
+            -scheme CareLogUITests \
+            -project CareLog.xcodeproj \
+            -destination "platform=iOS Simulator,name=iPhone 15,OS=17.2" \
+            -configuration Debug \
+            -resultBundlePath UITestResults \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            | xcpretty
+        continue-on-error: true
+
+      - name: Upload UI test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ui-test-results
+          path: ios/CareLog/UITestResults

@@ -1,0 +1,17 @@
+{
+  "name": "bulk-sync",
+  "version": "1.0.0",
+  "description": "Bulk FHIR sync Lambda for CareLog",
+  "main": "index.js",
+  "scripts": {
+    "test": "jest",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@aws-sdk/client-healthlake": "^3.400.0"
+  },
+  "devDependencies": {
+    "eslint": "^8.50.0",
+    "jest": "^29.7.0"
+  }
+}

@@ -1,0 +1,41 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# IDEs
+.idea/
+*.xcworkspace/
+*.xcuserdata/
+.vscode/
+
+# Dependencies
+node_modules/
+Pods/
+.gradle/
+build/
+
+# Environment
+.env
+.env.local
+*.local
+
+# Build outputs
+dist/
+*.ipa
+*.apk
+*.aab
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+
+# Logs
+*.log
+npm-debug.log*
+
+# Credentials (never commit these)
+credentials.json
+*.pem
+*.key

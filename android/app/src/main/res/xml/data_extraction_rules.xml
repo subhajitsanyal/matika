@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+   Data extraction rules for Android 12+ (API 31+)
+   HIPAA Compliance: Disable cloud backup of PHI
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <!-- Do not backup any app data to cloud - HIPAA compliance -->
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </cloud-backup>
+    <device-transfer>
+        <!-- Allow device-to-device transfer for setup -->
+        <include domain="sharedpref" path="." />
+    </device-transfer>
+</data-extraction-rules>

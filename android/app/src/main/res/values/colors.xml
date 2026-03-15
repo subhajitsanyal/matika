@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Primary Colors - Accessible, high contrast -->
+    <color name="primary">#1565C0</color>
+    <color name="primary_variant">#0D47A1</color>
+    <color name="on_primary">#FFFFFF</color>
+
+    <!-- Secondary Colors -->
+    <color name="secondary">#00897B</color>
+    <color name="secondary_variant">#00695C</color>
+    <color name="on_secondary">#FFFFFF</color>
+
+    <!-- Background Colors -->
+    <color name="background">#FFFFFF</color>
+    <color name="on_background">#1C1B1F</color>
+    <color name="surface">#FFFFFF</color>
+    <color name="on_surface">#1C1B1F</color>
+
+    <!-- Error Colors -->
+    <color name="error">#B3261E</color>
+    <color name="on_error">#FFFFFF</color>
+
+    <!-- Status Colors for Vitals -->
+    <color name="status_normal">#2E7D32</color>
+    <color name="status_warning">#F57C00</color>
+    <color name="status_critical">#C62828</color>
+
+    <!-- Sync Status Colors -->
+    <color name="sync_pending">#FFA000</color>
+    <color name="sync_complete">#388E3C</color>
+    <color name="sync_error">#D32F2F</color>
+
+    <!-- Vital Type Colors -->
+    <color name="vital_bp">#E53935</color>
+    <color name="vital_glucose">#8E24AA</color>
+    <color name="vital_temp">#FB8C00</color>
+    <color name="vital_weight">#43A047</color>
+    <color name="vital_pulse">#D81B60</color>
+    <color name="vital_spo2">#1E88E5</color>
+</resources>

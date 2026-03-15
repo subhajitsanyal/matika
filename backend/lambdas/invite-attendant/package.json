@@ -1,0 +1,16 @@
+{
+  "name": "carelog-invite-attendant",
+  "version": "1.0.0",
+  "description": "CareLog Invite Attendant Lambda",
+  "main": "index.js",
+  "dependencies": {
+    "@aws-sdk/client-ses": "^3.400.0",
+    "@aws-sdk/client-sns": "^3.400.0",
+    "@aws-sdk/client-secrets-manager": "^3.400.0",
+    "pg": "^8.11.0",
+    "uuid": "^9.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

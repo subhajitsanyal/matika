@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">CareLog</string>
+
+    <!-- Common -->
+    <string name="save">Save</string>
+    <string name="cancel">Cancel</string>
+    <string name="ok">OK</string>
+    <string name="retry">Retry</string>
+    <string name="loading">Loading…</string>
+    <string name="error">Error</string>
+
+    <!-- Vitals -->
+    <string name="blood_pressure">Blood Pressure</string>
+    <string name="glucose">Glucose</string>
+    <string name="temperature">Temperature</string>
+    <string name="weight">Weight</string>
+    <string name="pulse">Pulse</string>
+    <string name="spo2">SpO2</string>
+
+    <!-- Units -->
+    <string name="mmhg">mmHg</string>
+    <string name="mg_dl">mg/dL</string>
+    <string name="mmol_l">mmol/L</string>
+    <string name="celsius">°C</string>
+    <string name="fahrenheit">°F</string>
+    <string name="kg">kg</string>
+    <string name="lbs">lbs</string>
+    <string name="bpm">bpm</string>
+    <string name="percent">%</string>
+
+    <!-- Navigation -->
+    <string name="home">Home</string>
+    <string name="history">History</string>
+    <string name="settings">Settings</string>
+
+    <!-- Sync -->
+    <string name="sync_pending">Sync pending</string>
+    <string name="sync_complete">All synced</string>
+    <string name="sync_error">Sync error</string>
+
+    <!-- Authentication -->
+    <string name="login">Login</string>
+    <string name="logout">Logout</string>
+    <string name="email">Email</string>
+    <string name="password">Password</string>
+</resources>
