@@ -46,6 +46,7 @@ class VerificationViewModel @Inject constructor(
     /**
      * Resend verification code.
      */
+    @Suppress("UNUSED_PARAMETER")
     fun resendCode(email: String) {
         viewModelScope.launch {
             _uiState.value = VerificationUiState.Loading

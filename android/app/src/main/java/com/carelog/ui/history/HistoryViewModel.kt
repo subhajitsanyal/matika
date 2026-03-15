@@ -174,7 +174,6 @@ private fun ObservationType.toVitalType(): VitalType {
         ObservationType.BODY_WEIGHT -> VitalType.WEIGHT
         ObservationType.HEART_RATE -> VitalType.PULSE
         ObservationType.OXYGEN_SATURATION -> VitalType.SPO2
-        else -> VitalType.BLOOD_PRESSURE // Default
     }
 }
 

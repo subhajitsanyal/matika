@@ -36,6 +36,7 @@ class RegisterViewModel @Inject constructor(
     /**
      * Register a new user.
      */
+    @Suppress("UNUSED_PARAMETER")
     fun register(
         email: String,
         password: String,

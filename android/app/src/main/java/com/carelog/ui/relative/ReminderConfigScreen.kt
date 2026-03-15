@@ -339,6 +339,7 @@ private fun ReminderCard(
     }
 }
 
+@Suppress("UNUSED_PARAMETER")
 @Composable
 private fun RowScope.WindowOption(
     label: String,

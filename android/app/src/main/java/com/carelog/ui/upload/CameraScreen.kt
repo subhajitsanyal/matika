@@ -54,6 +54,7 @@ fun CameraScreen(
     onImageCaptured: (Uri) -> Unit
 ) {
     val context = LocalContext.current
+    @Suppress("UNUSED_VARIABLE")
     val lifecycleOwner = LocalLifecycleOwner.current
 
     val cameraPermissionState = rememberPermissionState(Manifest.permission.CAMERA)
@@ -182,6 +183,7 @@ private fun PermissionDeniedContent(
     }
 }
 
+@Suppress("UNUSED_PARAMETER")
 @Composable
 private fun CameraPreviewContent(
     imageCapture: ImageCapture,
