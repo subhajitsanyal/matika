@@ -12,7 +12,7 @@ import com.carelog.fhir.models.PerformerType
     tableName = "document_references",
     indices = [
         Index(value = ["patient_id"]),
-        Index(value = ["sync_status"]),
+        Index(value = ["fhir_sync_status"]),
         Index(value = ["date"])
     ]
 )

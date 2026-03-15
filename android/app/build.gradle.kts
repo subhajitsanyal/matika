@@ -3,7 +3,15 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("com.google.dagger.hilt.android")
     id("org.jetbrains.kotlin.plugin.serialization")
+    id("com.google.gms.google-services")
     kotlin("kapt")
+}
+
+// Resolve Guava/ListenableFuture capability conflict between HAPI FHIR and Android libraries
+configurations.configureEach {
+    resolutionStrategy.capabilitiesResolution.withCapability("com.google.guava:listenablefuture") {
+        select("com.google.guava:guava:0")
+    }
 }
 
 android {
@@ -46,6 +54,11 @@ android {
 
     kotlinOptions {
         jvmTarget = "17"
+        freeCompilerArgs += listOf(
+            "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api",
+            "-opt-in=androidx.compose.foundation.layout.ExperimentalLayoutApi",
+            "-opt-in=com.google.accompanist.permissions.ExperimentalPermissionsApi"
+        )
     }
 
     buildFeatures {
@@ -89,11 +102,23 @@ dependencies {
     implementation("com.google.dagger:hilt-android:2.50")
     kapt("com.google.dagger:hilt-android-compiler:2.50")
     implementation("androidx.hilt:hilt-navigation-compose:1.1.0")
+    implementation("androidx.hilt:hilt-work:1.1.0")
+    kapt("androidx.hilt:hilt-compiler:1.1.0")
+
+    // Firebase
+    implementation(platform("com.google.firebase:firebase-bom:32.7.0"))
+    implementation("com.google.firebase:firebase-messaging-ktx")
 
     // SpeziKt - Stanford Spezi Framework for Kotlin
     // FHIR support via HAPI FHIR (SpeziKt compatible)
-    implementation("ca.uhn.hapi.fhir:hapi-fhir-structures-r4:6.10.0")
-    implementation("ca.uhn.hapi.fhir:hapi-fhir-client:6.10.0")
+    implementation("ca.uhn.hapi.fhir:hapi-fhir-structures-r4:6.10.0") {
+        exclude(group = "com.google.guava", module = "guava")
+    }
+    implementation("ca.uhn.hapi.fhir:hapi-fhir-client:6.10.0") {
+        exclude(group = "com.google.guava", module = "guava")
+    }
+    // Use Android-compatible Guava
+    implementation("com.google.guava:guava:32.1.1-android")
 
     // Room Database (for local FHIR storage)
     implementation("androidx.room:room-runtime:2.6.1")
@@ -117,6 +142,9 @@ dependencies {
     // DataStore for preferences
     implementation("androidx.datastore:datastore-preferences:1.0.0")
 
+    // Security (EncryptedSharedPreferences)
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
+
     // Media playback for voice acknowledgements
     implementation("androidx.media:media:1.7.0")
 
@@ -124,6 +152,15 @@ dependencies {
     implementation("androidx.camera:camera-camera2:1.3.1")
     implementation("androidx.camera:camera-lifecycle:1.3.1")
     implementation("androidx.camera:camera-view:1.3.1")
+    implementation("androidx.camera:camera-video:1.3.1")
+
+    // Accompanist for permissions
+    implementation("com.google.accompanist:accompanist-permissions:0.34.0")
+
+    // Media3/ExoPlayer for video playback
+    implementation("androidx.media3:media3-exoplayer:1.2.1")
+    implementation("androidx.media3:media3-ui:1.2.1")
+    implementation("androidx.media3:media3-common:1.2.1")
 
     // Testing
     testImplementation("junit:junit:4.13.2")
