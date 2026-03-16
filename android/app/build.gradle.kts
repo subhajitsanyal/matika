@@ -9,8 +9,10 @@ plugins {
 
 // Resolve Guava/ListenableFuture capability conflict between HAPI FHIR and Android libraries
 configurations.configureEach {
-    resolutionStrategy.capabilitiesResolution.withCapability("com.google.guava:listenablefuture") {
-        select("com.google.guava:guava:0")
+    if (!name.startsWith("ksp")) {
+        resolutionStrategy.capabilitiesResolution.withCapability("com.google.guava:listenablefuture") {
+            select("com.google.guava:guava:0")
+        }
     }
 }
 
