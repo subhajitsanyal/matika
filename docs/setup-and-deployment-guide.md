@@ -382,75 +382,49 @@ done
 
 ### 3.8 Configure Amplify
 
-Update the Amplify configuration files with your Cognito and API Gateway details:
+The Amplify configuration files (`amplifyconfiguration.json`) in both Android and iOS contain placeholders that must be replaced with actual values from your deployment.
 
-**Android** (`android/app/src/main/res/raw/amplifyconfiguration.json`):
+#### 3.8.1 Retrieve Placeholder Values
 
-```json
-{
-    "auth": {
-        "plugins": {
-            "awsCognitoAuthPlugin": {
-                "UserAgent": "aws-amplify-cli/2.0",
-                "Version": "1.0",
-                "CognitoUserPool": {
-                    "Default": {
-                        "PoolId": "YOUR_COGNITO_POOL_ID",
-                        "AppClientId": "YOUR_COGNITO_CLIENT_ID",
-                        "Region": "ap-south-1"
-                    }
-                }
-            }
-        }
-    },
-    "api": {
-        "plugins": {
-            "awsAPIPlugin": {
-                "CareLogAPI": {
-                    "endpointType": "REST",
-                    "endpoint": "YOUR_API_GATEWAY_URL",
-                    "region": "ap-south-1",
-                    "authorizationType": "AMAZON_COGNITO_USER_POOLS"
-                }
-            }
-        }
-    }
-}
+Run these commands from `infrastructure/terraform/environments/dev`:
+
+```bash
+# COGNITO_USER_POOL_ID
+aws cognito-idp list-user-pools --max-results 10 --region ap-south-1 --query 'UserPools[?Name==`carelog-dev-user-pool`].Id' --output text
+
+# COGNITO_APP_CLIENT_ID (mobile client)
+aws cognito-idp list-user-pool-clients --user-pool-id USER_POOL_ID --region ap-south-1 --query 'UserPoolClients[?ClientName==`carelog-dev-mobile-client`].ClientId' --output text
+
+# COGNITO_WEB_DOMAIN (format: <domain-prefix>.auth.<region>.amazoncognito.com)
+aws cognito-idp describe-user-pool --user-pool-id USER_POOL_ID --region ap-south-1 --query 'UserPool.Domain' --output text
+# Then construct: <domain>.auth.ap-south-1.amazoncognito.com
+
+# AWS_REGION
+echo "ap-south-1"
+
+# S3_BUCKET_NAME (iOS only)
+aws s3 ls | grep carelog | grep documents | awk '{print $3}'
+
+# API_GATEWAY_URL
+aws apigateway get-rest-apis --region ap-south-1 --query 'items[?name==`carelog-dev-api`].id' --output text
+# Then construct: https://<api-id>.execute-api.ap-south-1.amazonaws.com/dev
 ```
 
-**iOS** (`ios/CareLog/CareLog/amplifyconfiguration.json`):
+#### 3.8.2 Update Configuration Files
 
-```json
-{
-    "auth": {
-        "plugins": {
-            "awsCognitoAuthPlugin": {
-                "UserAgent": "aws-amplify-cli/2.0",
-                "Version": "1.0",
-                "CognitoUserPool": {
-                    "Default": {
-                        "PoolId": "YOUR_COGNITO_POOL_ID",
-                        "AppClientId": "YOUR_COGNITO_CLIENT_ID",
-                        "Region": "ap-south-1"
-                    }
-                }
-            }
-        }
-    },
-    "api": {
-        "plugins": {
-            "awsAPIPlugin": {
-                "CareLogAPI": {
-                    "endpointType": "REST",
-                    "endpoint": "YOUR_API_GATEWAY_URL",
-                    "region": "ap-south-1",
-                    "authorizationType": "AMAZON_COGNITO_USER_POOLS"
-                }
-            }
-        }
-    }
-}
-```
+Replace the placeholders in both files:
+
+| Placeholder | Description | Example |
+|---|---|---|
+| `${COGNITO_USER_POOL_ID}` | Cognito User Pool ID | `ap-south-1_AbCdEfGhI` |
+| `${COGNITO_APP_CLIENT_ID}` | Mobile app client ID | `1abc2def3ghi4jkl5mno` |
+| `${COGNITO_WEB_DOMAIN}` | Cognito hosted UI domain | `carelog-dev.auth.ap-south-1.amazoncognito.com` |
+| `${AWS_REGION}` | AWS region | `ap-south-1` |
+| `${S3_BUCKET_NAME}` (iOS only) | Documents S3 bucket | `carelog-v2-dev-documents-316643066568` |
+
+**Files to update:**
+- **Android:** `android/app/src/main/res/raw/amplifyconfiguration.json`
+- **iOS:** `ios/CareLog/CareLog/amplifyconfiguration.json`
 
 ---
 
