@@ -19,7 +19,7 @@
                 "Auth": {
                     "Default": {
                         "OAuth": {
-                            "WebDomain": "carelog-dev.auth.us-east-1.amazoncognito.com",
+                            "WebDomain": "${COGNITO_WEB_DOMAIN}",
                             "AppClientId": "${COGNITO_APP_CLIENT_ID}",
                             "SignInRedirectURI": "carelog://callback",
                             "SignOutRedirectURI": "carelog://signout",
