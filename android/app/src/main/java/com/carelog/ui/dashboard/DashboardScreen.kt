@@ -87,17 +87,14 @@ fun DashboardScreen(
                 NavigationBarItem(
                     icon = { Icon(Icons.Default.Timeline, contentDescription = "History") },
                     label = { Text("History") },
-                    selected = selectedTab == 1,
-                    onClick = {
-                        selectedTab = 1
-                        onNavigateToHistory()
-                    }
+                    selected = false,
+                    onClick = { onNavigateToHistory() }
                 )
                 NavigationBarItem(
                     icon = { Icon(Icons.Default.Notifications, contentDescription = "Alerts") },
                     label = { Text("Alerts") },
-                    selected = selectedTab == 2,
-                    onClick = { selectedTab = 2 }
+                    selected = false,
+                    onClick = { /* TODO: Navigate to alerts */ }
                 )
             }
         }
