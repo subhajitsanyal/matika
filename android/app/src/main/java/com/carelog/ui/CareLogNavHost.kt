@@ -194,6 +194,7 @@ fun CareLogNavHost() {
                         VitalType.WEIGHT -> CareLogRoutes.WEIGHT
                         VitalType.PULSE -> CareLogRoutes.PULSE
                         VitalType.SPO2 -> CareLogRoutes.SPO2
+                        VitalType.VOICE_NOTE -> CareLogRoutes.VOICE_NOTE
                         else -> return@DashboardScreen
                     }
                     navController.navigate(route)

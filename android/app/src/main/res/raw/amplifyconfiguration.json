@@ -11,16 +11,16 @@
                 },
                 "CognitoUserPool": {
                     "Default": {
-                        "PoolId": "${COGNITO_USER_POOL_ID}",
-                        "AppClientId": "${COGNITO_APP_CLIENT_ID}",
-                        "Region": "${AWS_REGION}"
+                        "PoolId": "ap-south-1_3L9Vl5AAR",
+                        "AppClientId": "7ebfe5id4aqv0jun35hf6auakl",
+                        "Region": "ap-south-1"
                     }
                 },
                 "Auth": {
                     "Default": {
                         "OAuth": {
-                            "WebDomain": "${COGNITO_WEB_DOMAIN}",
-                            "AppClientId": "${COGNITO_APP_CLIENT_ID}",
+                            "WebDomain": "carelog-dev.auth.ap-south-1.amazoncognito.com",
+                            "AppClientId": "7ebfe5id4aqv0jun35hf6auakl",
                             "SignInRedirectURI": "carelog://callback",
                             "SignOutRedirectURI": "carelog://signout",
                             "Scopes": [
@@ -35,8 +35,7 @@
                             "EMAIL"
                         ],
                         "signupAttributes": [
-                            "EMAIL",
-                            "NAME"
+                            "EMAIL"
                         ],
                         "passwordProtectionSettings": {
                             "passwordPolicyMinLength": 8,
