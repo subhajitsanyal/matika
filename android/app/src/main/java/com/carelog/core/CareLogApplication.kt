@@ -43,7 +43,11 @@ class CareLogApplication : Application(), Configuration.Provider {
             Amplify.addPlugin(AWSCognitoAuthPlugin())
 
             // Add S3 Storage plugin for document uploads
-            Amplify.addPlugin(AWSS3StoragePlugin())
+            try {
+                Amplify.addPlugin(AWSS3StoragePlugin())
+            } catch (e: Exception) {
+                Log.w(TAG, "S3 Storage plugin not available, skipping", e)
+            }
 
             // Configure Amplify with the configuration files
             Amplify.configure(applicationContext)

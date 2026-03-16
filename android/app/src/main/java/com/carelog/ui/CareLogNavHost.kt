@@ -1,17 +1,24 @@
 package com.carelog.ui
 
+import android.util.Log
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.navigation.NavController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.amplifyframework.core.Amplify
+import kotlinx.coroutines.delay
 
 /**
  * Navigation routes for CareLog app.
@@ -63,9 +70,9 @@ fun CareLogNavHost() {
         navController = navController,
         startDestination = CareLogRoutes.SPLASH
     ) {
-        // Splash screen - initial loading
+        // Splash screen - check auth and navigate
         composable(CareLogRoutes.SPLASH) {
-            SplashScreen()
+            SplashScreen(navController)
         }
 
         // Login screen - will be implemented in T-011
@@ -111,7 +118,39 @@ fun CareLogNavHost() {
 }
 
 @Composable
-private fun SplashScreen() {
+private fun SplashScreen(navController: NavController) {
+    val navigateTo = remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(Unit) {
+        delay(1500) // Brief splash display
+        try {
+            Amplify.Auth.fetchAuthSession(
+                { session ->
+                    navigateTo.value = if (session.isSignedIn) {
+                        CareLogRoutes.PATIENT_DASHBOARD
+                    } else {
+                        CareLogRoutes.LOGIN
+                    }
+                },
+                { error ->
+                    Log.w("SplashScreen", "Auth check failed, navigating to login", error)
+                    navigateTo.value = CareLogRoutes.LOGIN
+                }
+            )
+        } catch (e: Exception) {
+            Log.w("SplashScreen", "Amplify not configured, navigating to login", e)
+            navigateTo.value = CareLogRoutes.LOGIN
+        }
+    }
+
+    navigateTo.value?.let { destination ->
+        LaunchedEffect(destination) {
+            navController.navigate(destination) {
+                popUpTo(CareLogRoutes.SPLASH) { inclusive = true }
+            }
+        }
+    }
+
     Box(
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
