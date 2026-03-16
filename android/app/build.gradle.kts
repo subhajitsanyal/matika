@@ -4,7 +4,7 @@ plugins {
     id("com.google.dagger.hilt.android")
     id("org.jetbrains.kotlin.plugin.serialization")
     id("com.google.gms.google-services")
-    kotlin("kapt")
+    id("com.google.devtools.ksp")
 }
 
 // Resolve Guava/ListenableFuture capability conflict between HAPI FHIR and Android libraries
@@ -105,10 +105,10 @@ dependencies {
 
     // Hilt Dependency Injection
     implementation("com.google.dagger:hilt-android:2.50")
-    kapt("com.google.dagger:hilt-android-compiler:2.50")
+    ksp("com.google.dagger:hilt-android-compiler:2.50")
     implementation("androidx.hilt:hilt-navigation-compose:1.2.0")
     implementation("androidx.hilt:hilt-work:1.2.0")
-    kapt("androidx.hilt:hilt-compiler:1.2.0")
+    ksp("androidx.hilt:hilt-compiler:1.2.0")
 
     // Firebase
     implementation(platform("com.google.firebase:firebase-bom:32.7.0"))
@@ -128,7 +128,7 @@ dependencies {
     // Room Database (for local FHIR storage)
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
-    kapt("androidx.room:room-compiler:2.6.1")
+    ksp("androidx.room:room-compiler:2.6.1")
 
     // AWS Amplify for Cognito Authentication
     implementation("com.amplifyframework:core:2.14.5")
@@ -177,8 +177,4 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
-}
-
-kapt {
-    correctErrorTypes = true
 }
