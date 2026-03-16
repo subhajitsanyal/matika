@@ -386,28 +386,32 @@ The Amplify configuration files (`amplifyconfiguration.json`) in both Android an
 
 #### 3.8.1 Retrieve Placeholder Values
 
-Run these commands from `infrastructure/terraform/environments/dev`:
+Run these commands to set all values as environment variables. Each variable builds on the previous ones:
 
 ```bash
-# COGNITO_USER_POOL_ID
-aws cognito-idp list-user-pools --max-results 10 --region ap-south-1 --query 'UserPools[?Name==`carelog-dev-user-pool`].Id' --output text
+AWS_REGION=ap-south-1
 
-# COGNITO_APP_CLIENT_ID (mobile client)
-aws cognito-idp list-user-pool-clients --user-pool-id USER_POOL_ID --region ap-south-1 --query 'UserPoolClients[?ClientName==`carelog-dev-mobile-client`].ClientId' --output text
+COGNITO_USER_POOL_ID=$(aws cognito-idp list-user-pools --max-results 10 --region $AWS_REGION --query 'UserPools[?Name==`carelog-dev-users`].Id' --output text)
 
-# COGNITO_WEB_DOMAIN (format: <domain-prefix>.auth.<region>.amazoncognito.com)
-aws cognito-idp describe-user-pool --user-pool-id USER_POOL_ID --region ap-south-1 --query 'UserPool.Domain' --output text
-# Then construct: <domain>.auth.ap-south-1.amazoncognito.com
+COGNITO_APP_CLIENT_ID=$(aws cognito-idp list-user-pool-clients --user-pool-id $COGNITO_USER_POOL_ID --region $AWS_REGION --query 'UserPoolClients[?ClientName==`carelog-mobile-client`].ClientId' --output text)
 
-# AWS_REGION
-echo "ap-south-1"
+COGNITO_WEB_DOMAIN=$(aws cognito-idp describe-user-pool --user-pool-id $COGNITO_USER_POOL_ID --region $AWS_REGION --query 'UserPool.Domain' --output text).auth.$AWS_REGION.amazoncognito.com
 
-# S3_BUCKET_NAME (iOS only)
-aws s3 ls | grep carelog | grep documents | awk '{print $3}'
+S3_BUCKET_NAME=$(aws s3 ls | grep carelog | grep documents | awk '{print $3}')
 
-# API_GATEWAY_URL
-aws apigateway get-rest-apis --region ap-south-1 --query 'items[?name==`carelog-dev-api`].id' --output text
-# Then construct: https://<api-id>.execute-api.ap-south-1.amazonaws.com/dev
+API_GATEWAY_ID=$(aws apigateway get-rest-apis --region $AWS_REGION --query 'items[?name==`carelog-dev-api`].id' --output text)
+API_GATEWAY_URL=https://$API_GATEWAY_ID.execute-api.$AWS_REGION.amazonaws.com/dev
+```
+
+Verify all values are set:
+
+```bash
+echo "COGNITO_USER_POOL_ID:  $COGNITO_USER_POOL_ID"
+echo "COGNITO_APP_CLIENT_ID: $COGNITO_APP_CLIENT_ID"
+echo "COGNITO_WEB_DOMAIN:    $COGNITO_WEB_DOMAIN"
+echo "AWS_REGION:            $AWS_REGION"
+echo "S3_BUCKET_NAME:        $S3_BUCKET_NAME"
+echo "API_GATEWAY_URL:       $API_GATEWAY_URL"
 ```
 
 #### 3.8.2 Update Configuration Files
