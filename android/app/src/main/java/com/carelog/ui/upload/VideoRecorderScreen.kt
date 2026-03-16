@@ -1,7 +1,9 @@
 package com.carelog.ui.upload
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Context
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.util.Log
@@ -196,9 +198,20 @@ fun VideoRecorderScreen(
                         val outputOptions = FileOutputOptions.Builder(file).build()
 
                         videoCapture?.let { vc ->
-                            activeRecording = vc.output
+                            val recording = vc.output
                                 .prepareRecording(context, outputOptions)
-                                .withAudioEnabled()
+
+                            @SuppressLint("MissingPermission")
+                            val recordingWithAudio = if (
+                                ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
+                                    == PackageManager.PERMISSION_GRANTED
+                            ) {
+                                recording.withAudioEnabled()
+                            } else {
+                                recording
+                            }
+
+                            activeRecording = recordingWithAudio
                                 .start(ContextCompat.getMainExecutor(context)) { event ->
                                     when (event) {
                                         is VideoRecordEvent.Finalize -> {
