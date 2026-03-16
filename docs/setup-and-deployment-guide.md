@@ -246,6 +246,35 @@ terraform apply
 
 S3 bucket names are globally unique. If a previous bucket was recently deleted, S3 may take a few minutes to release the name. Wait 5-10 minutes and retry, or change `s3_bucket_prefix` in the dev config to use a different name.
 
+#### Flyway: "Connection attempt failed" / "Read timed out" (with SSM port-forward active)
+
+If the SSM session shows "Connection accepted" but Flyway times out, the RDS security group is not allowing traffic from the bastion's security group. This can happen when:
+- Infrastructure was destroyed and re-created (new security group IDs)
+- The bastion was created manually outside of Terraform
+- The bastion module wasn't included in the last `terraform apply`
+
+To diagnose and fix:
+
+```bash
+# 1. Verify the bastion module is in Terraform state
+terraform state list | grep bastion
+# If empty, run: terraform apply (to create the Terraform-managed bastion)
+
+# 2. Find the RDS security group
+aws ec2 describe-security-groups --filters "Name=group-name,Values=*carelog*rds*" --query 'SecurityGroups[*].[GroupId,GroupName]' --output table --region ap-south-1
+
+# 3. Find the bastion's security group
+aws ec2 describe-instances --instance-ids BASTION_INSTANCE_ID --query 'Reservations[0].Instances[0].SecurityGroups[*].[GroupId,GroupName]' --output table --region ap-south-1
+
+# 4. Check if the RDS security group allows inbound from the bastion
+aws ec2 describe-security-groups --group-ids RDS_SG_ID --query 'SecurityGroups[0].IpPermissions' --output json --region ap-south-1
+
+# 5. If the bastion SG is not listed, add the rule
+aws ec2 authorize-security-group-ingress --group-id RDS_SG_ID --protocol tcp --port 5432 --source-group BASTION_SG_ID --region ap-south-1
+```
+
+> **Tip:** If using the Terraform-managed bastion (`enable_bastion = true`), the security group rule is created automatically. If you see this error, ensure `terraform apply` completed successfully and the bastion resources are in state.
+
 ### 3.5 Connect to RDS via Bastion (Port-Forwarding)
 
 The RDS instance is in a private subnet. The Terraform deployment (with `enable_bastion = true` in the dev config) automatically provisions a bastion EC2 instance with SSM Session Manager access and the necessary security group rules for RDS connectivity.
