@@ -158,8 +158,7 @@ class AuthRepository @Inject constructor(
         return try {
             val attributes = listOf(
                 AuthUserAttribute(AuthUserAttributeKey.email(), email),
-                AuthUserAttribute(AuthUserAttributeKey.name(), name),
-                AuthUserAttribute(AuthUserAttributeKey.custom("persona_type"), personaType.name.lowercase())
+                AuthUserAttribute(AuthUserAttributeKey.name(), name)
             )
 
             val options = AuthSignUpOptions.builder()

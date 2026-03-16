@@ -206,8 +206,7 @@ fun VitalButton(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .aspectRatio(1f)
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick),
         colors = CardDefaults.cardColors(
             containerColor = item.backgroundColor.copy(alpha = 0.12f)
@@ -216,16 +215,16 @@ fun VitalButton(
     ) {
         Column(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp),
+                .fillMaxWidth()
+                .padding(12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
             // Icon
             Box(
                 modifier = Modifier
-                    .size(64.dp)
-                    .clip(RoundedCornerShape(16.dp))
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(12.dp))
                     .background(item.backgroundColor),
                 contentAlignment = Alignment.Center
             ) {
@@ -233,23 +232,23 @@ fun VitalButton(
                     imageVector = item.icon,
                     contentDescription = null,
                     tint = Color.White,
-                    modifier = Modifier.size(36.dp)
+                    modifier = Modifier.size(28.dp)
                 )
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             // Label
             Text(
                 text = item.label,
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center,
                 color = MaterialTheme.colorScheme.onSurface
             )
 
             // Last value (if available)
             lastValue?.let {
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = it,
                     style = MaterialTheme.typography.bodySmall,
@@ -282,6 +281,7 @@ enum class VitalType(val displayName: String) {
     PULSE("Heart Rate"),
     SPO2("Oxygen"),
     UPLOAD("Upload"),
+    VOICE_NOTE("Voice Note"),
     CHAT("Chat")
 }
 
@@ -330,6 +330,12 @@ private val dashboardItems = listOf(
         label = "Upload\nMedia",
         icon = Icons.Default.Upload,
         backgroundColor = CareLogColors.Upload
+    ),
+    DashboardItem(
+        vitalType = VitalType.VOICE_NOTE,
+        label = "Voice\nNote",
+        icon = Icons.Default.Mic,
+        backgroundColor = Color(0xFF7E57C2)
     ),
     DashboardItem(
         vitalType = VitalType.CHAT,
