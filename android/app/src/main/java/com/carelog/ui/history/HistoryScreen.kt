@@ -45,6 +45,11 @@ fun HistoryScreen(
         topBar = {
             TopAppBar(
                 title = { Text("History") },
+                navigationIcon = {
+                    IconButton(onClick = onNavigateBack) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                    }
+                },
                 actions = {
                     // Date filter
                     IconButton(onClick = { viewModel.toggleDateFilter() }) {
