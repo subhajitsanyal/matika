@@ -131,6 +131,8 @@ class AuthRepository @Inject constructor(
             val result = signInWithCognito(email, password)
 
             if (result.isSignedIn) {
+                // If there's a pending persona from registration, write it now
+                flushPendingPersona()
                 val user = fetchCurrentUser()
                 _currentUser.value = user
                 _authState.value = AuthState.Authenticated(user)
@@ -156,6 +158,9 @@ class AuthRepository @Inject constructor(
         personaType: PersonaType
     ): Result<AuthSignUpResult> {
         return try {
+            // Only send standard attributes during signup.
+            // custom:persona_type is set after first sign-in via updatePersonaType()
+            // to avoid errors if the Cognito pool hasn't been configured with the custom attribute.
             val attributes = listOf(
                 AuthUserAttribute(AuthUserAttributeKey.email(), email),
                 AuthUserAttribute(AuthUserAttributeKey.name(), name)
@@ -166,10 +171,41 @@ class AuthRepository @Inject constructor(
                 .build()
 
             val result = signUpWithCognito(email, password, options)
+            // Store persona locally so we can set it after first sign-in
+            _pendingPersona = personaType
             Result.success(result)
         } catch (e: Exception) {
             Log.e(TAG, "Sign up failed", e)
             Result.failure(e)
+        }
+    }
+
+    /** Persona selected during registration, to be written after first sign-in. */
+    @Volatile
+    private var _pendingPersona: PersonaType? = null
+
+    /**
+     * Write the pending persona type to Cognito user attributes.
+     * Called after first sign-in following registration.
+     */
+    suspend fun flushPendingPersona() {
+        val persona = _pendingPersona ?: return
+        try {
+            updateUserAttribute(
+                AuthUserAttribute(
+                    AuthUserAttributeKey.custom("persona_type"),
+                    persona.name.lowercase()
+                )
+            )
+            _pendingPersona = null
+            // Refresh user so persona is reflected immediately
+            val user = fetchCurrentUser()
+            _currentUser.value = user
+            _authState.value = AuthState.Authenticated(user)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to set persona_type attribute (custom attribute may not exist in pool)", e)
+            // Still clear pending so we don't retry endlessly
+            _pendingPersona = null
         }
     }
 
@@ -197,6 +233,29 @@ class AuthRepository @Inject constructor(
             Result.success(Unit)
         } catch (e: Exception) {
             Log.e(TAG, "Sign out failed", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Update the linked patient ID in Cognito user attributes.
+     * Called after patient creation so vitals link to the real patient entity.
+     */
+    suspend fun updateLinkedPatientId(patientId: String): Result<Unit> {
+        return try {
+            updateUserAttribute(
+                AuthUserAttribute(
+                    AuthUserAttributeKey.custom("linked_patient_id"),
+                    patientId
+                )
+            )
+            // Refresh local user state
+            val user = fetchCurrentUser()
+            _currentUser.value = user
+            _authState.value = AuthState.Authenticated(user)
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to update linked patient ID", e)
             Result.failure(e)
         }
     }
@@ -286,6 +345,15 @@ class AuthRepository @Inject constructor(
             }
         }
     }
+
+    private suspend fun updateUserAttribute(attribute: AuthUserAttribute) =
+        suspendCancellableCoroutine<Unit> { cont ->
+            Amplify.Auth.updateUserAttribute(
+                attribute,
+                { cont.resume(Unit) },
+                { cont.resumeWithException(it) }
+            )
+        }
 
     private suspend fun fetchCurrentUser(): CareLogUser = suspendCancellableCoroutine { cont ->
         Amplify.Auth.fetchUserAttributes(

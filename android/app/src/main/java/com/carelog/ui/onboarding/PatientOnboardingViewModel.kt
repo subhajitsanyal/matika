@@ -60,6 +60,9 @@ class PatientOnboardingViewModel @Inject constructor(
                     )
                 )
 
+                // Link patient ID to user so vitals use the real patient entity
+                authRepository.updateLinkedPatientId(patientId)
+
                 _uiState.value = PatientOnboardingUiState.Success(patientId)
             } catch (e: Exception) {
                 _uiState.value = PatientOnboardingUiState.Error(

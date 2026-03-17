@@ -106,7 +106,12 @@ fun CareTeamScreen(
                             }
 
                             items(uiState.careTeam!!.doctors) { member ->
-                                CareTeamMemberCard(member = member, roleColor = CareLogColors.Primary)
+                                CareTeamMemberCard(
+                                    member = member,
+                                    roleColor = CareLogColors.Primary,
+                                    onRemove = { viewModel.removeMember(member.id) },
+                                    isRemoving = uiState.removingMemberId == member.id
+                                )
                             }
                         }
 
@@ -125,7 +130,12 @@ fun CareTeamScreen(
 
                         if (uiState.careTeam?.attendants?.isNotEmpty() == true) {
                             items(uiState.careTeam!!.attendants) { member ->
-                                CareTeamMemberCard(member = member, roleColor = CareLogColors.Success)
+                                CareTeamMemberCard(
+                                    member = member,
+                                    roleColor = CareLogColors.Success,
+                                    onRemove = { viewModel.removeMember(member.id) },
+                                    isRemoving = uiState.removingMemberId == member.id
+                                )
                             }
                         } else {
                             item {
@@ -255,8 +265,12 @@ private fun SectionHeader(
 @Composable
 private fun CareTeamMemberCard(
     member: CareTeamMember,
-    roleColor: Color
+    roleColor: Color,
+    onRemove: (() -> Unit)? = null,
+    isRemoving: Boolean = false
 ) {
+    var showRemoveDialog by remember { mutableStateOf(false) }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
@@ -327,7 +341,55 @@ private fun CareTeamMemberCard(
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                 )
             }
+
+            // Remove button (only for attendants and doctors)
+            if (onRemove != null && member.role in listOf("attendant", "doctor")) {
+                Spacer(modifier = Modifier.width(4.dp))
+                if (isRemoving) {
+                    CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                } else {
+                    IconButton(onClick = { showRemoveDialog = true }) {
+                        Icon(
+                            Icons.Default.RemoveCircleOutline,
+                            contentDescription = "Remove ${member.name}",
+                            tint = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+            }
         }
+    }
+
+    // Confirm removal dialog
+    if (showRemoveDialog && onRemove != null) {
+        AlertDialog(
+            onDismissRequest = { showRemoveDialog = false },
+            title = { Text("Remove ${member.name}?") },
+            text = {
+                Text(
+                    "This will disable their account and remove their access to this patient. " +
+                    "They will be notified by email. You can invite a replacement afterward."
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showRemoveDialog = false
+                        onRemove()
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error
+                    )
+                ) {
+                    Text("Remove")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRemoveDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }
 
@@ -583,6 +645,28 @@ class CareTeamViewModel @Inject constructor(
         }
     }
 
+    fun removeMember(memberId: String) {
+        val patientId = _uiState.value.patientId ?: return
+        viewModelScope.launch {
+            _uiState.update { it.copy(removingMemberId = memberId) }
+            try {
+                val success = apiService.removeTeamMember(patientId, memberId)
+                if (success) {
+                    _uiState.update { it.copy(removingMemberId = null) }
+                    loadCareTeam() // Refresh the list
+                } else {
+                    _uiState.update {
+                        it.copy(removingMemberId = null, error = "Failed to remove team member")
+                    }
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(removingMemberId = null, error = e.message ?: "Failed to remove team member")
+                }
+            }
+        }
+    }
+
     @Suppress("UNUSED_PARAMETER")
     fun resendInvite(inviteId: String) {
         // Implementation would call API to resend invite
@@ -608,5 +692,6 @@ data class CareTeamUiState(
     val careTeam: CareTeam? = null,
     val patientId: String? = null,
     val inviteSuccess: Boolean = false,
+    val removingMemberId: String? = null,
     val error: String? = null
 )

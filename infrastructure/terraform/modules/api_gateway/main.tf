@@ -56,6 +56,20 @@ resource "aws_api_gateway_resource" "patient" {
   path_part   = "{patientId}"
 }
 
+# /patients/{patientId}/team
+resource "aws_api_gateway_resource" "patient_team" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  parent_id   = aws_api_gateway_resource.patient.id
+  path_part   = "team"
+}
+
+# /patients/{patientId}/team/{memberId}
+resource "aws_api_gateway_resource" "patient_team_member" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  parent_id   = aws_api_gateway_resource.patient_team.id
+  path_part   = "{memberId}"
+}
+
 # /observations
 resource "aws_api_gateway_resource" "observations" {
   rest_api_id = aws_api_gateway_rest_api.main.id
@@ -199,6 +213,90 @@ resource "aws_api_gateway_integration_response" "patients_get_200" {
   }
 }
 
+# DELETE /patients/{patientId} — Delete patient with cascade
+resource "aws_api_gateway_method" "patient_delete" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.patient.id
+  http_method   = "DELETE"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+}
+
+resource "aws_api_gateway_integration" "patient_delete" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.patient.id
+  http_method = aws_api_gateway_method.patient_delete.http_method
+  type        = "MOCK"
+
+  request_templates = {
+    "application/json" = "{\"statusCode\": 200}"
+  }
+}
+
+resource "aws_api_gateway_method_response" "patient_delete_200" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.patient.id
+  http_method = aws_api_gateway_method.patient_delete.http_method
+  status_code = "200"
+
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Origin" = true
+  }
+}
+
+resource "aws_api_gateway_integration_response" "patient_delete_200" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.patient.id
+  http_method = aws_api_gateway_method.patient_delete.http_method
+  status_code = aws_api_gateway_method_response.patient_delete_200.status_code
+
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Origin" = "'${var.cors_origin}'"
+  }
+}
+
+# DELETE /patients/{patientId}/team/{memberId} — Remove team member
+resource "aws_api_gateway_method" "team_member_delete" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.patient_team_member.id
+  http_method   = "DELETE"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+}
+
+resource "aws_api_gateway_integration" "team_member_delete" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.patient_team_member.id
+  http_method = aws_api_gateway_method.team_member_delete.http_method
+  type        = "MOCK"
+
+  request_templates = {
+    "application/json" = "{\"statusCode\": 200}"
+  }
+}
+
+resource "aws_api_gateway_method_response" "team_member_delete_200" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.patient_team_member.id
+  http_method = aws_api_gateway_method.team_member_delete.http_method
+  status_code = "200"
+
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Origin" = true
+  }
+}
+
+resource "aws_api_gateway_integration_response" "team_member_delete_200" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.patient_team_member.id
+  http_method = aws_api_gateway_method.team_member_delete.http_method
+  status_code = aws_api_gateway_method_response.team_member_delete_200.status_code
+
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Origin" = "'${var.cors_origin}'"
+  }
+}
+
 # ============================================================
 # GATEWAY RESPONSES (CORS)
 # ============================================================
@@ -315,6 +413,10 @@ resource "aws_api_gateway_deployment" "main" {
       aws_api_gateway_resource.care_plans.id,
       aws_api_gateway_method.patients_get.id,
       aws_api_gateway_integration.patients_get.id,
+      aws_api_gateway_resource.patient_team.id,
+      aws_api_gateway_resource.patient_team_member.id,
+      aws_api_gateway_method.patient_delete.id,
+      aws_api_gateway_method.team_member_delete.id,
     ]))
   }
 

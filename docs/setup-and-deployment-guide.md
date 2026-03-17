@@ -189,8 +189,8 @@ terraform apply tfplan
 
 **Expected resources created:**
 - VPC with public/private subnets
-- Cognito User Pool with 4 groups
-- API Gateway REST API
+- Cognito User Pool with 4 groups (patients, attendants, doctors, relatives)
+- API Gateway REST API (including `DELETE /patients/{patientId}` and `DELETE /patients/{patientId}/team/{memberId}` for persona management)
 - S3 buckets for documents and access logs
 - SQS queues for async processing
 - RDS PostgreSQL 15 instance
@@ -379,6 +379,38 @@ done
 # Package and deploy (using AWS SAM or Terraform)
 # If using Terraform, the Lambdas are deployed with infrastructure
 ```
+
+#### 3.7.1 New Lambda Functions (Persona Management)
+
+The following Lambdas handle caregiver-managed persona lifecycle:
+
+| Lambda | Route | Description |
+|--------|-------|-------------|
+| `delete-patient` | `DELETE /patients/{patientId}` | Cascade-deletes a patient and all associated attendants/doctors. Disables their Cognito accounts, deactivates persona_links, cancels pending invites, and sends notification emails. Only the primary caregiver can invoke this. |
+| `remove-team-member` | `DELETE /patients/{patientId}/team/{memberId}` | Removes a single attendant or doctor from a patient's care team. Disables their Cognito account and sends a notification email. |
+
+These Lambdas require the following environment variables:
+- `DB_SECRET_NAME` — Secrets Manager secret for RDS credentials
+- `COGNITO_USER_POOL_ID` — Cognito User Pool ID
+- `FROM_EMAIL` — SES verified sender email (defaults to `noreply@carelog.com`)
+
+**Cognito custom attributes:** The `custom:persona_type` and `custom:linked_patient_id` attributes must be added to the Cognito User Pool schema and marked as writable by the app client. Without these, persona-based routing and patient linking will fall back to defaults. To add them:
+
+```bash
+aws cognito-idp add-custom-attributes \
+    --user-pool-id $COGNITO_USER_POOL_ID \
+    --custom-attributes \
+        Name=persona_type,AttributeDataType=String,Mutable=true \
+        Name=linked_patient_id,AttributeDataType=String,Mutable=true \
+    --region $AWS_REGION
+```
+
+**Persona flow overview:**
+1. Only **caregivers** (persona type: `relative`) can self-register via the app
+2. Caregivers create a patient from Settings, which calls `create-patient`
+3. Caregivers invite attendants/doctors from Settings, which calls `invite-attendant` / `invite-doctor`
+4. Invitees receive an email with a link; accepting calls `accept-invite`, which creates their Cognito account with credentials
+5. Caregivers can remove individual team members (`remove-team-member`) or delete the entire patient cascade (`delete-patient`)
 
 ### 3.8 Configure Amplify
 

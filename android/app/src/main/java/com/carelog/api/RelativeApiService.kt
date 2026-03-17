@@ -322,6 +322,47 @@ class RelativeApiService @Inject constructor(
     }
 
     /**
+     * Delete a patient and cascade-remove all associated personas (attendants, doctors).
+     */
+    suspend fun deletePatient(patientId: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val token = authRepository.getAccessToken() ?: return@withContext false
+
+            val request = Request.Builder()
+                .url("$apiBaseUrl/patients/$patientId")
+                .header("Authorization", "Bearer $token")
+                .delete()
+                .build()
+
+            val response = httpClient.newCall(request).execute()
+            response.isSuccessful
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Remove a team member (attendant or doctor) from a patient's care team.
+     * This disables their account and sends them a notification email.
+     */
+    suspend fun removeTeamMember(patientId: String, memberId: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val token = authRepository.getAccessToken() ?: return@withContext false
+
+            val request = Request.Builder()
+                .url("$apiBaseUrl/patients/$patientId/team/$memberId")
+                .header("Authorization", "Bearer $token")
+                .delete()
+                .build()
+
+            val response = httpClient.newCall(request).execute()
+            response.isSuccessful
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
      * Fetch care team for a patient.
      */
     suspend fun getCareTeam(patientId: String): CareTeam? = withContext(Dispatchers.IO) {
