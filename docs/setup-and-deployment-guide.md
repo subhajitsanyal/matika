@@ -248,12 +248,34 @@ S3 bucket names are globally unique. If a previous bucket was recently deleted, 
 
 #### Flyway: "Connection attempt failed" / "Read timed out" (with SSM port-forward active)
 
-If the SSM session shows "Connection accepted" but Flyway times out, the RDS security group is not allowing traffic from the bastion's security group. This can happen when:
+If the SSM session shows "Connection accepted" followed by "Connection to destination port failed", the RDS security group is not allowing traffic from the bastion's security group. This commonly happens when:
 - Infrastructure was destroyed and re-created (new security group IDs)
 - The bastion was created manually outside of Terraform
 - The bastion module wasn't included in the last `terraform apply`
 
-To diagnose and fix:
+**Quick fix (copy-paste):**
+
+```bash
+# Find the RDS and bastion security groups, then add the missing inbound rule
+RDS_SG=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=*carelog*rds*" --query 'SecurityGroups[0].GroupId' --output text --region ap-south-1)
+
+BASTION_SG=$(aws ec2 describe-instances --instance-ids $(terraform output -raw bastion_instance_id) --query 'Reservations[0].Instances[0].SecurityGroups[0].GroupId' --output text --region ap-south-1)
+
+echo "RDS SG: $RDS_SG"
+echo "Bastion SG: $BASTION_SG"
+
+# Add inbound rule allowing bastion to reach RDS on port 5432
+aws ec2 authorize-security-group-ingress \
+    --group-id $RDS_SG \
+    --protocol tcp \
+    --port 5432 \
+    --source-group $BASTION_SG \
+    --region ap-south-1
+```
+
+After adding the rule, restart the SSM port-forward session and retry `flyway migrate`.
+
+**Detailed diagnosis (if the quick fix doesn't work):**
 
 ```bash
 # 1. Verify the bastion module is in Terraform state
