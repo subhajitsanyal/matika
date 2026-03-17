@@ -63,7 +63,7 @@ class SpO2ViewModel @Inject constructor(
 
             try {
                 val user = authRepository.getCurrentUser()
-                val patientId = user?.linkedPatientId ?: throw IllegalStateException("No patient ID")
+                val patientId = user?.linkedPatientId ?: user?.userId ?: "local"
 
                 // Create SpO2 observation
                 val observation = FhirObservation(

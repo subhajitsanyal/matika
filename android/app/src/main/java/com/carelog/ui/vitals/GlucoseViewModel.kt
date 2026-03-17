@@ -103,7 +103,7 @@ class GlucoseViewModel @Inject constructor(
 
             try {
                 val user = authRepository.getCurrentUser()
-                val patientId = user?.linkedPatientId ?: throw IllegalStateException("No patient ID")
+                val patientId = user?.linkedPatientId ?: user?.userId ?: "local"
 
                 // Convert to mg/dL for storage (standard FHIR unit)
                 val valueInMgDl = if (state.unit == "mmol/L") {

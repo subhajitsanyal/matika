@@ -130,10 +130,15 @@ fun BloodPressureScreen(
     }
 
     // Show error snackbar
-    if (uiState.saveError != null) {
-        LaunchedEffect(uiState.saveError) {
-            // Error handling - could show snackbar
-        }
+    uiState.saveError?.let { error ->
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("Save Failed") },
+            text = { Text(error) },
+            confirmButton = {
+                TextButton(onClick = onNavigateBack) { Text("OK") }
+            }
+        )
     }
 
     // Success acknowledgement overlay

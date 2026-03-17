@@ -99,7 +99,7 @@ class WeightViewModel @Inject constructor(
 
             try {
                 val user = authRepository.getCurrentUser()
-                val patientId = user?.linkedPatientId ?: throw IllegalStateException("No patient ID")
+                val patientId = user?.linkedPatientId ?: user?.userId ?: "local"
 
                 // Store in kg (standard FHIR unit)
                 val valueInKg = if (state.unit == "lbs") {
