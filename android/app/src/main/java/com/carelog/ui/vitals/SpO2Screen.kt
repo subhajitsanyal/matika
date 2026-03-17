@@ -102,11 +102,7 @@ fun SpO2Screen(
 
             // Save button
             Button(
-                onClick = {
-                    viewModel.saveReading {
-                        onNavigateBack()
-                    }
-                },
+                onClick = { viewModel.saveReading {} },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(72.dp),
@@ -139,4 +135,11 @@ fun SpO2Screen(
             Spacer(modifier = Modifier.height(24.dp))
         }
     }
+
+    // Success acknowledgement overlay
+    SaveAcknowledgement(
+        visible = uiState.saved,
+        vitalName = "Oxygen Level",
+        onDismiss = onNavigateBack
+    )
 }

@@ -78,10 +78,9 @@ class PulseViewModel @Inject constructor(
                 localFhirRepository.saveObservation(observation)
 
                 // Play voice acknowledgement
-                voicePlayer.playSuccess(ObservationType.HEART_RATE)
+                try { voicePlayer.playSuccess(ObservationType.HEART_RATE) } catch (_: Exception) {}
 
-                _uiState.update { it.copy(isSaving = false) }
-                onSuccess()
+                _uiState.update { it.copy(isSaving = false, saved = true) }
 
             } catch (e: Exception) {
                 _uiState.update {
@@ -104,5 +103,6 @@ data class PulseUiState(
     val valueError: String? = null,
     val canSave: Boolean = false,
     val isSaving: Boolean = false,
+    val saved: Boolean = false,
     val saveError: String? = null
 )

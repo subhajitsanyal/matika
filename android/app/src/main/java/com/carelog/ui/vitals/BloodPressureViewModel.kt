@@ -120,10 +120,9 @@ class BloodPressureViewModel @Inject constructor(
                 localFhirRepository.saveObservation(observation)
 
                 // Play voice acknowledgement
-                voicePlayer.playSuccess(ObservationType.BLOOD_PRESSURE)
+                try { voicePlayer.playSuccess(ObservationType.BLOOD_PRESSURE) } catch (_: Exception) {}
 
-                _uiState.update { it.copy(isSaving = false) }
-                onSuccess()
+                _uiState.update { it.copy(isSaving = false, saved = true) }
 
             } catch (e: Exception) {
                 _uiState.update {
@@ -148,5 +147,6 @@ data class BloodPressureUiState(
     val diastolicError: String? = null,
     val canSave: Boolean = false,
     val isSaving: Boolean = false,
+    val saved: Boolean = false,
     val saveError: String? = null
 )
