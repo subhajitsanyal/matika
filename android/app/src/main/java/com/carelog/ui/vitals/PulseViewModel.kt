@@ -61,7 +61,7 @@ class PulseViewModel @Inject constructor(
 
             try {
                 val user = authRepository.getCurrentUser()
-                val patientId = user?.linkedPatientId ?: throw IllegalStateException("No patient ID")
+                val patientId = user?.linkedPatientId ?: user?.userId ?: "local"
 
                 // Create heart rate observation
                 val observation = FhirObservation(

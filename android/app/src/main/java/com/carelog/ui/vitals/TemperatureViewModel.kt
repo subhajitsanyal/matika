@@ -99,7 +99,7 @@ class TemperatureViewModel @Inject constructor(
 
             try {
                 val user = authRepository.getCurrentUser()
-                val patientId = user?.linkedPatientId ?: throw IllegalStateException("No patient ID")
+                val patientId = user?.linkedPatientId ?: user?.userId ?: "local"
 
                 // Store in Celsius (standard FHIR unit)
                 val valueInCelsius = if (state.unit == "\u00B0F") {
