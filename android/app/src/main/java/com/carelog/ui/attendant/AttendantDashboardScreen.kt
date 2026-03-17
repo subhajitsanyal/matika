@@ -45,6 +45,7 @@ fun AttendantDashboardScreen(
     onNavigateToUpload: () -> Unit,
     onNavigateToNotes: () -> Unit,
     onNavigateToHistory: () -> Unit,
+    onNavigateToSettings: () -> Unit,
     onSwitchToPatient: () -> Unit,
     viewModel: AttendantDashboardViewModel = hiltViewModel()
 ) {
@@ -58,6 +59,9 @@ fun AttendantDashboardScreen(
                 actions = {
                     IconButton(onClick = onNavigateToHistory) {
                         Icon(Icons.Default.History, contentDescription = "History")
+                    }
+                    IconButton(onClick = onNavigateToSettings) {
+                        Icon(Icons.Default.Settings, contentDescription = "Settings")
                     }
                     IconButton(onClick = { showSwitchDialog = true }) {
                         Icon(Icons.Default.SwitchAccount, contentDescription = "Switch to Patient")

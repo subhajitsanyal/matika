@@ -16,7 +16,9 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.amplifyframework.auth.AuthUserAttributeKey
 import com.amplifyframework.core.Amplify
+import com.carelog.auth.PersonaType
 import com.carelog.ui.attendant.AttendantDashboardScreen
 import com.carelog.ui.attendant.AttendantLoginScreen
 import com.carelog.ui.attendant.AttendantNotesScreen
@@ -28,6 +30,8 @@ import com.carelog.ui.consent.ConsentScreen
 import com.carelog.ui.dashboard.DashboardScreen
 import com.carelog.ui.dashboard.VitalType
 import com.carelog.ui.history.HistoryScreen
+import com.carelog.ui.invite.InviteAttendantScreen
+import com.carelog.ui.invite.InviteDoctorScreen
 import com.carelog.ui.onboarding.PatientOnboardingScreen
 import com.carelog.ui.relative.AlertInboxScreen
 import com.carelog.ui.relative.AuditLogScreen
@@ -36,6 +40,7 @@ import com.carelog.ui.relative.RelativeDashboardScreen
 import com.carelog.ui.relative.ReminderConfigScreen
 import com.carelog.ui.relative.ThresholdConfigScreen
 import com.carelog.ui.relative.TrendsScreen
+import com.carelog.ui.settings.SettingsScreen
 import com.carelog.ui.upload.CameraScreen
 import com.carelog.ui.upload.PrescriptionScanScreen
 import com.carelog.ui.upload.UploadScreen
@@ -83,6 +88,7 @@ object CareLogRoutes {
 
     // History and settings
     const val HISTORY = "history"
+    const val SETTINGS = "settings"
     const val CARE_TEAM = "care_team"
     const val THRESHOLDS = "thresholds"
     const val REMINDERS = "reminders"
@@ -90,11 +96,25 @@ object CareLogRoutes {
     const val TRENDS = "trends"
     const val AUDIT_LOG = "audit_log"
 
+    // Invite screens
+    const val INVITE_ATTENDANT = "invite_attendant"
+    const val INVITE_DOCTOR = "invite_doctor"
+
     // LLM Chat placeholder
     const val CHAT = "chat"
 
     fun verification(email: String) = "verification/$email"
     fun camera(fileType: FileType) = "media/camera/${fileType.name}"
+}
+
+/**
+ * Returns the dashboard route for a given persona type.
+ */
+private fun dashboardRouteForPersona(persona: PersonaType): String = when (persona) {
+    PersonaType.RELATIVE -> CareLogRoutes.RELATIVE_DASHBOARD
+    PersonaType.ATTENDANT -> CareLogRoutes.ATTENDANT_DASHBOARD
+    PersonaType.PATIENT -> CareLogRoutes.PATIENT_DASHBOARD
+    PersonaType.DOCTOR -> CareLogRoutes.PATIENT_DASHBOARD // fallback
 }
 
 /**
@@ -123,7 +143,8 @@ fun CareLogNavHost() {
                     navController.navigate(CareLogRoutes.REGISTER)
                 },
                 onLoginSuccess = {
-                    navController.navigate(CareLogRoutes.PATIENT_DASHBOARD) {
+                    // Route through splash to determine correct dashboard by persona
+                    navController.navigate(CareLogRoutes.SPLASH) {
                         popUpTo(CareLogRoutes.LOGIN) { inclusive = true }
                     }
                 },
@@ -135,7 +156,7 @@ fun CareLogNavHost() {
             RegisterScreen(
                 onNavigateToLogin = { navController.popBackStack() },
                 onRegistrationSuccess = {
-                    navController.navigate(CareLogRoutes.PATIENT_DASHBOARD) {
+                    navController.navigate(CareLogRoutes.SPLASH) {
                         popUpTo(CareLogRoutes.LOGIN) { inclusive = true }
                     }
                 },
@@ -154,7 +175,8 @@ fun CareLogNavHost() {
                 email = email,
                 onNavigateBack = { navController.popBackStack() },
                 onVerificationSuccess = {
-                    navController.navigate(CareLogRoutes.PATIENT_DASHBOARD) {
+                    // Route through splash after verification to pick correct dashboard
+                    navController.navigate(CareLogRoutes.SPLASH) {
                         popUpTo(CareLogRoutes.LOGIN) { inclusive = true }
                     }
                 }
@@ -176,7 +198,7 @@ fun CareLogNavHost() {
             PatientOnboardingScreen(
                 onNavigateBack = { navController.popBackStack() },
                 onPatientCreated = {
-                    navController.navigate(CareLogRoutes.PATIENT_DASHBOARD) {
+                    navController.navigate(CareLogRoutes.SPLASH) {
                         popUpTo(CareLogRoutes.LOGIN) { inclusive = true }
                     }
                 }
@@ -208,7 +230,9 @@ fun CareLogNavHost() {
                 onNavigateToHistory = {
                     navController.navigate(CareLogRoutes.HISTORY)
                 },
-                onNavigateToSettings = { /* TODO: Settings screen */ }
+                onNavigateToSettings = {
+                    navController.navigate(CareLogRoutes.SETTINGS)
+                }
             )
         }
 
@@ -287,12 +311,57 @@ fun CareLogNavHost() {
             HistoryScreen(onNavigateBack = { navController.popBackStack() })
         }
 
+        // ── Settings ────────────────────────────────────────────
+        composable(CareLogRoutes.SETTINGS) {
+            SettingsScreen(
+                onNavigateBack = { navController.popBackStack() },
+                onNavigateToPatientOnboarding = {
+                    navController.navigate(CareLogRoutes.ONBOARDING)
+                },
+                onNavigateToCareTeam = {
+                    navController.navigate(CareLogRoutes.CARE_TEAM)
+                },
+                onNavigateToInviteAttendant = {
+                    navController.navigate(CareLogRoutes.INVITE_ATTENDANT)
+                },
+                onNavigateToInviteDoctor = {
+                    navController.navigate(CareLogRoutes.INVITE_DOCTOR)
+                },
+                onSignedOut = {
+                    navController.navigate(CareLogRoutes.LOGIN) {
+                        popUpTo(0) { inclusive = true }
+                    }
+                }
+            )
+        }
+
+        // ── Invite Screens ──────────────────────────────────────
+        composable(CareLogRoutes.INVITE_ATTENDANT) {
+            InviteAttendantScreen(
+                patientId = "",
+                patientName = "",
+                onNavigateBack = { navController.popBackStack() },
+                onInviteSent = { navController.popBackStack() }
+            )
+        }
+
+        composable(CareLogRoutes.INVITE_DOCTOR) {
+            InviteDoctorScreen(
+                patientId = "",
+                patientName = "",
+                onNavigateBack = { navController.popBackStack() },
+                onInviteSent = { navController.popBackStack() }
+            )
+        }
+
         // ── Relative Dashboard & Screens ────────────────────────
         composable(CareLogRoutes.RELATIVE_DASHBOARD) {
             RelativeDashboardScreen(
                 onNavigateToTrends = { navController.navigate(CareLogRoutes.TRENDS) },
                 onNavigateToAlerts = { navController.navigate(CareLogRoutes.ALERTS) },
-                onNavigateToSettings = { /* TODO */ },
+                onNavigateToSettings = {
+                    navController.navigate(CareLogRoutes.SETTINGS)
+                },
                 onNavigateToCareTeam = { navController.navigate(CareLogRoutes.CARE_TEAM) }
             )
         }
@@ -344,6 +413,9 @@ fun CareLogNavHost() {
                 onNavigateToUpload = { navController.navigate(CareLogRoutes.UPLOAD) },
                 onNavigateToNotes = { navController.navigate(CareLogRoutes.ATTENDANT_NOTES) },
                 onNavigateToHistory = { navController.navigate(CareLogRoutes.HISTORY) },
+                onNavigateToSettings = {
+                    navController.navigate(CareLogRoutes.SETTINGS)
+                },
                 onSwitchToPatient = {
                     navController.navigate(CareLogRoutes.PATIENT_DASHBOARD) {
                         popUpTo(CareLogRoutes.ATTENDANT_DASHBOARD) { inclusive = true }
@@ -372,10 +444,23 @@ private fun SplashScreen(navController: NavController) {
         try {
             Amplify.Auth.fetchAuthSession(
                 { session ->
-                    navigateTo.value = if (session.isSignedIn) {
-                        CareLogRoutes.PATIENT_DASHBOARD
+                    if (session.isSignedIn) {
+                        // Fetch user attributes to determine persona and route accordingly
+                        Amplify.Auth.fetchUserAttributes(
+                            { attributes ->
+                                val personaValue = attributes.find {
+                                    it.key == AuthUserAttributeKey.custom("persona_type")
+                                }?.value
+                                val persona = PersonaType.fromString(personaValue)
+                                navigateTo.value = dashboardRouteForPersona(persona)
+                            },
+                            { error ->
+                                Log.w("SplashScreen", "Failed to fetch user attributes", error)
+                                navigateTo.value = CareLogRoutes.PATIENT_DASHBOARD
+                            }
+                        )
                     } else {
-                        CareLogRoutes.LOGIN
+                        navigateTo.value = CareLogRoutes.LOGIN
                     }
                 },
                 { error ->

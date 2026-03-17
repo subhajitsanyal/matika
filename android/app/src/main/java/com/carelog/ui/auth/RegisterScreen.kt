@@ -47,6 +47,7 @@ fun RegisterScreen(
     var passwordVisible by remember { mutableStateOf(false) }
     var acceptedTerms by remember { mutableStateOf(false) }
 
+
     val isFormValid = name.isNotBlank() &&
             email.isNotBlank() &&
             password.length >= 8 &&
@@ -94,7 +95,7 @@ fun RegisterScreen(
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "Create your account to start monitoring your loved one's health",
+                text = "Create your account to start monitoring your loved one's health. You can add patients, attendants, and doctors from Settings.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
