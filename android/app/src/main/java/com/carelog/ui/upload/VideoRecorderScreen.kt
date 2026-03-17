@@ -69,6 +69,7 @@ fun VideoRecorderScreen(
 
     val permissionsState = rememberMultiplePermissionsState(permissions)
 
+    var showAck by remember { mutableStateOf(false) }
     var isRecording by remember { mutableStateOf(false) }
     var recordingDuration by remember { mutableLongStateOf(0L) }
     var recordedUri by remember { mutableStateOf<Uri?>(null) }
@@ -171,7 +172,7 @@ fun VideoRecorderScreen(
                         recordingDuration = 0
                     },
                     onUse = {
-                        recordedUri?.let { onRecordingComplete(it) }
+                        showAck = true
                     }
                 )
             } else {
@@ -237,6 +238,14 @@ fun VideoRecorderScreen(
             }
         }
     }
+
+    MediaAcknowledgement(
+        visible = showAck,
+        message = "Video Saved",
+        onDismiss = {
+            recordedUri?.let { onRecordingComplete(it) } ?: onNavigateBack()
+        }
+    )
 }
 
 @Suppress("UNUSED_PARAMETER")

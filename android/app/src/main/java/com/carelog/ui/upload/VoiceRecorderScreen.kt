@@ -46,6 +46,7 @@ fun VoiceRecorderScreen(
     val context = LocalContext.current
     val micPermissionState = rememberPermissionState(Manifest.permission.RECORD_AUDIO)
 
+    var showAck by remember { mutableStateOf(false) }
     var isRecording by remember { mutableStateOf(false) }
     var recordingDuration by remember { mutableLongStateOf(0L) }
     var recordedFile by remember { mutableStateOf<File?>(null) }
@@ -120,9 +121,7 @@ fun VoiceRecorderScreen(
                         recordingDuration = 0
                     },
                     onUse = {
-                        recordedFile?.let { file ->
-                            onRecordingComplete(Uri.fromFile(file))
-                        }
+                        showAck = true
                     }
                 )
             } else {
@@ -158,6 +157,16 @@ fun VoiceRecorderScreen(
             }
         }
     }
+
+    MediaAcknowledgement(
+        visible = showAck,
+        message = "Voice Note Saved",
+        onDismiss = {
+            recordedFile?.let { file ->
+                onRecordingComplete(Uri.fromFile(file))
+            } ?: onNavigateBack()
+        }
+    )
 }
 
 @Composable

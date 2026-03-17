@@ -165,12 +165,12 @@ fun UploadScreen(
         )
     }
 
-    // Show success and navigate back
-    LaunchedEffect(uiState.uploadSuccess) {
-        if (uiState.uploadSuccess) {
-            onNavigateBack()
-        }
-    }
+    // Show success acknowledgement
+    MediaAcknowledgement(
+        visible = uiState.uploadSuccess,
+        message = "Upload Complete",
+        onDismiss = onNavigateBack
+    )
 }
 
 @Composable

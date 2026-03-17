@@ -53,6 +53,7 @@ fun CameraScreen(
     onNavigateBack: () -> Unit,
     onImageCaptured: (Uri) -> Unit
 ) {
+    var showAck by remember { mutableStateOf(false) }
     val context = LocalContext.current
     @Suppress("UNUSED_VARIABLE")
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -117,7 +118,7 @@ fun CameraScreen(
                         capturedUri = null
                     },
                     onUse = {
-                        capturedUri?.let { onImageCaptured(it) }
+                        showAck = true
                     }
                 )
             } else {
@@ -149,6 +150,14 @@ fun CameraScreen(
             }
         }
     }
+
+    MediaAcknowledgement(
+        visible = showAck,
+        message = "Photo Saved",
+        onDismiss = {
+            capturedUri?.let { onImageCaptured(it) } ?: onNavigateBack()
+        }
+    )
 }
 
 @Composable
