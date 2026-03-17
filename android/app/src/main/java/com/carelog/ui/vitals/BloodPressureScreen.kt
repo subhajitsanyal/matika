@@ -95,11 +95,7 @@ fun BloodPressureScreen(
 
             // Save button
             Button(
-                onClick = {
-                    viewModel.saveReading {
-                        onNavigateBack()
-                    }
-                },
+                onClick = { viewModel.saveReading {} },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(72.dp),
@@ -139,6 +135,13 @@ fun BloodPressureScreen(
             // Error handling - could show snackbar
         }
     }
+
+    // Success acknowledgement overlay
+    SaveAcknowledgement(
+        visible = uiState.saved,
+        vitalName = "Blood Pressure",
+        onDismiss = onNavigateBack
+    )
 }
 
 /**

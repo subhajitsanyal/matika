@@ -85,11 +85,7 @@ fun WeightScreen(
 
             // Save button
             Button(
-                onClick = {
-                    viewModel.saveReading {
-                        onNavigateBack()
-                    }
-                },
+                onClick = { viewModel.saveReading {} },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(72.dp),
@@ -122,4 +118,11 @@ fun WeightScreen(
             Spacer(modifier = Modifier.height(24.dp))
         }
     }
+
+    // Success acknowledgement overlay
+    SaveAcknowledgement(
+        visible = uiState.saved,
+        vitalName = "Weight",
+        onDismiss = onNavigateBack
+    )
 }

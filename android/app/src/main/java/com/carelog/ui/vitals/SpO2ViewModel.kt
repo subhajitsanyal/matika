@@ -80,10 +80,9 @@ class SpO2ViewModel @Inject constructor(
                 localFhirRepository.saveObservation(observation)
 
                 // Play voice acknowledgement
-                voicePlayer.playSuccess(ObservationType.OXYGEN_SATURATION)
+                try { voicePlayer.playSuccess(ObservationType.OXYGEN_SATURATION) } catch (_: Exception) {}
 
-                _uiState.update { it.copy(isSaving = false) }
-                onSuccess()
+                _uiState.update { it.copy(isSaving = false, saved = true) }
 
             } catch (e: Exception) {
                 _uiState.update {
@@ -107,5 +106,6 @@ data class SpO2UiState(
     val showLowWarning: Boolean = false,
     val canSave: Boolean = false,
     val isSaving: Boolean = false,
+    val saved: Boolean = false,
     val saveError: String? = null
 )
