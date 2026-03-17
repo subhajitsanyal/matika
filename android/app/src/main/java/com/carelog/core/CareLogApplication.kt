@@ -7,7 +7,7 @@ import androidx.work.Configuration
 import com.amplifyframework.AmplifyException
 import com.amplifyframework.auth.cognito.AWSCognitoAuthPlugin
 import com.amplifyframework.core.Amplify
-import com.amplifyframework.storage.s3.AWSS3StoragePlugin
+// import com.amplifyframework.storage.s3.AWSS3StoragePlugin
 import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
 
@@ -41,13 +41,6 @@ class CareLogApplication : Application(), Configuration.Provider {
         try {
             // Add Cognito Auth plugin
             Amplify.addPlugin(AWSCognitoAuthPlugin())
-
-            // Add S3 Storage plugin for document uploads
-            try {
-                Amplify.addPlugin(AWSS3StoragePlugin())
-            } catch (e: Exception) {
-                Log.w(TAG, "S3 Storage plugin not available, skipping", e)
-            }
 
             // Configure Amplify with the configuration files
             Amplify.configure(applicationContext)
