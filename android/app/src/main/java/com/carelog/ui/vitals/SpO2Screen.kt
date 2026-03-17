@@ -1,5 +1,6 @@
 package com.carelog.ui.vitals
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -51,6 +52,7 @@ fun SpO2Screen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .background(MaterialTheme.colorScheme.surface)
                 .padding(paddingValues)
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -134,6 +136,18 @@ fun SpO2Screen(
 
             Spacer(modifier = Modifier.height(24.dp))
         }
+    }
+
+    // Show error dialog
+    uiState.saveError?.let { error ->
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("Save Failed") },
+            text = { Text(error) },
+            confirmButton = {
+                TextButton(onClick = onNavigateBack) { Text("OK") }
+            }
+        )
     }
 
     // Success acknowledgement overlay

@@ -79,6 +79,7 @@ fun UploadScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
+                .background(MaterialTheme.colorScheme.surface)
         ) {
             LazyVerticalGrid(
                 columns = GridCells.Fixed(2),
@@ -150,11 +151,18 @@ fun UploadScreen(
         }
     }
 
-    // Show error snackbar
+    // Show error dialog
     uiState.error?.let { error ->
-        LaunchedEffect(error) {
-            // Show snackbar
-        }
+        AlertDialog(
+            onDismissRequest = { viewModel.clearError() },
+            title = { Text("Upload Error") },
+            text = { Text(error) },
+            confirmButton = {
+                TextButton(onClick = { viewModel.clearError() }) {
+                    Text("OK")
+                }
+            }
+        )
     }
 
     // Show success and navigate back

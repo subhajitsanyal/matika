@@ -98,6 +98,7 @@ fun VoiceRecorderScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
+                .background(MaterialTheme.colorScheme.surface)
         ) {
             if (!micPermissionState.status.isGranted) {
                 // Permission denied
