@@ -630,4 +630,90 @@ aws lambda update-function-code --function-name carelog-dev-FUNCTION-NAME --zip-
 
 ---
 
+## FAQ
+
+### How do I reset the database and remove all users?
+
+**1. Delete all Cognito users:**
+
+```bash
+POOL_ID=$(aws cognito-idp list-user-pools --max-results 10 --region ap-south-1 \
+    --query 'UserPools[?Name==`carelog-dev-users`].Id' --output text)
+
+for user in $(aws cognito-idp list-users --user-pool-id $POOL_ID --region ap-south-1 \
+    --query 'Users[].Username' --output text); do
+    echo "Deleting $user"
+    aws cognito-idp admin-delete-user --user-pool-id $POOL_ID --username "$user" --region ap-south-1
+done
+```
+
+**2. Reset the database** (requires SSM port-forward running in another terminal):
+
+```bash
+cd backend/database
+echo 'flyway.cleanDisabled=false' >> flyway.conf
+flyway clean    # drops all objects
+flyway migrate  # recreates schema from scratch
+```
+
+> **Warning:** `flyway clean` drops everything — only use in dev.
+
+### How do I manually confirm a user (skip email verification)?
+
+```bash
+POOL_ID=$(aws cognito-idp list-user-pools --max-results 10 --region ap-south-1 \
+    --query 'UserPools[?Name==`carelog-dev-users`].Id' --output text)
+
+aws cognito-idp admin-confirm-sign-up \
+    --user-pool-id $POOL_ID \
+    --username USERNAME_OR_SUB \
+    --region ap-south-1
+```
+
+This also triggers the post-confirmation Lambda.
+
+### How do I reset a user's password?
+
+```bash
+aws cognito-idp admin-set-user-password \
+    --user-pool-id $POOL_ID \
+    --username USERNAME_OR_SUB \
+    --password 'NewP@ssw0rd' \
+    --permanent \
+    --region ap-south-1
+```
+
+Password must meet policy: 8+ chars, uppercase, lowercase, number, symbol.
+
+### How do I check Lambda logs?
+
+```bash
+# Follow logs in real time
+aws logs tail /aws/lambda/carelog-dev-FUNCTION-NAME --follow --region ap-south-1
+
+# View last 5 minutes
+aws logs tail /aws/lambda/carelog-dev-FUNCTION-NAME --since 5m --region ap-south-1
+```
+
+Function names: `post-confirmation`, `create-patient`, `accept-invite`, `invite-attendant`, `invite-doctor`, `sync-observation`, `bulk-sync`, `presigned-url`.
+
+### How do I get the database password?
+
+```bash
+aws secretsmanager get-secret-value --secret-id carelog-dev-db-password --region ap-south-1 \
+    --query 'SecretString' --output text | \
+    python3 -c "import sys,json; print(json.loads(sys.stdin.read())['password'])"
+```
+
+### Not receiving Cognito verification emails?
+
+Cognito uses `COGNITO_DEFAULT` email which has a daily limit of 50 emails. Options:
+
+1. Check spam/junk folder
+2. Resend code: `aws cognito-idp resend-confirmation-code --client-id CLIENT_ID --username USERNAME --region ap-south-1`
+3. Confirm manually (see above)
+4. For production, configure SES as the email provider in the Cognito module
+
+---
+
 *CareLog Setup and Deployment Guide v2.0 — March 2026*
