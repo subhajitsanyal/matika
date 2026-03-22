@@ -27,6 +27,27 @@ class HealthLakeFhirClient @Inject constructor(
         encodeDefaults = true
     }
 
+    /**
+     * Maps FHIR resource paths to API Gateway routes.
+     * The API Gateway uses REST-style routes, not FHIR-style paths.
+     */
+    private fun mapPath(fhirPath: String): String {
+        return when {
+            fhirPath == "Observation" -> "observations/sync"
+            fhirPath.startsWith("Observation/") -> "observations/sync"
+            fhirPath == "Patient" -> "patients"
+            fhirPath.startsWith("Patient/") -> "patients/${fhirPath.removePrefix("Patient/")}"
+            fhirPath == "DocumentReference" -> "documents"
+            fhirPath.startsWith("DocumentReference/") -> "documents/${fhirPath.removePrefix("DocumentReference/")}"
+            fhirPath == "CarePlan" -> "care-plans"
+            fhirPath.startsWith("CarePlan/") -> "care-plans/${fhirPath.removePrefix("CarePlan/")}"
+            fhirPath.startsWith("Observation?") -> "observations/sync?${fhirPath.removePrefix("Observation?")}"
+            fhirPath.startsWith("DocumentReference?") -> "documents?${fhirPath.removePrefix("DocumentReference?")}"
+            fhirPath.startsWith("CarePlan?") -> "care-plans?${fhirPath.removePrefix("CarePlan?")}"
+            else -> fhirPath
+        }
+    }
+
     // ==================== Patient Operations ====================
 
     override suspend fun createPatient(patient: FhirPatient): String {
@@ -176,7 +197,7 @@ class HealthLakeFhirClient @Inject constructor(
     // ==================== HTTP Methods ====================
 
     private suspend fun get(path: String): JsonObject? = withContext(Dispatchers.IO) {
-        val url = URL("${config.baseUrl}/$path")
+        val url = URL("${config.baseUrl}/${mapPath(path)}")
         val connection = url.openConnection() as HttpURLConnection
 
         try {
@@ -201,7 +222,7 @@ class HealthLakeFhirClient @Inject constructor(
 
     private suspend fun post(path: String, body: Map<String, Any>): JsonObject =
         withContext(Dispatchers.IO) {
-            val url = URL("${config.baseUrl}/$path")
+            val url = URL("${config.baseUrl}/${mapPath(path)}")
             val connection = url.openConnection() as HttpURLConnection
 
             try {
@@ -230,7 +251,7 @@ class HealthLakeFhirClient @Inject constructor(
 
     private suspend fun put(path: String, body: Map<String, Any>): JsonObject =
         withContext(Dispatchers.IO) {
-            val url = URL("${config.baseUrl}/$path")
+            val url = URL("${config.baseUrl}/${mapPath(path)}")
             val connection = url.openConnection() as HttpURLConnection
 
             try {
@@ -258,7 +279,7 @@ class HealthLakeFhirClient @Inject constructor(
         }
 
     private suspend fun delete(path: String) = withContext(Dispatchers.IO) {
-        val url = URL("${config.baseUrl}/$path")
+        val url = URL("${config.baseUrl}/${mapPath(path)}")
         val connection = url.openConnection() as HttpURLConnection
 
         try {

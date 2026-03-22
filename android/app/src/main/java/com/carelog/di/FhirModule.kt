@@ -23,7 +23,7 @@ object FhirModule {
     fun provideFhirClientConfig(): FhirClientConfig {
         // TODO: Get these from BuildConfig or environment
         return FhirClientConfig(
-            baseUrl = "${BuildConfig.API_BASE_URL}/fhir",
+            baseUrl = BuildConfig.API_BASE_URL,
             healthLakeDatastoreId = "placeholder-datastore-id"
         )
     }
