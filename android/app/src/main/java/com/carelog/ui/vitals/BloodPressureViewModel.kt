@@ -95,7 +95,7 @@ class BloodPressureViewModel @Inject constructor(
 
                 // Create blood pressure observation with components
                 val observation = FhirObservation(
-                    id = UUID.randomUUID().toString(),
+                    id = null,
                     patientId = patientId,
                     type = ObservationType.BLOOD_PRESSURE,
                     value = null, // BP uses components instead

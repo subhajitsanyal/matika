@@ -65,7 +65,7 @@ class PulseViewModel @Inject constructor(
 
                 // Create heart rate observation
                 val observation = FhirObservation(
-                    id = UUID.randomUUID().toString(),
+                    id = null,
                     patientId = patientId,
                     type = ObservationType.HEART_RATE,
                     value = value.toDouble(),

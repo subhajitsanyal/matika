@@ -110,7 +110,7 @@ class WeightViewModel @Inject constructor(
 
                 // Create weight observation
                 val observation = FhirObservation(
-                    id = UUID.randomUUID().toString(),
+                    id = null,
                     patientId = patientId,
                     type = ObservationType.BODY_WEIGHT,
                     value = valueInKg,
