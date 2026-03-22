@@ -47,7 +47,59 @@ aws configure
 
 You need `AdministratorAccess` for initial setup, or a scoped policy covering VPC, Cognito, API Gateway, RDS, S3, SQS, SNS, EC2, IAM, KMS, CloudWatch, and Secrets Manager.
 
-### 1.4 Firebase Project Setup
+### 1.4 SES Email Setup (Recommended)
+
+Cognito's built-in email has a **50 emails/day limit**. Configure SES to remove this limit.
+
+#### 1.4.1 Verify Sender Email
+
+```bash
+aws ses verify-email-identity --email-address YOUR_EMAIL@yourdomain.com --region ap-south-1
+```
+
+You'll receive a verification email — click the link. Confirm it's verified:
+
+```bash
+aws ses get-identity-verification-attributes --identities YOUR_EMAIL@yourdomain.com --region ap-south-1
+# Should show: "VerificationStatus": "Success"
+```
+
+#### 1.4.2 Verify Recipient Emails (Sandbox Mode)
+
+New SES accounts are in **sandbox mode** — you can only send TO verified emails. Verify any email addresses you'll test with:
+
+```bash
+aws ses verify-email-identity --email-address your-test-email@gmail.com --region ap-south-1
+```
+
+#### 1.4.3 Add to Terraform Config
+
+Add to your `terraform.tfvars` (§3.2):
+
+```hcl
+ses_email_arn  = "arn:aws:ses:ap-south-1:YOUR_ACCOUNT_ID:identity/YOUR_EMAIL@yourdomain.com"
+ses_from_email = "CareLog <YOUR_EMAIL@yourdomain.com>"
+```
+
+Without these, Cognito uses its built-in email (50/day limit, generic sender).
+
+#### 1.4.4 Request Production Access (Before Launch)
+
+To send to any email address without verification, request SES sandbox exit:
+
+```bash
+aws sesv2 put-account-details \
+    --production-access-enabled \
+    --mail-type TRANSACTIONAL \
+    --website-url "https://carelog.app" \
+    --use-case-description "CareLog health monitoring app - user verification and invite emails" \
+    --contact-language EN \
+    --region ap-south-1
+```
+
+AWS reviews and approves within 24–48 hours.
+
+### 1.5 Firebase Project Setup
 
 1. Create project `carelog` at [Firebase Console](https://console.firebase.google.com)
 2. Add Android app (`com.carelog`) → download `google-services.json`
@@ -157,6 +209,10 @@ db_username          = "carelog_dev_admin"
 enable_healthlake    = false
 enable_waf           = false
 enable_bastion       = true
+
+# SES email (optional — omit to use Cognito default with 50/day limit)
+# ses_email_arn  = "arn:aws:ses:ap-south-1:YOUR_ACCOUNT_ID:identity/your-email@domain.com"
+# ses_from_email = "CareLog <your-email@domain.com>"
 ```
 
 ### 3.3 Install Lambda Dependencies (before Terraform)
@@ -716,12 +772,11 @@ aws secretsmanager get-secret-value --secret-id carelog-dev-db-password --region
 
 ### Not receiving Cognito verification emails?
 
-Cognito uses `COGNITO_DEFAULT` email which has a daily limit of 50 emails. Options:
-
 1. Check spam/junk folder
-2. Resend code: `aws cognito-idp resend-confirmation-code --client-id CLIENT_ID --username USERNAME --region ap-south-1`
-3. Confirm manually (see above)
-4. For production, configure SES as the email provider in the Cognito module
+2. If using Cognito default email: daily limit is 50 — switch to SES (see §1.4)
+3. If using SES in sandbox mode: recipient email must be verified too (`aws ses verify-email-identity`)
+4. Resend code: `aws cognito-idp resend-confirmation-code --client-id CLIENT_ID --username USERNAME --region ap-south-1`
+5. Skip email and confirm manually: see "How do I manually confirm a user" above
 
 ---
 
