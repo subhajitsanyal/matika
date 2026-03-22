@@ -1,6 +1,7 @@
 package com.carelog.di
 
 import com.carelog.auth.AuthRepository
+import com.carelog.core.BuildConfig
 import com.carelog.fhir.client.FhirClient
 import com.carelog.fhir.client.FhirClientConfig
 import com.carelog.fhir.client.HealthLakeFhirClient
@@ -22,7 +23,7 @@ object FhirModule {
     fun provideFhirClientConfig(): FhirClientConfig {
         // TODO: Get these from BuildConfig or environment
         return FhirClientConfig(
-            baseUrl = "https://api.carelog.app/fhir",
+            baseUrl = "${BuildConfig.API_BASE_URL}/fhir",
             healthLakeDatastoreId = "placeholder-datastore-id"
         )
     }

@@ -1,6 +1,7 @@
 package com.carelog.ui.consent
 
 import com.carelog.auth.AuthRepository
+import com.carelog.core.BuildConfig
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -23,7 +24,7 @@ class ConsentRepositoryImpl @Inject constructor(
         .readTimeout(30, TimeUnit.SECONDS)
         .build()
 
-    private val apiBaseUrl = "https://api.carelog.app" // TODO: Get from config
+    private val apiBaseUrl = BuildConfig.API_BASE_URL
 
     override suspend fun getConsentText(): ConsentData {
         // For now, return a placeholder consent text

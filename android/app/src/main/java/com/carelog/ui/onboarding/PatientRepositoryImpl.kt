@@ -1,5 +1,6 @@
 package com.carelog.ui.onboarding
 
+import com.carelog.core.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -24,7 +25,7 @@ class PatientRepositoryImpl @Inject constructor() : PatientRepository {
         .readTimeout(30, TimeUnit.SECONDS)
         .build()
 
-    private val apiBaseUrl = "https://api.carelog.app" // TODO: Get from config
+    private val apiBaseUrl = BuildConfig.API_BASE_URL
 
     override suspend fun createPatient(
         token: String,
