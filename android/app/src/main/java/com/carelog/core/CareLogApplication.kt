@@ -8,6 +8,7 @@ import com.amplifyframework.AmplifyException
 import com.amplifyframework.auth.cognito.AWSCognitoAuthPlugin
 import com.amplifyframework.core.Amplify
 // import com.amplifyframework.storage.s3.AWSS3StoragePlugin
+import com.carelog.sync.SyncManager
 import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
 
@@ -25,6 +26,9 @@ class CareLogApplication : Application(), Configuration.Provider {
     @Inject
     lateinit var workerFactory: HiltWorkerFactory
 
+    @Inject
+    lateinit var syncManager: SyncManager
+
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
             .setWorkerFactory(workerFactory)
@@ -35,6 +39,7 @@ class CareLogApplication : Application(), Configuration.Provider {
         super.onCreate()
         instance = this
         initializeAmplify()
+        syncManager.initialize()
     }
 
     private fun initializeAmplify() {
