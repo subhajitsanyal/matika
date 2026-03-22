@@ -211,6 +211,8 @@ resource "aws_api_gateway_integration_response" "patients_get_200" {
   response_parameters = {
     "method.response.header.Access-Control-Allow-Origin" = "'${var.cors_origin}'"
   }
+
+  depends_on = [aws_api_gateway_integration.patients_get]
 }
 
 # DELETE /patients/{patientId} — Delete patient with cascade
@@ -253,6 +255,8 @@ resource "aws_api_gateway_integration_response" "patient_delete_200" {
   response_parameters = {
     "method.response.header.Access-Control-Allow-Origin" = "'${var.cors_origin}'"
   }
+
+  depends_on = [aws_api_gateway_integration.patient_delete]
 }
 
 # DELETE /patients/{patientId}/team/{memberId} — Remove team member
@@ -295,6 +299,8 @@ resource "aws_api_gateway_integration_response" "team_member_delete_200" {
   response_parameters = {
     "method.response.header.Access-Control-Allow-Origin" = "'${var.cors_origin}'"
   }
+
+  depends_on = [aws_api_gateway_integration.team_member_delete]
 }
 
 # ============================================================
