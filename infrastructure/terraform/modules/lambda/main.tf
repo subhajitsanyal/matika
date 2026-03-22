@@ -363,6 +363,7 @@ resource "aws_lambda_function" "sync_observation" {
   environment {
     variables = {
       S3_BUCKET_NAME = var.documents_bucket_name
+      S3_KMS_KEY_ID  = var.s3_kms_key_arn
     }
   }
 }
@@ -407,6 +408,7 @@ resource "aws_lambda_function" "presigned_url" {
   environment {
     variables = {
       S3_BUCKET_NAME = var.documents_bucket_name
+      S3_KMS_KEY_ID  = var.s3_kms_key_arn
     }
   }
 }
