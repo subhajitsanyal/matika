@@ -1,8 +1,8 @@
 # CareLog — Implementation Plan
 
-**Version:** 1.0
+**Version:** 1.1
 **Date:** March 2026
-**Based on:** CareLog PRD v0.1
+**Based on:** CareLog PRD v0.2
 
 ---
 
@@ -41,13 +41,13 @@ This document breaks down the CareLog PRD into actionable tasks organized by mil
 
 - [x] **[T-003]** Set up AWS infrastructure foundation
   - **Depends on:** None
-  - **Context:** Use Terraform or AWS CDK to create infrastructure as code. Create separate environments: `dev`, `staging`, `prod`. Set up VPC with private subnets for backend services.
+  - **Context:** Terraform IaC in `infrastructure/terraform/`. Modules: vpc, cognito, api_gateway, rds, s3, sqs, sns, bastion, cloudfront, cloudtrail, healthlake. Environments in `environments/dev|staging|prod`. **Note:** Terraform deploys infrastructure only — API Gateway uses MOCK integrations; Lambda functions are deployed separately. All `@aws-sdk/*` Lambda dependencies must be `^3.978.0`+ (critical `fast-xml-parser` vulnerability patched in v3.973+).
 
-  - [x] **[T-003.1]** Create IaC project (Terraform/CDK)
-  - [x] **[T-003.2]** Define VPC with public and private subnets
+  - [x] **[T-003.1]** Create IaC project (Terraform)
+  - [x] **[T-003.2]** Define VPC with public and private subnets (3 AZs prod, 2 AZs dev)
   - [x] **[T-003.3]** Set up NAT Gateway for private subnet internet access
-  - [x] **[T-003.4]** Configure security groups for each service
-  - [x] **[T-003.5]** Set up environment-specific configurations
+  - [x] **[T-003.4]** Configure security groups (api, rds, lambda)
+  - [x] **[T-003.5]** Set up environment-specific configurations (`terraform.tfvars` per env)
 
 - [x] **[T-004]** Configure AWS Cognito user pool
   - **Depends on:** T-003
@@ -61,12 +61,12 @@ This document breaks down the CareLog PRD into actionable tasks organized by mil
 
 - [x] **[T-005]** Set up Amazon API Gateway
   - **Depends on:** T-004
-  - **Context:** Create REST API Gateway with Cognito authorizer. Define resource structure: `/patients`, `/observations`, `/documents`, `/thresholds`, `/care-plans`. Enable CORS for web portal. Configure throttling and rate limiting.
+  - **Context:** REST API with REGIONAL endpoint and Cognito authorizer. Resources: `/patients`, `/observations`, `/documents`, `/thresholds`, `/care-plans`, `/reminders`, `/alerts`, `/device-tokens`, `/audit-log`. **Current state:** All endpoints use MOCK integrations — Lambda integrations must be wired separately when Lambda deployment is implemented. Throttling: 100 burst/50 rate (dev), 200/100 (prod). Daily quota: 10,000 (dev), 100,000 (prod). X-Ray tracing enabled.
 
   - [x] **[T-005.1]** Create REST API in API Gateway
   - [x] **[T-005.2]** Configure Cognito authorizer
-  - [x] **[T-005.3]** Define base resource structure
-  - [x] **[T-005.4]** Enable CORS with appropriate origins
+  - [x] **[T-005.3]** Define base resource structure (including DELETE routes for persona management)
+  - [x] **[T-005.4]** Enable CORS with appropriate origins (* for dev, specific domain for prod)
   - [x] **[T-005.5]** Set up request/response models
 
 - [x] **[T-006]** Provision AWS HealthLake instance
@@ -99,16 +99,16 @@ This document breaks down the CareLog PRD into actionable tasks organized by mil
 
 - [x] **[T-009]** Set up Amazon RDS (PostgreSQL)
   - **Depends on:** T-003
-  - **Context:** Create PostgreSQL RDS instance in private subnet. Use db.t3.medium for development. Enable automated backups. Configure parameter group for UTF-8.
+  - **Context:** PostgreSQL 15 in private subnet. Dev: `db.t3.micro`, prod: `db.t3.medium`. KMS encryption at rest, SSL enforced (`rds.force_ssl = 1`). Password auto-generated (32 chars) and stored in Secrets Manager as `carelog-{env}-db-password`. Access via bastion SSM port-forwarding only. Backup: 7 days (dev), 35 days (prod). Performance Insights enabled.
 
-  - [x] **[T-009.1]** Create RDS PostgreSQL instance
-  - [x] **[T-009.2]** Configure security group for private access
-  - [x] **[T-009.3]** Set up automated backups
-  - [x] **[T-009.4]** Create initial database and admin user
+  - [x] **[T-009.1]** Create RDS PostgreSQL 15 instance
+  - [x] **[T-009.2]** Configure security group for private access (bastion → RDS on 5432)
+  - [x] **[T-009.3]** Set up automated backups and Performance Insights
+  - [x] **[T-009.4]** Create initial database and admin user (credentials in Secrets Manager)
 
 - [x] **[T-010]** Design and implement RDS database schema
   - **Depends on:** T-009
-  - **Context:** Create tables: `users`, `persona_links` (patient-caregiver relationships), `thresholds`, `reminder_configs`, `consent_records`, `audit_log`. Use UUIDs as primary keys. Add foreign key constraints.
+  - **Context:** Create tables: `users`, `persona_links` (patient-caregiver relationships), `thresholds`, `reminder_configs`, `consent_records`, `audit_log`. Use UUIDs as primary keys. Add foreign key constraints. Migrations managed by Flyway in `backend/database/migrations/` (V001, V002, ...). **Note:** `flyway.conf` contains DB credentials and is gitignored — create it locally per the setup guide (§4.3).
 
   - [x] **[T-010.1]** Design ER diagram
   - [x] **[T-010.2]** Create `users` table with Cognito sub reference
@@ -117,7 +117,7 @@ This document breaks down the CareLog PRD into actionable tasks organized by mil
   - [x] **[T-010.5]** Create `reminder_configs` table
   - [x] **[T-010.6]** Create `consent_records` table
   - [x] **[T-010.7]** Create `audit_log` table
-  - [x] **[T-010.8]** Set up database migrations (Flyway/Liquibase)
+  - [x] **[T-010.8]** Set up database migrations (Flyway, versioned SQL in `backend/database/migrations/`)
 
 ---
 
