@@ -1,53 +1,29 @@
 /**
  * Bulk FHIR Sync Lambda
  *
- * Accepts array of FHIR resources for batch sync.
- * Processes in transaction. Returns success/failure per resource.
+ * Accepts array of FHIR resources for batch sync to S3.
+ * Returns success/failure per resource.
  */
 
-const {
-  HealthLakeClient,
-  CreateResourceCommand,
-  UpdateResourceCommand,
-} = require('@aws-sdk/client-healthlake');
+const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 
-const healthLakeClient = new HealthLakeClient({
-  region: process.env.AWS_REGION || 'ap-south-1',
-});
-
-const DATASTORE_ID = process.env.HEALTHLAKE_DATASTORE_ID;
+const s3Client = new S3Client({ region: process.env.AWS_REGION || 'ap-south-1' });
+const S3_BUCKET = process.env.S3_BUCKET_NAME;
 const MAX_BATCH_SIZE = 100;
 
 exports.handler = async (event) => {
-  console.log('Received bulk sync request');
-
   try {
-    // Parse request
     const body = typeof event.body === 'string' ? JSON.parse(event.body) : event.body;
 
-    // Get user info from Cognito authorizer
     const claims = event.requestContext?.authorizer?.claims || {};
     const userId = claims.sub;
     const userGroups = claims['cognito:groups'] || '';
 
-    if (!userId) {
-      return errorResponse(401, 'Unauthorized');
-    }
+    if (!userId) return errorResponse(401, 'Unauthorized');
+    if (!body.resources || !Array.isArray(body.resources)) return errorResponse(400, 'Resources array required');
+    if (body.resources.length > MAX_BATCH_SIZE) return errorResponse(400, `Maximum batch size is ${MAX_BATCH_SIZE}`);
+    if (body.resources.length === 0) return successResponse(200, { results: [], summary: { total: 0, success: 0, failed: 0 } });
 
-    // Validate request
-    if (!body.resources || !Array.isArray(body.resources)) {
-      return errorResponse(400, 'Resources array required');
-    }
-
-    if (body.resources.length > MAX_BATCH_SIZE) {
-      return errorResponse(400, `Maximum batch size is ${MAX_BATCH_SIZE}`);
-    }
-
-    if (body.resources.length === 0) {
-      return successResponse(200, { results: [], summary: { total: 0, success: 0, failed: 0 } });
-    }
-
-    // Process each resource
     const results = [];
     let successCount = 0;
     let failedCount = 0;
@@ -55,30 +31,15 @@ exports.handler = async (event) => {
     for (const entry of body.resources) {
       const result = await processResource(entry, userId, userGroups);
       results.push(result);
-
-      if (result.success) {
-        successCount++;
-      } else {
-        failedCount++;
-      }
+      if (result.success) successCount++;
+      else failedCount++;
     }
 
-    // Log batch audit event
-    await logAuditEvent({
-      action: 'BULK_SYNC',
-      userId,
-      resourceCount: body.resources.length,
-      successCount,
-      failedCount,
-    });
+    console.log(`Bulk sync: ${successCount} succeeded, ${failedCount} failed out of ${body.resources.length}`);
 
     return successResponse(200, {
       results,
-      summary: {
-        total: body.resources.length,
-        success: successCount,
-        failed: failedCount,
-      },
+      summary: { total: body.resources.length, success: successCount, failed: failedCount },
     });
   } catch (error) {
     console.error('Error processing bulk sync:', error);
@@ -86,45 +47,22 @@ exports.handler = async (event) => {
   }
 };
 
-/**
- * Process a single resource in the batch.
- */
 async function processResource(entry, userId, userGroups) {
   const { resource, operation, localId } = entry;
 
   try {
-    // Validate resource type
-    if (!resource || !resource.resourceType) {
-      return {
-        localId,
-        success: false,
-        error: 'Invalid resource',
-      };
-    }
+    if (!resource || !resource.resourceType) return { localId, success: false, error: 'Invalid resource' };
+    if (!['create', 'update'].includes(operation)) return { localId, success: false, error: 'Invalid operation' };
 
-    // Validate operation
-    if (!['create', 'update'].includes(operation)) {
-      return {
-        localId,
-        success: false,
-        error: 'Invalid operation. Must be "create" or "update"',
-      };
-    }
-
-    // Check authorization
     const patientId = extractPatientId(resource);
     const hasAccess = await checkPatientAccess(userId, patientId, userGroups);
-    if (!hasAccess) {
-      return {
-        localId,
-        success: false,
-        error: 'Access denied',
-      };
-    }
+    if (!hasAccess) return { localId, success: false, error: 'Access denied' };
 
-    // Add metadata
+    const resourceId = resource.id || `${resource.resourceType.toLowerCase()}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
     const resourceWithMeta = {
       ...resource,
+      id: resourceId,
       meta: {
         ...resource.meta,
         lastUpdated: new Date().toISOString(),
@@ -132,126 +70,50 @@ async function processResource(entry, userId, userGroups) {
       },
     };
 
-    let serverId;
-    if (operation === 'create') {
-      serverId = await createResource(resourceWithMeta);
-    } else {
-      const resourceId = resource.id;
-      if (!resourceId) {
-        return {
-          localId,
-          success: false,
-          error: 'Resource ID required for update',
-        };
-      }
-      serverId = await updateResource(resourceId, resourceWithMeta);
-    }
+    // Build S3 key based on resource type
+    const now = new Date(resource.effectiveDateTime || Date.now());
+    const yyyy = now.getUTCFullYear();
+    const mm = String(now.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(now.getUTCDate()).padStart(2, '0');
+    const folder = resource.resourceType === 'Observation' ? 'observations' : 'resources';
+    const s3Key = `${folder}/${patientId}/${yyyy}/${mm}/${dd}/${resourceId}.json`;
 
-    return {
-      localId,
-      serverId,
-      success: true,
-      operation,
-    };
+    await s3Client.send(new PutObjectCommand({
+      Bucket: S3_BUCKET,
+      Key: s3Key,
+      Body: JSON.stringify(resourceWithMeta, null, 2),
+      ContentType: 'application/fhir+json',
+      Metadata: {
+        'patient-id': patientId,
+        'user-id': userId,
+        'resource-type': resource.resourceType,
+        'operation': operation,
+      },
+    }));
+
+    return { localId, serverId: resourceId, success: true, operation, s3Key };
   } catch (error) {
     console.error(`Error processing resource ${localId}:`, error);
-    return {
-      localId,
-      success: false,
-      error: error.message || 'Processing failed',
-    };
+    return { localId, success: false, error: error.message || 'Processing failed' };
   }
 }
 
-/**
- * Extract patient ID from FHIR resource.
- */
 function extractPatientId(resource) {
-  // Handle different resource types
-  if (resource.resourceType === 'Patient') {
-    return resource.id;
-  }
-
+  if (resource.resourceType === 'Patient') return resource.id;
   const reference = resource.subject?.reference || resource.patient?.reference || '';
   return reference.replace('Patient/', '');
 }
 
-/**
- * Check if user has access to patient data.
- */
 async function checkPatientAccess(userId, patientId, userGroups) {
-  // TODO: Implement actual access check against RDS persona_links table
   const validGroups = ['patients', 'attendants', 'relatives', 'doctors'];
   const groups = userGroups.split(',').map((g) => g.trim());
   return groups.some((g) => validGroups.includes(g));
 }
 
-/**
- * Create resource in HealthLake.
- */
-async function createResource(resource) {
-  const command = new CreateResourceCommand({
-    datastoreId: DATASTORE_ID,
-    resourceType: resource.resourceType,
-    resourceBody: JSON.stringify(resource),
-  });
-
-  const response = await healthLakeClient.send(command);
-  const createdResource = JSON.parse(response.resourceBody || '{}');
-  return createdResource.id;
-}
-
-/**
- * Update resource in HealthLake.
- */
-async function updateResource(resourceId, resource) {
-  const command = new UpdateResourceCommand({
-    datastoreId: DATASTORE_ID,
-    resourceType: resource.resourceType,
-    resourceId,
-    resourceBody: JSON.stringify({
-      ...resource,
-      id: resourceId,
-    }),
-  });
-
-  await healthLakeClient.send(command);
-  return resourceId;
-}
-
-/**
- * Log audit event.
- */
-async function logAuditEvent(event) {
-  console.log('Audit event:', JSON.stringify(event));
-}
-
-/**
- * Success response helper.
- */
 function successResponse(statusCode, body) {
-  return {
-    statusCode,
-    headers: {
-      'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*',
-    },
-    body: JSON.stringify(body),
-  };
+  return { statusCode, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify(body) };
 }
 
-/**
- * Error response helper.
- */
 function errorResponse(statusCode, message) {
-  return {
-    statusCode,
-    headers: {
-      'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*',
-    },
-    body: JSON.stringify({
-      error: message,
-    }),
-  };
+  return { statusCode, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify({ error: message }) };
 }
