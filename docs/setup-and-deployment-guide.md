@@ -402,6 +402,8 @@ done
 # If using Terraform, the Lambdas are deployed with infrastructure
 ```
 
+> **Note:** All Lambda `@aws-sdk/*` dependencies should be kept at `^3.978.0` or later to avoid known critical vulnerabilities in `fast-xml-parser` and transitive `@aws-sdk/core` packages (patched in v3.973+).
+
 #### 3.7.1 New Lambda Functions (Persona Management)
 
 The following Lambdas handle caregiver-managed persona lifecycle:
