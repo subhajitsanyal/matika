@@ -67,7 +67,7 @@ class SpO2ViewModel @Inject constructor(
 
                 // Create SpO2 observation
                 val observation = FhirObservation(
-                    id = UUID.randomUUID().toString(),
+                    id = null,
                     patientId = patientId,
                     type = ObservationType.OXYGEN_SATURATION,
                     value = value.toDouble(),

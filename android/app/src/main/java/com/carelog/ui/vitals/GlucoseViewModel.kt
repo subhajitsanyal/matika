@@ -114,7 +114,7 @@ class GlucoseViewModel @Inject constructor(
 
                 // Create glucose observation
                 val observation = FhirObservation(
-                    id = UUID.randomUUID().toString(),
+                    id = null,
                     patientId = patientId,
                     type = ObservationType.BLOOD_GLUCOSE,
                     value = valueInMgDl,

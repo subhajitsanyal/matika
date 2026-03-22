@@ -110,7 +110,7 @@ class TemperatureViewModel @Inject constructor(
 
                 // Create temperature observation
                 val observation = FhirObservation(
-                    id = UUID.randomUUID().toString(),
+                    id = null,
                     patientId = patientId,
                     type = ObservationType.BODY_TEMPERATURE,
                     value = valueInCelsius,
