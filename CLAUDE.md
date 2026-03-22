@@ -35,7 +35,7 @@ xcodebuild -scheme CareLog -destination 'platform=iOS Simulator,name=iPhone 15 P
 xcodebuild test -scheme CareLog -destination 'platform=iOS Simulator,name=iPhone 15 Pro'
 ```
 
-### Backend Lambdas (Node.js 18)
+### Backend Lambdas (Node.js 20)
 Each Lambda in `backend/lambdas/` has its own `package.json`. Install dependencies individually:
 ```bash
 cd backend/lambdas/<function-name>

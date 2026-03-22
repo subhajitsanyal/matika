@@ -11,7 +11,7 @@
 
 | Tool | Version | Purpose |
 |------|---------|---------|
-| Node.js | 18.x+ | Backend Lambda functions |
+| Node.js | 20.x+ | Backend Lambda functions (AWS SDK v3.973+ requires Node 20) |
 | npm | 9.x+ | Package management |
 | Terraform | 1.5.x+ | Infrastructure as Code |
 | AWS CLI | 2.x | AWS service interaction |
@@ -24,7 +24,7 @@
 ### 1.2 Install (macOS)
 
 ```bash
-brew install node@18 terraform awscli cocoapods fastlane openjdk@17
+brew install node@20 terraform awscli cocoapods fastlane openjdk@17
 npm install -g firebase-tools
 
 echo 'export PATH="/opt/homebrew/opt/openjdk@17/bin:$PATH"' >> ~/.zshrc
