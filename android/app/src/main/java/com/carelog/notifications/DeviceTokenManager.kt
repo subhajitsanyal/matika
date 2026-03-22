@@ -15,6 +15,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
+import com.carelog.core.BuildConfig
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -31,7 +32,7 @@ class DeviceTokenManager @Inject constructor(
         .readTimeout(30, TimeUnit.SECONDS)
         .build()
 
-    private val apiBaseUrl = "https://api.carelog.app" // TODO: Get from config
+    private val apiBaseUrl = BuildConfig.API_BASE_URL
 
     companion object {
         private const val TAG = "DeviceTokenManager"

@@ -12,6 +12,7 @@ import org.json.JSONObject
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 import java.util.concurrent.TimeUnit
+import com.carelog.core.BuildConfig
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -28,7 +29,7 @@ class RelativeApiService @Inject constructor(
         .readTimeout(30, TimeUnit.SECONDS)
         .build()
 
-    private val apiBaseUrl = "https://api.carelog.app" // TODO: Get from config
+    private val apiBaseUrl = BuildConfig.API_BASE_URL
 
     /**
      * Fetch patient summary including latest vitals.

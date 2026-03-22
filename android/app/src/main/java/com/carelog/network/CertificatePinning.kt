@@ -31,18 +31,23 @@ class CertificatePinning @Inject constructor() {
 
     /**
      * Create OkHttpClient with certificate pinning.
+     *
+     * NOTE: Certificate pinning is temporarily disabled because we are using
+     * the API Gateway domain (not api.carelog.health) during development.
+     * Re-enable pinning when the production domain is configured.
      */
     fun createPinnedClient(): OkHttpClient {
-        val certificatePinner = CertificatePinner.Builder()
-            .add(API_DOMAIN, PIN_PRIMARY)
-            .add(API_DOMAIN, PIN_BACKUP)
-            // Also pin wildcard subdomains
-            .add("*.$API_DOMAIN", PIN_PRIMARY)
-            .add("*.$API_DOMAIN", PIN_BACKUP)
-            .build()
+        // TODO: Re-enable certificate pinning for production
+        // val certificatePinner = CertificatePinner.Builder()
+        //     .add(API_DOMAIN, PIN_PRIMARY)
+        //     .add(API_DOMAIN, PIN_BACKUP)
+        //     // Also pin wildcard subdomains
+        //     .add("*.$API_DOMAIN", PIN_PRIMARY)
+        //     .add("*.$API_DOMAIN", PIN_BACKUP)
+        //     .build()
 
         return OkHttpClient.Builder()
-            .certificatePinner(certificatePinner)
+            // .certificatePinner(certificatePinner)
             .connectTimeout(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .readTimeout(READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .writeTimeout(WRITE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
