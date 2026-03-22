@@ -72,11 +72,23 @@ module "vpc" {
 module "cognito" {
   source = "./modules/cognito"
 
-  environment          = var.environment
-  mobile_callback_urls = ["carelog://callback", "carelog://signin"]
-  mobile_logout_urls   = ["carelog://signout"]
-  web_callback_urls    = var.environment == "prod" ? ["https://portal.carelog.com/callback"] : ["https://portal.${var.environment}.carelog.com/callback"]
-  web_logout_urls      = var.environment == "prod" ? ["https://portal.carelog.com/logout"] : ["https://portal.${var.environment}.carelog.com/logout"]
+  environment                  = var.environment
+  mobile_callback_urls         = ["carelog://callback", "carelog://signin"]
+  mobile_logout_urls           = ["carelog://signout"]
+  web_callback_urls            = var.environment == "prod" ? ["https://portal.carelog.com/callback"] : ["https://portal.${var.environment}.carelog.com/callback"]
+  web_logout_urls              = var.environment == "prod" ? ["https://portal.carelog.com/logout"] : ["https://portal.${var.environment}.carelog.com/logout"]
+}
+
+# Attach post-confirmation Lambda trigger to Cognito (breaks circular dependency)
+resource "null_resource" "cognito_post_confirmation_trigger" {
+  triggers = {
+    lambda_arn   = module.lambda.post_confirmation_arn
+    user_pool_id = module.cognito.user_pool_id
+  }
+
+  provisioner "local-exec" {
+    command = "aws cognito-idp update-user-pool --user-pool-id ${module.cognito.user_pool_id} --lambda-config PostConfirmation=${module.lambda.post_confirmation_arn} --region ${var.aws_region}"
+  }
 }
 
 # API Gateway Module
@@ -89,6 +101,15 @@ module "api_gateway" {
   throttle_burst_limit  = var.environment == "prod" ? 200 : 100
   throttle_rate_limit   = var.environment == "prod" ? 100 : 50
   quota_limit           = var.environment == "prod" ? 100000 : 10000
+
+  # Lambda integrations
+  create_patient_invoke_arn    = module.lambda.create_patient_invoke_arn
+  sync_observation_invoke_arn  = module.lambda.sync_observation_invoke_arn
+  bulk_sync_invoke_arn         = module.lambda.bulk_sync_invoke_arn
+  presigned_url_invoke_arn     = module.lambda.presigned_url_invoke_arn
+  invite_attendant_invoke_arn  = module.lambda.invite_attendant_invoke_arn
+  invite_doctor_invoke_arn     = module.lambda.invite_doctor_invoke_arn
+  accept_invite_invoke_arn     = module.lambda.accept_invite_invoke_arn
 }
 
 # HealthLake Module
@@ -128,6 +149,24 @@ module "rds" {
   db_instance_class     = var.db_instance_class
   db_name               = var.db_name
   db_username           = var.db_username
+}
+
+# Lambda Module
+module "lambda" {
+  source = "./modules/lambda"
+
+  environment              = var.environment
+  aws_region               = var.aws_region
+  private_subnet_ids       = module.vpc.private_subnet_ids
+  lambda_security_group_id = module.vpc.lambda_security_group_id
+  db_secret_arn            = module.rds.db_password_secret_arn
+  db_secret_name           = module.rds.db_password_secret_name
+  cognito_user_pool_arn    = module.cognito.user_pool_arn
+  documents_bucket_name    = module.s3.documents_bucket_name
+  documents_bucket_arn     = module.s3.documents_bucket_arn
+  s3_kms_key_arn           = module.s3.kms_key_arn
+  api_execution_arn        = module.api_gateway.api_execution_arn
+  lambdas_source_path      = "${path.root}/../../backend/lambdas"
 }
 
 # Bastion Module (for SSM port-forwarding to RDS)

@@ -33,3 +33,39 @@ variable "quota_limit" {
   type        = number
   default     = 10000
 }
+
+# Lambda invoke ARNs
+variable "create_patient_invoke_arn" {
+  type    = string
+  default = ""
+}
+
+variable "sync_observation_invoke_arn" {
+  type    = string
+  default = ""
+}
+
+variable "bulk_sync_invoke_arn" {
+  type    = string
+  default = ""
+}
+
+variable "presigned_url_invoke_arn" {
+  type    = string
+  default = ""
+}
+
+variable "invite_attendant_invoke_arn" {
+  type    = string
+  default = ""
+}
+
+variable "invite_doctor_invoke_arn" {
+  type    = string
+  default = ""
+}
+
+variable "accept_invite_invoke_arn" {
+  type    = string
+  default = ""
+}
