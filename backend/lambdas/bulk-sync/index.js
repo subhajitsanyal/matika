@@ -9,6 +9,7 @@ const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 
 const s3Client = new S3Client({ region: process.env.AWS_REGION || 'ap-south-1' });
 const S3_BUCKET = process.env.S3_BUCKET_NAME;
+const S3_KMS_KEY_ID = process.env.S3_KMS_KEY_ID;
 const MAX_BATCH_SIZE = 100;
 
 exports.handler = async (event) => {
@@ -83,6 +84,8 @@ async function processResource(entry, userId, userGroups) {
       Key: s3Key,
       Body: JSON.stringify(resourceWithMeta, null, 2),
       ContentType: 'application/fhir+json',
+      ServerSideEncryption: 'aws:kms',
+      SSEKMSKeyId: S3_KMS_KEY_ID,
       Metadata: {
         'patient-id': patientId,
         'user-id': userId,

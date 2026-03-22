@@ -9,6 +9,7 @@ const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/clien
 
 const s3Client = new S3Client({ region: process.env.AWS_REGION || 'ap-south-1' });
 const S3_BUCKET = process.env.S3_BUCKET_NAME;
+const S3_KMS_KEY_ID = process.env.S3_KMS_KEY_ID;
 
 // LOINC codes for valid observation types
 const VALID_LOINC_CODES = {
@@ -75,6 +76,8 @@ exports.handler = async (event) => {
       Key: s3Key,
       Body: JSON.stringify(observation, null, 2),
       ContentType: 'application/fhir+json',
+      ServerSideEncryption: 'aws:kms',
+      SSEKMSKeyId: S3_KMS_KEY_ID,
       Metadata: {
         'patient-id': patientId,
         'user-id': userId,
