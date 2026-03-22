@@ -158,8 +158,20 @@ async function checkPatientAccess(userId, patientId, userGroups) {
 
 /**
  * Create new observation in HealthLake.
+ * Falls back to local ID generation if HealthLake is not configured.
  */
 async function createObservation(observation) {
+  if (!DATASTORE_ID || DATASTORE_ID === 'placeholder' || DATASTORE_ID === '') {
+    // HealthLake not configured — generate local ID and return
+    const id = `obs-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    console.log(`HealthLake not configured, generated local ID: ${id}`);
+    return {
+      id,
+      resourceType: 'Observation',
+      meta: { lastUpdated: new Date().toISOString(), versionId: '1' },
+    };
+  }
+
   const command = new CreateResourceCommand({
     datastoreId: DATASTORE_ID,
     resourceType: 'Observation',
@@ -167,8 +179,6 @@ async function createObservation(observation) {
   });
 
   const response = await healthLakeClient.send(command);
-
-  // Parse the response to get the created resource
   const createdResource = JSON.parse(response.resourceBody || '{}');
 
   return {
@@ -182,6 +192,15 @@ async function createObservation(observation) {
  * Update existing observation in HealthLake.
  */
 async function updateObservation(resourceId, observation) {
+  if (!DATASTORE_ID || DATASTORE_ID === 'placeholder' || DATASTORE_ID === '') {
+    console.log(`HealthLake not configured, returning update stub for ID: ${resourceId}`);
+    return {
+      id: resourceId,
+      resourceType: 'Observation',
+      meta: { lastUpdated: new Date().toISOString(), versionId: '2' },
+    };
+  }
+
   const command = new UpdateResourceCommand({
     datastoreId: DATASTORE_ID,
     resourceType: 'Observation',
