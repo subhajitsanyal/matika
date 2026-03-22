@@ -778,6 +778,38 @@ aws secretsmanager get-secret-value --secret-id carelog-dev-db-password --region
 4. Resend code: `aws cognito-idp resend-confirmation-code --client-id CLIENT_ID --username USERNAME --region ap-south-1`
 5. Skip email and confirm manually: see "How do I manually confirm a user" above
 
+### "Could not find the required online resource" when signing in?
+
+The app has a stale Cognito Pool ID from a previous deployment. After `terraform destroy` + `terraform apply`, the pool ID changes. Re-run the Amplify config update (§6):
+
+```bash
+cd /path/to/matika
+
+AWS_REGION=ap-south-1
+COGNITO_USER_POOL_ID=$(aws cognito-idp list-user-pools --max-results 10 --region $AWS_REGION \
+    --query 'UserPools[?Name==`carelog-dev-users`].Id' --output text)
+COGNITO_APP_CLIENT_ID=$(aws cognito-idp list-user-pool-clients --user-pool-id $COGNITO_USER_POOL_ID \
+    --region $AWS_REGION --query 'UserPoolClients[?ClientName==`carelog-mobile-client`].ClientId' --output text)
+COGNITO_WEB_DOMAIN=$(aws cognito-idp describe-user-pool --user-pool-id $COGNITO_USER_POOL_ID \
+    --region $AWS_REGION --query 'UserPool.Domain' --output text).auth.$AWS_REGION.amazoncognito.com
+S3_BUCKET_NAME=$(aws s3 ls | grep carelog | grep documents | awk '{print $3}')
+
+# Reset to placeholders then substitute
+git restore android/app/src/main/res/raw/amplifyconfiguration.json
+git restore ios/CareLog/CareLog/amplifyconfiguration.json
+
+sed -i '' \
+    -e "s|\${COGNITO_USER_POOL_ID}|$COGNITO_USER_POOL_ID|g" \
+    -e "s|\${COGNITO_APP_CLIENT_ID}|$COGNITO_APP_CLIENT_ID|g" \
+    -e "s|\${COGNITO_WEB_DOMAIN}|$COGNITO_WEB_DOMAIN|g" \
+    -e "s|\${AWS_REGION}|$AWS_REGION|g" \
+    -e "s|\${S3_BUCKET_NAME}|$S3_BUCKET_NAME|g" \
+    android/app/src/main/res/raw/amplifyconfiguration.json \
+    ios/CareLog/CareLog/amplifyconfiguration.json
+```
+
+Then rebuild and deploy the app.
+
 ---
 
 *CareLog Setup and Deployment Guide v2.0 — March 2026*
