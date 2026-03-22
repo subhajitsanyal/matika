@@ -8,8 +8,8 @@
     "package": "zip -r function.zip index.js node_modules package.json"
   },
   "dependencies": {
-    "@aws-sdk/client-cognito-identity-provider": "^3.400.0",
-    "@aws-sdk/client-secrets-manager": "^3.400.0",
+    "@aws-sdk/client-cognito-identity-provider": "^3.978.0",
+    "@aws-sdk/client-secrets-manager": "^3.978.0",
     "pg": "^8.11.0"
   },
   "devDependencies": {
