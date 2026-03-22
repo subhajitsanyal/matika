@@ -25,6 +25,10 @@ variable "db_secret_name" {
   type = string
 }
 
+variable "rds_kms_key_arn" {
+  type = string
+}
+
 # Cognito
 variable "cognito_user_pool_arn" {
   type = string
