@@ -349,19 +349,37 @@ echo "S3_BUCKET_NAME:        $S3_BUCKET_NAME"
 echo "API_GATEWAY_URL:       $API_GATEWAY_URL"
 ```
 
-Replace placeholders in both Amplify config files:
+Then update both Amplify config files automatically using the variables above:
 
-| Placeholder | Example Value |
-|---|---|
-| `${COGNITO_USER_POOL_ID}` | `ap-south-1_AbCdEfGhI` |
-| `${COGNITO_APP_CLIENT_ID}` | `1abc2def3ghi4jkl5mno` |
-| `${COGNITO_WEB_DOMAIN}` | `carelog-dev.auth.ap-south-1.amazoncognito.com` |
-| `${AWS_REGION}` | `ap-south-1` |
-| `${S3_BUCKET_NAME}` | `carelog-v2-dev-documents-316643066568` |
+```bash
+# Update Android config
+ANDROID_CONFIG=android/app/src/main/res/raw/amplifyconfiguration.json
+sed -i '' \
+    -e "s|\${COGNITO_USER_POOL_ID}|$COGNITO_USER_POOL_ID|g" \
+    -e "s|\${COGNITO_APP_CLIENT_ID}|$COGNITO_APP_CLIENT_ID|g" \
+    -e "s|\${COGNITO_WEB_DOMAIN}|$COGNITO_WEB_DOMAIN|g" \
+    -e "s|\${AWS_REGION}|$AWS_REGION|g" \
+    -e "s|\${S3_BUCKET_NAME}|$S3_BUCKET_NAME|g" \
+    "$ANDROID_CONFIG"
 
-**Files to update:**
-- `android/app/src/main/res/raw/amplifyconfiguration.json`
-- `ios/CareLog/CareLog/amplifyconfiguration.json`
+# Update iOS config
+IOS_CONFIG=ios/CareLog/CareLog/amplifyconfiguration.json
+sed -i '' \
+    -e "s|\${COGNITO_USER_POOL_ID}|$COGNITO_USER_POOL_ID|g" \
+    -e "s|\${COGNITO_APP_CLIENT_ID}|$COGNITO_APP_CLIENT_ID|g" \
+    -e "s|\${COGNITO_WEB_DOMAIN}|$COGNITO_WEB_DOMAIN|g" \
+    -e "s|\${AWS_REGION}|$AWS_REGION|g" \
+    -e "s|\${S3_BUCKET_NAME}|$S3_BUCKET_NAME|g" \
+    "$IOS_CONFIG"
+
+# Verify
+echo "=== Android ==="
+grep -E 'PoolId|AppClientId|Region|WebDomain' "$ANDROID_CONFIG"
+echo "=== iOS ==="
+grep -E 'PoolId|AppClientId|Region|WebDomain|bucket' "$IOS_CONFIG"
+```
+
+> **Note:** If re-running after a fresh `terraform apply` with new resource IDs, reset the config files first with `git restore` before running the sed commands again.
 
 ---
 
