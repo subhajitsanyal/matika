@@ -28,3 +28,4 @@ variable "web_logout_urls" {
   type        = list(string)
   default     = ["https://portal.carelog.com/logout"]
 }
+

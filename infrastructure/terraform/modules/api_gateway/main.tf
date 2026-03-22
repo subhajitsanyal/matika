@@ -169,53 +169,67 @@ resource "aws_api_gateway_resource" "audit_log" {
 }
 
 # ============================================================
-# METHODS (placeholder MOCK integrations until Lambda backends are connected)
+# ADDITIONAL RESOURCES
 # ============================================================
 
-resource "aws_api_gateway_method" "patients_get" {
+# /invites
+resource "aws_api_gateway_resource" "invites" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  parent_id   = aws_api_gateway_rest_api.main.root_resource_id
+  path_part   = "invites"
+}
+
+# /invites/attendant
+resource "aws_api_gateway_resource" "invites_attendant" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  parent_id   = aws_api_gateway_resource.invites.id
+  path_part   = "attendant"
+}
+
+# /invites/doctor
+resource "aws_api_gateway_resource" "invites_doctor" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  parent_id   = aws_api_gateway_resource.invites.id
+  path_part   = "doctor"
+}
+
+# /invites/accept
+resource "aws_api_gateway_resource" "invites_accept" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  parent_id   = aws_api_gateway_resource.invites.id
+  path_part   = "accept"
+}
+
+# /observations/bulk-sync
+resource "aws_api_gateway_resource" "observations_bulk_sync" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  parent_id   = aws_api_gateway_resource.observations.id
+  path_part   = "bulk-sync"
+}
+
+# ============================================================
+# LAMBDA PROXY INTEGRATIONS
+# ============================================================
+
+# POST /patients — create-patient
+resource "aws_api_gateway_method" "patients_post" {
   rest_api_id   = aws_api_gateway_rest_api.main.id
   resource_id   = aws_api_gateway_resource.patients.id
-  http_method   = "GET"
+  http_method   = "POST"
   authorization = "COGNITO_USER_POOLS"
   authorizer_id = aws_api_gateway_authorizer.cognito.id
 }
 
-resource "aws_api_gateway_integration" "patients_get" {
-  rest_api_id = aws_api_gateway_rest_api.main.id
-  resource_id = aws_api_gateway_resource.patients.id
-  http_method = aws_api_gateway_method.patients_get.http_method
-  type        = "MOCK"
-
-  request_templates = {
-    "application/json" = "{\"statusCode\": 200}"
-  }
+resource "aws_api_gateway_integration" "patients_post" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.patients.id
+  http_method             = aws_api_gateway_method.patients_post.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = var.create_patient_invoke_arn
 }
 
-resource "aws_api_gateway_method_response" "patients_get_200" {
-  rest_api_id = aws_api_gateway_rest_api.main.id
-  resource_id = aws_api_gateway_resource.patients.id
-  http_method = aws_api_gateway_method.patients_get.http_method
-  status_code = "200"
-
-  response_parameters = {
-    "method.response.header.Access-Control-Allow-Origin" = true
-  }
-}
-
-resource "aws_api_gateway_integration_response" "patients_get_200" {
-  rest_api_id = aws_api_gateway_rest_api.main.id
-  resource_id = aws_api_gateway_resource.patients.id
-  http_method = aws_api_gateway_method.patients_get.http_method
-  status_code = aws_api_gateway_method_response.patients_get_200.status_code
-
-  response_parameters = {
-    "method.response.header.Access-Control-Allow-Origin" = "'${var.cors_origin}'"
-  }
-
-  depends_on = [aws_api_gateway_integration.patients_get]
-}
-
-# DELETE /patients/{patientId} — Delete patient with cascade
+# DELETE /patients/{patientId} — delete-patient (kept as MOCK until Lambda exists)
 resource "aws_api_gateway_method" "patient_delete" {
   rest_api_id   = aws_api_gateway_rest_api.main.id
   resource_id   = aws_api_gateway_resource.patient.id
@@ -259,7 +273,7 @@ resource "aws_api_gateway_integration_response" "patient_delete_200" {
   depends_on = [aws_api_gateway_integration.patient_delete]
 }
 
-# DELETE /patients/{patientId}/team/{memberId} — Remove team member
+# DELETE /patients/{patientId}/team/{memberId} — remove-team-member (kept as MOCK)
 resource "aws_api_gateway_method" "team_member_delete" {
   rest_api_id   = aws_api_gateway_rest_api.main.id
   resource_id   = aws_api_gateway_resource.patient_team_member.id
@@ -301,6 +315,113 @@ resource "aws_api_gateway_integration_response" "team_member_delete_200" {
   }
 
   depends_on = [aws_api_gateway_integration.team_member_delete]
+}
+
+# POST /observations/sync — sync-observation
+resource "aws_api_gateway_method" "observations_sync_post" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.observations_sync.id
+  http_method   = "POST"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+}
+
+resource "aws_api_gateway_integration" "observations_sync_post" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.observations_sync.id
+  http_method             = aws_api_gateway_method.observations_sync_post.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = var.sync_observation_invoke_arn
+}
+
+# POST /observations/bulk-sync — bulk-sync
+resource "aws_api_gateway_method" "observations_bulk_sync_post" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.observations_bulk_sync.id
+  http_method   = "POST"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+}
+
+resource "aws_api_gateway_integration" "observations_bulk_sync_post" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.observations_bulk_sync.id
+  http_method             = aws_api_gateway_method.observations_bulk_sync_post.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = var.bulk_sync_invoke_arn
+}
+
+# POST /documents/presigned-url — presigned-url
+resource "aws_api_gateway_method" "presigned_url_post" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.documents_presigned.id
+  http_method   = "POST"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+}
+
+resource "aws_api_gateway_integration" "presigned_url_post" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.documents_presigned.id
+  http_method             = aws_api_gateway_method.presigned_url_post.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = var.presigned_url_invoke_arn
+}
+
+# POST /invites/attendant — invite-attendant
+resource "aws_api_gateway_method" "invite_attendant_post" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.invites_attendant.id
+  http_method   = "POST"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+}
+
+resource "aws_api_gateway_integration" "invite_attendant_post" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.invites_attendant.id
+  http_method             = aws_api_gateway_method.invite_attendant_post.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = var.invite_attendant_invoke_arn
+}
+
+# POST /invites/doctor — invite-doctor
+resource "aws_api_gateway_method" "invite_doctor_post" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.invites_doctor.id
+  http_method   = "POST"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+}
+
+resource "aws_api_gateway_integration" "invite_doctor_post" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.invites_doctor.id
+  http_method             = aws_api_gateway_method.invite_doctor_post.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = var.invite_doctor_invoke_arn
+}
+
+# POST /invites/accept — accept-invite (NO AUTH — user not yet registered)
+resource "aws_api_gateway_method" "accept_invite_post" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.invites_accept.id
+  http_method   = "POST"
+  authorization = "NONE"
+}
+
+resource "aws_api_gateway_integration" "accept_invite_post" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.invites_accept.id
+  http_method             = aws_api_gateway_method.accept_invite_post.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = var.accept_invite_invoke_arn
 }
 
 # ============================================================
@@ -417,12 +538,19 @@ resource "aws_api_gateway_deployment" "main" {
       aws_api_gateway_resource.documents.id,
       aws_api_gateway_resource.thresholds.id,
       aws_api_gateway_resource.care_plans.id,
-      aws_api_gateway_method.patients_get.id,
-      aws_api_gateway_integration.patients_get.id,
-      aws_api_gateway_resource.patient_team.id,
-      aws_api_gateway_resource.patient_team_member.id,
+      aws_api_gateway_resource.invites.id,
+      aws_api_gateway_resource.observations_bulk_sync.id,
+      aws_api_gateway_method.patients_post.id,
+      aws_api_gateway_integration.patients_post.id,
       aws_api_gateway_method.patient_delete.id,
       aws_api_gateway_method.team_member_delete.id,
+      aws_api_gateway_method.observations_sync_post.id,
+      aws_api_gateway_integration.observations_sync_post.id,
+      aws_api_gateway_method.observations_bulk_sync_post.id,
+      aws_api_gateway_method.presigned_url_post.id,
+      aws_api_gateway_method.invite_attendant_post.id,
+      aws_api_gateway_method.invite_doctor_post.id,
+      aws_api_gateway_method.accept_invite_post.id,
     ]))
   }
 
