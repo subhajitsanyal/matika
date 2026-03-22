@@ -237,28 +237,31 @@ A placeholder entry point for an LLM-powered health chat assistant is included o
 | Component | AWS Service | Purpose |
 |---|---|---|
 | API Entry Point | Amazon API Gateway | Single entry point for all client requests; auth via Cognito authorizer |
-| Structured FHIR Data | AWS HealthLake | FHIR R4-compliant store for all structured clinical Observations |
+| Structured FHIR Data | Amazon S3 | FHIR R4 Observations stored as JSON files in S3 under `observations/{patientId}/{YYYY}/{MM}/{DD}/` (KMS encrypted). HealthLake integration deferred to future release. |
 | Raw Unstructured Files | Amazon S3 | Storage for photos, voice notes, videos, scans, PDFs (KMS encrypted, lifecycle tiering to Glacier) |
 | App Metadata & Config | Amazon RDS (PostgreSQL 15) | Users, persona links, thresholds, reminder configs, audit metadata (private subnet, SSL enforced) |
 | Async Processing Queue | Amazon SQS | Document processing queue + alerts queue (both with DLQs); S3 upload triggers |
 | Identity & Auth | Amazon Cognito | All persona authentication; 4 groups with custom attributes (`persona_type`, `linked_patient_id`) |
 | Push Notifications | Amazon SNS / Firebase FCM | Push alerts to relative's device for threshold violations and reminder breaches |
-| Serverless Compute | AWS Lambda (Node.js 18) | 24 functions for CRUD, sync, invites, notifications (deployed independently from infrastructure) |
-| Infrastructure | Terraform | VPC, Cognito, API Gateway, RDS, S3, SQS, SNS, Bastion — deployed as IaC; Lambda functions deployed separately |
+| Serverless Compute | AWS Lambda (Node.js 20) | 8 deployed functions for CRUD, sync, invites, notifications (packaged and deployed by Terraform) |
+| Infrastructure | Terraform | VPC, Cognito, API Gateway, RDS, S3, SQS, SNS, Bastion, Lambda — all deployed as IaC in a single `terraform apply` |
 | RDS Access | EC2 Bastion + SSM | Port-forwarding via AWS Systems Manager Session Manager (no exposed DB endpoints) |
 | Database Migrations | Flyway | Versioned SQL migrations in `backend/database/migrations/` |
 
-**Deployment note:** Terraform deploys infrastructure only (VPC, Cognito, API Gateway with MOCK integrations, RDS, S3, SQS, SNS, Bastion). Lambda function code is deployed separately — not managed by Terraform. All Lambda `@aws-sdk/*` dependencies must be `^3.978.0` or later to avoid known critical vulnerabilities.
+**Deployment note:** Terraform deploys everything in one step — infrastructure and Lambda functions. Run `npm install` in each Lambda directory before `terraform apply`. All Lambda `@aws-sdk/*` dependencies must be `^3.978.0` or later (Node.js 20 required).
 
 ### 7.3 Data Architecture
 
 #### 7.3.1 Structured Data (FHIR)
 
-- All clinical vitals stored as FHIR R4 Observation resources in AWS HealthLake.
+- All clinical vitals stored as FHIR R4 Observation JSON files in S3 at `observations/{patientId}/{YYYY}/{MM}/{DD}/{observationId}.json`.
 - Each Observation references: Patient resource, author identity, LOINC code, value, timestamp.
+- S3 object metadata includes: patient-id, user-id, loinc-code, vital-type.
+- All objects encrypted with KMS (customer-managed key, enforced by bucket policy).
 - Unstructured file uploads produce a FHIR DocumentReference pointing to the S3 object key.
 - Care plan entries stored as FHIR CarePlan resources.
 - Doctor annotations stored as FHIR Annotation elements within Observations or CarePlan.
+- **Future:** Migrate to AWS HealthLake when FHIR query capabilities are needed.
 
 #### 7.3.2 Unstructured Data (S3)
 

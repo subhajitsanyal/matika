@@ -102,6 +102,12 @@ for lg in $(aws logs describe-log-groups --log-group-name-prefix /aws/apigateway
     echo "Deleting $lg"
     aws logs delete-log-group --log-group-name "$lg" --region ap-south-1
 done
+
+for lg in $(aws logs describe-log-groups --log-group-name-prefix /aws/lambda/carelog-dev \
+    --query 'logGroups[].logGroupName' --output text --region ap-south-1); do
+    echo "Deleting $lg"
+    aws logs delete-log-group --log-group-name "$lg" --region ap-south-1
+done
 ```
 
 #### 3.0.3 Reset Local Terraform State
@@ -115,15 +121,16 @@ You're now ready for a clean deployment.
 
 ### 3.1 What Terraform Creates
 
-Terraform deploys **infrastructure only** — not Lambda function code. After `terraform apply` you will have:
+A single `terraform apply` deploys everything:
 
 | Resource | Details |
 |----------|---------|
 | VPC | Public/private subnets, NAT gateways, security groups |
-| Cognito | User Pool with 4 groups (patients, attendants, relatives, doctors), OAuth clients |
-| API Gateway | REST API with Cognito authorizer, MOCK integrations (Lambda integration TBD) |
+| Cognito | User Pool with 4 groups (patients, attendants, relatives, doctors), OAuth clients, post-confirmation Lambda trigger |
+| API Gateway | REST API with Cognito authorizer, Lambda proxy integrations |
+| Lambda | 8 functions: create-patient, sync-observation, bulk-sync, presigned-url, invite-attendant, invite-doctor, accept-invite, post-confirmation |
 | RDS | PostgreSQL 15 in private subnet, encrypted, password in Secrets Manager |
-| S3 | Documents bucket (KMS encrypted, lifecycle rules) + access logs bucket |
+| S3 | Documents + observations bucket (KMS encrypted, lifecycle rules) + access logs bucket |
 | SQS | Document processing queue + alerts queue (both with DLQs) |
 | SNS | Push notification platform apps (APNs, FCM) + alert topics |
 | Bastion | EC2 instance for SSM port-forwarding to RDS (dev only) |
@@ -306,11 +313,13 @@ done
 
 These are set automatically by Terraform when the Lambda module deploys:
 
-| Variable | Source | Value |
-|----------|--------|-------|
-| `DB_SECRET_NAME` | Terraform RDS module output `db_password_secret_name` | `carelog-dev-db-password` |
-| `COGNITO_USER_POOL_ID` | Terraform Cognito module output `user_pool_id` | `ap-south-1_XxxXxxXxx` |
-| `FROM_EMAIL` | Manual — must be SES-verified | defaults to `noreply@carelog.com` |
+| Variable | Source | Which Lambdas |
+|----------|--------|---------------|
+| `DB_SECRET_NAME` | RDS module → `db_password_secret_name` | post-confirmation, create-patient, accept-invite, invite-attendant, invite-doctor |
+| `COGNITO_USER_POOL_ID` | Cognito module → extracted from ARN | post-confirmation, create-patient, accept-invite |
+| `FROM_EMAIL` | Terraform variable (default: `noreply@carelog.com`) | invite-attendant, invite-doctor |
+| `S3_BUCKET_NAME` | S3 module → `documents_bucket_name` | sync-observation, bulk-sync, presigned-url |
+| `S3_KMS_KEY_ID` | S3 module → `kms_key_arn` | sync-observation, bulk-sync |
 
 ### 5.4 Lambda Functions Reference
 
@@ -323,9 +332,9 @@ These are set automatically by Terraform when the Lambda module deploys:
 | `accept-invite` | `POST /invites/accept` | Creates Cognito account for invitee |
 | `remove-team-member` | `DELETE /patients/{patientId}/team/{memberId}` | Removes team member, disables Cognito account |
 | `post-confirmation` | Cognito trigger | Runs after user confirms signup |
-| `sync-observation` | `POST /observations/sync` | Syncs FHIR Observations to HealthLake |
-| `bulk-sync` | `POST /observations/bulk-sync` | Batch FHIR sync |
-| `presigned-url` | `GET /documents/presigned-url` | Generates S3 upload/download URLs |
+| `sync-observation` | `POST /observations/sync` | Stores FHIR Observation as JSON in S3 (`observations/{patientId}/{date}/{id}.json`) |
+| `bulk-sync` | `POST /observations/bulk-sync` | Batch stores FHIR resources in S3 |
+| `presigned-url` | `POST /documents/presigned-url` | Generates S3 presigned upload/download URLs |
 
 ### 5.6 Persona Flow
 
