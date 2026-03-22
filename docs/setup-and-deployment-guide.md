@@ -67,6 +67,52 @@ cd matika
 
 ## 3. Backend Deployment
 
+### 3.0 Clean Up Previous Deployments
+
+If you have infrastructure from a prior deployment, tear it down first to avoid state conflicts, orphaned resources, and naming collisions.
+
+#### 3.0.1 Destroy Terraform-Managed Resources
+
+```bash
+cd infrastructure/terraform/environments/dev
+terraform init
+terraform destroy
+```
+
+Review the plan and confirm. RDS deletion takes several minutes.
+
+#### 3.0.2 Clean Up Resources That Survive `terraform destroy`
+
+Some resources have deletion protection or deferred deletion. Clean them up manually:
+
+```bash
+# Force-delete Secrets Manager secrets (otherwise they wait 7–30 days)
+aws secretsmanager delete-secret --secret-id carelog-dev-db-password \
+    --force-delete-without-recovery --region ap-south-1
+
+# Delete any leftover CloudWatch log groups
+for lg in $(aws logs describe-log-groups --log-group-name-prefix /aws/vpc/carelog-dev \
+    --query 'logGroups[].logGroupName' --output text --region ap-south-1); do
+    echo "Deleting $lg"
+    aws logs delete-log-group --log-group-name "$lg" --region ap-south-1
+done
+
+for lg in $(aws logs describe-log-groups --log-group-name-prefix /aws/apigateway/carelog-dev \
+    --query 'logGroups[].logGroupName' --output text --region ap-south-1); do
+    echo "Deleting $lg"
+    aws logs delete-log-group --log-group-name "$lg" --region ap-south-1
+done
+```
+
+#### 3.0.3 Reset Local Terraform State
+
+```bash
+cd infrastructure/terraform/environments/dev
+rm -rf .terraform terraform.tfstate terraform.tfstate.backup tfplan .terraform.lock.hcl
+```
+
+You're now ready for a clean deployment.
+
 ### 3.1 What Terraform Creates
 
 Terraform deploys **infrastructure only** — not Lambda function code. After `terraform apply` you will have:
