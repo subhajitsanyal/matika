@@ -54,6 +54,11 @@ resource "aws_iam_role_policy" "rds_cognito_inline" {
         Resource = [var.db_secret_arn]
       },
       {
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = [var.rds_kms_key_arn]
+      },
+      {
         Effect = "Allow"
         Action = [
           "cognito-idp:AdminAddUserToGroup",
@@ -90,6 +95,11 @@ resource "aws_iam_role_policy" "rds_ses_inline" {
         Effect   = "Allow"
         Action   = ["secretsmanager:GetSecretValue"]
         Resource = [var.db_secret_arn]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = [var.rds_kms_key_arn]
       },
       {
         Effect   = "Allow"

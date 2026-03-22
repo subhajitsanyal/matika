@@ -161,6 +161,7 @@ module "lambda" {
   lambda_security_group_id = module.vpc.lambda_security_group_id
   db_secret_arn            = module.rds.db_password_secret_arn
   db_secret_name           = module.rds.db_password_secret_name
+  rds_kms_key_arn          = module.rds.kms_key_arn
   cognito_user_pool_arn    = module.cognito.user_pool_arn
   documents_bucket_name    = module.s3.documents_bucket_name
   documents_bucket_arn     = module.s3.documents_bucket_arn
