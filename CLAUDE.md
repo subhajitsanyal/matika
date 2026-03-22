@@ -59,14 +59,15 @@ terraform init && terraform plan && terraform apply
 ## Architecture
 
 ```
-Clients (Android, iOS, Web) → API Gateway → Lambda Functions → RDS PostgreSQL / HealthLake / S3
+Clients (Android, iOS, Web) → API Gateway → Lambda Functions → RDS PostgreSQL / S3
                                                               ↕
                                                          SQS (async)
 ```
 
-- **Auth:** AWS Cognito with 4 user groups: `patients`, `attendants`, `relatives`, `doctors`. Custom attributes: `custom:persona_type`, `custom:linked_patient_id`.
-- **Clinical Data:** FHIR R4 compliant. AWS HealthLake as FHIR datastore. Resources: Observation, Patient, DocumentReference, CarePlan.
+- **Auth:** AWS Cognito with 4 user groups: `patients`, `attendants`, `relatives`, `doctors`. Custom attributes: `custom:persona_type`, `custom:linked_patient_id`. Post-confirmation Lambda trigger creates user records.
+- **Clinical Data:** FHIR R4 Observations stored as JSON in S3 at `observations/{patientId}/{YYYY}/{MM}/{DD}/{id}.json` (KMS encrypted). HealthLake integration deferred.
 - **Offline-First:** Mobile apps use local storage (Room DB on Android, Core Data on iOS) with background sync via WorkManager / Spezi Scheduler.
+- **Deployment:** Single `terraform apply` deploys all infrastructure + 8 Lambda functions. Run `npm install` in each Lambda directory first.
 
 ### Key Directories
 
