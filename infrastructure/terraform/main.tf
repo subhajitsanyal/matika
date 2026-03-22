@@ -166,7 +166,7 @@ module "lambda" {
   documents_bucket_arn     = module.s3.documents_bucket_arn
   s3_kms_key_arn           = module.s3.kms_key_arn
   api_execution_arn        = module.api_gateway.api_execution_arn
-  lambdas_source_path      = "${path.root}/../../backend/lambdas"
+  lambdas_source_path      = "${path.module}/../../backend/lambdas"
 }
 
 # Bastion Module (for SSM port-forwarding to RDS)
