@@ -93,3 +93,16 @@ variable "enable_bastion" {
   type        = bool
   default     = false
 }
+
+# SES Email (optional — defaults to Cognito built-in email with 50/day limit)
+variable "ses_email_arn" {
+  description = "ARN of SES verified email identity for Cognito (empty = use Cognito default)"
+  type        = string
+  default     = ""
+}
+
+variable "ses_from_email" {
+  description = "SES verified sender email address for Cognito"
+  type        = string
+  default     = ""
+}

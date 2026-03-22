@@ -77,6 +77,8 @@ module "cognito" {
   mobile_logout_urls           = ["carelog://signout"]
   web_callback_urls            = var.environment == "prod" ? ["https://portal.carelog.com/callback"] : ["https://portal.${var.environment}.carelog.com/callback"]
   web_logout_urls              = var.environment == "prod" ? ["https://portal.carelog.com/logout"] : ["https://portal.${var.environment}.carelog.com/logout"]
+  ses_email_arn                = var.ses_email_arn
+  ses_from_email               = var.ses_from_email
 }
 
 # Attach post-confirmation Lambda trigger to Cognito (breaks circular dependency)
