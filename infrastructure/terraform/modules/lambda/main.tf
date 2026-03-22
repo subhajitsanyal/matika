@@ -347,7 +347,7 @@ resource "aws_lambda_function" "invite_doctor" {
 
 resource "aws_lambda_function" "sync_observation" {
   function_name    = "${local.function_prefix}-sync-observation"
-  role             = aws_iam_role.lambda_healthlake.arn
+  role             = aws_iam_role.lambda_s3.arn
   handler          = "index.handler"
   runtime          = "nodejs20.x"
   timeout          = 30
@@ -362,14 +362,14 @@ resource "aws_lambda_function" "sync_observation" {
 
   environment {
     variables = {
-      AWS_REGION_OVERRIDE = var.aws_region
+      S3_BUCKET_NAME = var.documents_bucket_name
     }
   }
 }
 
 resource "aws_lambda_function" "bulk_sync" {
   function_name    = "${local.function_prefix}-bulk-sync"
-  role             = aws_iam_role.lambda_healthlake.arn
+  role             = aws_iam_role.lambda_s3.arn
   handler          = "index.handler"
   runtime          = "nodejs20.x"
   timeout          = 60
@@ -384,7 +384,7 @@ resource "aws_lambda_function" "bulk_sync" {
 
   environment {
     variables = {
-      AWS_REGION_OVERRIDE = var.aws_region
+      S3_BUCKET_NAME = var.documents_bucket_name
     }
   }
 }
