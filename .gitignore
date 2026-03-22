@@ -39,3 +39,7 @@ npm-debug.log*
 credentials.json
 *.pem
 *.key
+flyway.conf
+
+# Terraform plans
+tfplan
