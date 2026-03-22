@@ -647,7 +647,7 @@ resource "aws_api_gateway_usage_plan" "main" {
     stage  = aws_api_gateway_stage.main.stage_name
 
     throttle {
-      path        = "/patients/GET"
+      path        = "/patients/POST"
       burst_limit = var.throttle_burst_limit
       rate_limit  = var.throttle_rate_limit
     }
