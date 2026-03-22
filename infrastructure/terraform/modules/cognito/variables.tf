@@ -29,3 +29,15 @@ variable "web_logout_urls" {
   default     = ["https://portal.carelog.com/logout"]
 }
 
+variable "ses_email_arn" {
+  description = "ARN of SES verified email identity for Cognito emails (empty = use Cognito default)"
+  type        = string
+  default     = ""
+}
+
+variable "ses_from_email" {
+  description = "SES verified sender email address"
+  type        = string
+  default     = ""
+}
+
