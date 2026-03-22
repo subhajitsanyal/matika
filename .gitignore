@@ -1,6 +1,7 @@
 # OS
 .DS_Store
 Thumbs.db
+._*
 
 # IDEs
 .idea/
@@ -18,6 +19,7 @@ build/
 .env
 .env.local
 *.local
+local.properties
 
 # Build outputs
 dist/

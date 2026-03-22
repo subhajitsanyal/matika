@@ -152,7 +152,22 @@ enable_waf           = false
 enable_bastion       = true
 ```
 
-### 3.3 Deploy Infrastructure
+### 3.3 Install Lambda Dependencies (before Terraform)
+
+Terraform zips each Lambda directory for deployment, so `node_modules/` must exist first:
+
+```bash
+cd backend/lambdas
+for dir in */; do
+    if [ -f "$dir/package.json" ]; then
+        echo "=== $dir ==="
+        cd "$dir" && npm install && cd ..
+    fi
+done
+cd ../../infrastructure/terraform/environments/dev
+```
+
+### 3.4 Deploy Infrastructure + Lambdas
 
 ```bash
 terraform init
@@ -160,9 +175,9 @@ terraform plan -out=tfplan
 terraform apply tfplan
 ```
 
-RDS creation takes 5–15 minutes. This is normal.
+This deploys everything in one step: VPC, Cognito, RDS, S3, SQS, SNS, API Gateway, all 8 Lambda functions, and the Cognito post-confirmation trigger. RDS creation takes 5–15 minutes on first deploy; Lambda functions take 2–7 minutes each (VPC ENI setup).
 
-### 3.4 Note the Outputs
+### 3.5 Note the Outputs
 
 ```bash
 terraform output
@@ -170,7 +185,7 @@ terraform output
 
 Key outputs: `vpc_id`, `bastion_instance_id`, `public_subnet_ids`, `private_subnet_ids`.
 
-### 3.5 Troubleshooting Deployment Issues
+### 3.6 Troubleshooting Deployment Issues
 
 **Secrets Manager: "secret already scheduled for deletion"**
 ```bash
@@ -264,9 +279,11 @@ flyway migrate
 
 ## 5. Lambda Functions
 
-### 5.1 Current State
+### 5.1 Overview
 
-Lambda functions live in `backend/lambdas/`. Each has its own `package.json` and `index.js`. **Terraform does not deploy Lambda code** — the API Gateway currently uses MOCK integrations as placeholders.
+Lambda functions live in `backend/lambdas/`. Each has its own `package.json` and `index.js`. Terraform packages and deploys them automatically via `archive_file` data sources in the Lambda module (`infrastructure/terraform/modules/lambda/`).
+
+**Important:** You must run `npm install` in each Lambda directory **before** `terraform apply`, since Terraform zips the entire directory (including `node_modules/`) for deployment.
 
 ### 5.2 Install Dependencies
 
@@ -287,7 +304,7 @@ done
 
 ### 5.3 Lambda Environment Variables
 
-These are set automatically when Lambda functions are wired into Terraform (or set manually in the AWS console):
+These are set automatically by Terraform when the Lambda module deploys:
 
 | Variable | Source | Value |
 |----------|--------|-------|
@@ -599,7 +616,7 @@ aws lambda update-function-code --function-name carelog-dev-FUNCTION-NAME --zip-
 
 | Task | Command |
 |------|---------|
-| Deploy infrastructure | `cd infrastructure/terraform/environments/dev && terraform apply` |
+| Deploy infrastructure + Lambdas | `cd infrastructure/terraform/environments/dev && terraform apply` |
 | Port-forward to RDS | `aws ssm start-session --target BASTION_ID ...` (see §4.2) |
 | Run DB migrations | `cd backend/database && flyway migrate` |
 | Install Lambda deps | `cd backend/lambdas/FUNCTION && npm install` |
