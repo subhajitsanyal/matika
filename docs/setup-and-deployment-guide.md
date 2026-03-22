@@ -295,23 +295,7 @@ These are set automatically when Lambda functions are wired into Terraform (or s
 | `COGNITO_USER_POOL_ID` | Terraform Cognito module output `user_pool_id` | `ap-south-1_XxxXxxXxx` |
 | `FROM_EMAIL` | Manual — must be SES-verified | defaults to `noreply@carelog.com` |
 
-### 5.4 Cognito Custom Attributes
-
-Required for persona-based routing. Add once after Cognito is created:
-
-```bash
-COGNITO_USER_POOL_ID=$(aws cognito-idp list-user-pools --max-results 10 --region ap-south-1 \
-    --query 'UserPools[?Name==`carelog-dev-users`].Id' --output text)
-
-aws cognito-idp add-custom-attributes \
-    --user-pool-id $COGNITO_USER_POOL_ID \
-    --custom-attributes \
-        Name=persona_type,AttributeDataType=String,Mutable=true \
-        Name=linked_patient_id,AttributeDataType=String,Mutable=true \
-    --region ap-south-1
-```
-
-### 5.5 Lambda Functions Reference
+### 5.4 Lambda Functions Reference
 
 | Lambda | Route | Description |
 |--------|-------|-------------|
