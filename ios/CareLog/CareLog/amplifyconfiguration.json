@@ -11,16 +11,16 @@
                 },
                 "CognitoUserPool": {
                     "Default": {
-                        "PoolId": "${COGNITO_USER_POOL_ID}",
-                        "AppClientId": "${COGNITO_APP_CLIENT_ID}",
-                        "Region": "${AWS_REGION}"
+                        "PoolId": "ap-south-1_uiEZhWVXB",
+                        "AppClientId": "1kjdqj21bljak87e602d8r84f2",
+                        "Region": "ap-south-1"
                     }
                 },
                 "Auth": {
                     "Default": {
                         "OAuth": {
-                            "WebDomain": "${COGNITO_WEB_DOMAIN}",
-                            "AppClientId": "${COGNITO_APP_CLIENT_ID}",
+                            "WebDomain": "carelog-dev.auth.ap-south-1.amazoncognito.com",
+                            "AppClientId": "1kjdqj21bljak87e602d8r84f2",
                             "SignInRedirectURI": "carelog://callback",
                             "SignOutRedirectURI": "carelog://signout",
                             "Scopes": [
@@ -62,8 +62,8 @@
     "storage": {
         "plugins": {
             "awsS3StoragePlugin": {
-                "bucket": "${S3_BUCKET_NAME}",
-                "region": "${AWS_REGION}"
+                "bucket": "carelog-v2-dev-documents-316643066568",
+                "region": "ap-south-1"
             }
         }
     }

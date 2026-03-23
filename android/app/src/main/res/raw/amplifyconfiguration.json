@@ -11,8 +11,8 @@
                 },
                 "CognitoUserPool": {
                     "Default": {
-                        "PoolId": "ap-south-1_3L9Vl5AAR",
-                        "AppClientId": "7ebfe5id4aqv0jun35hf6auakl",
+                        "PoolId": "ap-south-1_uiEZhWVXB",
+                        "AppClientId": "1kjdqj21bljak87e602d8r84f2",
                         "Region": "ap-south-1"
                     }
                 },
@@ -20,7 +20,7 @@
                     "Default": {
                         "OAuth": {
                             "WebDomain": "carelog-dev.auth.ap-south-1.amazoncognito.com",
-                            "AppClientId": "7ebfe5id4aqv0jun35hf6auakl",
+                            "AppClientId": "1kjdqj21bljak87e602d8r84f2",
                             "SignInRedirectURI": "carelog://callback",
                             "SignOutRedirectURI": "carelog://signout",
                             "Scopes": [
