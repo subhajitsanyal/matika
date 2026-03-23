@@ -42,6 +42,8 @@ credentials.json
 *.pem
 *.key
 flyway.conf
+google-services.json
+GoogleService-Info.plist
 
 # Terraform plans and Lambda archives
 tfplan
