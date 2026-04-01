@@ -65,7 +65,9 @@ class HistoryViewModel @Inject constructor(
 
             try {
                 val user = authRepository.getCurrentUser()
-                val patientId = user?.linkedPatientId
+                // Use linkedPatientId for relatives viewing their patient's data,
+                // or the user's own userId if they ARE the patient
+                val patientId = user?.linkedPatientId ?: user?.userId
 
                 if (patientId == null) {
                     _uiState.update { it.copy(isLoading = false, entries = emptyList()) }

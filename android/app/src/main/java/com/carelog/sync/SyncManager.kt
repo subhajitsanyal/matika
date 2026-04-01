@@ -61,8 +61,9 @@ class SyncManager @Inject constructor(
         scope.launch {
             networkMonitor.wifiAvailable.collectLatest { isWifiAvailable ->
                 if (isWifiAvailable) {
-                    // WiFi became available - trigger sync
+                    // Enqueue WiFi sync AND an immediate one-time sync to avoid WorkManager scheduling delay
                     FhirSyncWorker.enqueueWifiSync(context)
+                    FhirSyncWorker.enqueueOneTimeSync(context)
                 }
             }
         }

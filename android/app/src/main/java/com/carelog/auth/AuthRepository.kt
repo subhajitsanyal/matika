@@ -59,7 +59,14 @@ enum class PersonaType {
                 "attendant" -> ATTENDANT
                 "relative" -> RELATIVE
                 "doctor" -> DOCTOR
-                else -> PATIENT // Default
+                else -> {
+                    if (value != null) {
+                        android.util.Log.w("PersonaType", "Unknown persona type: $value, defaulting to PATIENT")
+                    } else {
+                        android.util.Log.w("PersonaType", "Persona type is null, defaulting to PATIENT")
+                    }
+                    PATIENT
+                }
             }
         }
     }
@@ -106,7 +113,10 @@ class AuthRepository @Inject constructor(
      * Check current authentication session.
      */
     suspend fun checkAuthSession() {
-        _authState.value = AuthState.Loading
+        // Only show loading if we're not already authenticated (avoids mid-session flicker)
+        if (_authState.value !is AuthState.Authenticated) {
+            _authState.value = AuthState.Loading
+        }
         try {
             val session = fetchAuthSession()
             if (session.isSignedIn) {
@@ -163,7 +173,8 @@ class AuthRepository @Inject constructor(
             // to avoid errors if the Cognito pool hasn't been configured with the custom attribute.
             val attributes = listOf(
                 AuthUserAttribute(AuthUserAttributeKey.email(), email),
-                AuthUserAttribute(AuthUserAttributeKey.name(), name)
+                AuthUserAttribute(AuthUserAttributeKey.name(), name),
+                AuthUserAttribute(AuthUserAttributeKey.custom("persona_type"), personaType.name.lowercase())
             )
 
             val options = AuthSignUpOptions.builder()
@@ -204,8 +215,8 @@ class AuthRepository @Inject constructor(
             _authState.value = AuthState.Authenticated(user)
         } catch (e: Exception) {
             Log.w(TAG, "Failed to set persona_type attribute (custom attribute may not exist in pool)", e)
-            // Still clear pending so we don't retry endlessly
-            _pendingPersona = null
+            // Don't clear pending — retry on next sign-in
+            Log.w(TAG, "Will retry setting persona_type on next sign-in")
         }
     }
 
@@ -367,11 +378,13 @@ class AuthRepository @Inject constructor(
                 }?.value ?: ""
 
                 val personaType = attributes.find {
-                    it.key == AuthUserAttributeKey.custom("persona_type")
+                    it.key == AuthUserAttributeKey.custom("persona_type") ||
+                    it.key.keyString == "custom:persona_type"
                 }?.value
 
                 val linkedPatientId = attributes.find {
-                    it.key == AuthUserAttributeKey.custom("linked_patient_id")
+                    it.key == AuthUserAttributeKey.custom("linked_patient_id") ||
+                    it.key.keyString == "custom:linked_patient_id"
                 }?.value
 
                 Amplify.Auth.getCurrentUser(

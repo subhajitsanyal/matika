@@ -37,6 +37,8 @@ fun RelativeDashboardScreen(
     onNavigateToAlerts: () -> Unit,
     onNavigateToSettings: () -> Unit,
     onNavigateToCareTeam: () -> Unit,
+    onNavigateToThresholds: () -> Unit,
+    onNavigateToReminders: () -> Unit,
     viewModel: RelativeDashboardViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -128,7 +130,9 @@ fun RelativeDashboardScreen(
                 else -> {
                     DashboardContent(
                         summary = uiState.patientSummary,
-                        onVitalClick = { /* Navigate to vital detail */ }
+                        onVitalClick = { /* Navigate to vital detail */ },
+                        onNavigateToThresholds = onNavigateToThresholds,
+                        onNavigateToReminders = onNavigateToReminders
                     )
                 }
             }
@@ -139,7 +143,9 @@ fun RelativeDashboardScreen(
 @Composable
 private fun DashboardContent(
     summary: PatientSummary?,
-    onVitalClick: (VitalType) -> Unit
+    onVitalClick: (VitalType) -> Unit,
+    onNavigateToThresholds: () -> Unit,
+    onNavigateToReminders: () -> Unit
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -150,6 +156,27 @@ private fun DashboardContent(
         summary?.lastActivityTime?.let { lastActivity ->
             item {
                 LastActivityCard(lastActivity = lastActivity)
+            }
+        }
+
+        // Quick action cards
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                QuickActionCard(
+                    modifier = Modifier.weight(1f),
+                    icon = Icons.Default.Tune,
+                    label = "Thresholds",
+                    onClick = onNavigateToThresholds
+                )
+                QuickActionCard(
+                    modifier = Modifier.weight(1f),
+                    icon = Icons.Default.Alarm,
+                    label = "Reminders",
+                    onClick = onNavigateToReminders
+                )
             }
         }
 
@@ -376,6 +403,30 @@ private fun EmptyContent() {
             style = MaterialTheme.typography.bodyMedium,
             color = CareLogColors.OnSurfaceVariant
         )
+    }
+}
+
+@Composable
+private fun QuickActionCard(
+    modifier: Modifier = Modifier,
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit
+) {
+    Card(
+        onClick = onClick,
+        modifier = modifier
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Icon(icon, contentDescription = label, tint = CareLogColors.Primary)
+            Text(label, style = MaterialTheme.typography.labelLarge)
+        }
     }
 }
 

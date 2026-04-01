@@ -362,7 +362,9 @@ fun CareLogNavHost() {
                 onNavigateToSettings = {
                     navController.navigate(CareLogRoutes.SETTINGS)
                 },
-                onNavigateToCareTeam = { navController.navigate(CareLogRoutes.CARE_TEAM) }
+                onNavigateToCareTeam = { navController.navigate(CareLogRoutes.CARE_TEAM) },
+                onNavigateToThresholds = { navController.navigate(CareLogRoutes.THRESHOLDS) },
+                onNavigateToReminders = { navController.navigate(CareLogRoutes.REMINDERS) }
             )
         }
 
@@ -449,9 +451,16 @@ private fun SplashScreen(navController: NavController) {
                         Amplify.Auth.fetchUserAttributes(
                             { attributes ->
                                 val personaValue = attributes.find {
-                                    it.key == AuthUserAttributeKey.custom("persona_type")
+                                    it.key == AuthUserAttributeKey.custom("persona_type") ||
+                                    it.key.keyString == "custom:persona_type"
                                 }?.value
+                                Log.d("SplashScreen", "Persona attribute value: '$personaValue'")
+                                // Also log all attribute keys for debugging
+                                attributes.forEach { attr ->
+                                    Log.d("SplashScreen", "  Attribute: ${attr.key.keyString} = ${attr.value}")
+                                }
                                 val persona = PersonaType.fromString(personaValue)
+                                Log.d("SplashScreen", "Resolved persona: $persona -> route: ${dashboardRouteForPersona(persona)}")
                                 navigateTo.value = dashboardRouteForPersona(persona)
                             },
                             { error ->
