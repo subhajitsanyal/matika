@@ -11,6 +11,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.carelog.ui.theme.CareLogColors
@@ -90,7 +91,8 @@ fun TemperatureScreen(
                 onClick = { viewModel.saveReading {} },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(72.dp),
+                    .height(72.dp)
+                    .testTag("temperature_save_button"),
                 enabled = uiState.canSave && !uiState.isSaving,
                 shape = RoundedCornerShape(16.dp),
                 colors = ButtonDefaults.buttonColors(

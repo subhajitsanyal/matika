@@ -12,6 +12,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -99,7 +100,8 @@ fun BloodPressureScreen(
                 onClick = { viewModel.saveReading {} },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(72.dp),
+                    .height(72.dp)
+                    .testTag("bp_save_button"),
                 enabled = uiState.canSave && !uiState.isSaving,
                 shape = RoundedCornerShape(16.dp),
                 colors = ButtonDefaults.buttonColors(

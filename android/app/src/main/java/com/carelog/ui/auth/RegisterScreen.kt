@@ -18,6 +18,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.carelog.auth.PersonaType
@@ -109,7 +110,7 @@ fun RegisterScreen(
                 label = { Text("Full Name") },
                 leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
                 singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().testTag("register_name"),
                 keyboardOptions = KeyboardOptions(
                     keyboardType = KeyboardType.Text,
                     imeAction = ImeAction.Next
@@ -128,7 +129,7 @@ fun RegisterScreen(
                 label = { Text("Email") },
                 leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
                 singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().testTag("register_email"),
                 keyboardOptions = KeyboardOptions(
                     keyboardType = KeyboardType.Email,
                     imeAction = ImeAction.Next
@@ -147,7 +148,7 @@ fun RegisterScreen(
                 label = { Text("Phone Number (Optional)") },
                 leadingIcon = { Icon(Icons.Default.Phone, contentDescription = null) },
                 singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().testTag("register_phone"),
                 keyboardOptions = KeyboardOptions(
                     keyboardType = KeyboardType.Phone,
                     imeAction = ImeAction.Next
@@ -175,7 +176,7 @@ fun RegisterScreen(
                 },
                 singleLine = true,
                 visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().testTag("register_password"),
                 keyboardOptions = KeyboardOptions(
                     keyboardType = KeyboardType.Password,
                     imeAction = ImeAction.Next
@@ -198,7 +199,7 @@ fun RegisterScreen(
                 leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
                 singleLine = true,
                 visualTransformation = PasswordVisualTransformation(),
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().testTag("register_confirm_password"),
                 isError = confirmPassword.isNotEmpty() && password != confirmPassword,
                 keyboardOptions = KeyboardOptions(
                     keyboardType = KeyboardType.Password,
@@ -223,7 +224,8 @@ fun RegisterScreen(
             ) {
                 Checkbox(
                     checked = acceptedTerms,
-                    onCheckedChange = { acceptedTerms = it }
+                    onCheckedChange = { acceptedTerms = it },
+                    modifier = Modifier.testTag("register_terms_checkbox")
                 )
                 Text(
                     text = "I agree to the Terms of Service and Privacy Policy",
@@ -238,7 +240,8 @@ fun RegisterScreen(
                 Text(
                     text = (uiState as RegisterUiState.Error).message,
                     color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodyMedium
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.testTag("register_error")
                 )
                 Spacer(modifier = Modifier.height(16.dp))
             }
@@ -258,6 +261,7 @@ fun RegisterScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(56.dp)
+                    .testTag("register_button")
             ) {
                 if (uiState is RegisterUiState.Loading) {
                     CircularProgressIndicator(

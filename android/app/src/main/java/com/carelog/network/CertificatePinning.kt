@@ -2,6 +2,7 @@ package com.carelog.network
 
 import okhttp3.CertificatePinner
 import okhttp3.OkHttpClient
+import okhttp3.logging.HttpLoggingInterceptor
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -46,13 +47,22 @@ class CertificatePinning @Inject constructor() {
         //     .add("*.$API_DOMAIN", PIN_BACKUP)
         //     .build()
 
-        return OkHttpClient.Builder()
+        val builder = OkHttpClient.Builder()
             // .certificatePinner(certificatePinner)
             .connectTimeout(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .readTimeout(READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .writeTimeout(WRITE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .addInterceptor(SecurityHeadersInterceptor())
-            .build()
+
+        // Enable HTTP logging in debug builds for test observability
+        if (com.carelog.BuildConfig.DEBUG) {
+            val loggingInterceptor = HttpLoggingInterceptor().apply {
+                level = HttpLoggingInterceptor.Level.BODY
+            }
+            builder.addInterceptor(loggingInterceptor)
+        }
+
+        return builder.build()
     }
 
     /**

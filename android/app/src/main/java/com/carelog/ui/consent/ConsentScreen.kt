@@ -9,6 +9,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -121,7 +122,8 @@ fun ConsentScreen(
                     Checkbox(
                         checked = uiState.termsAccepted,
                         onCheckedChange = { viewModel.setTermsAccepted(it) },
-                        enabled = !uiState.isLoading && !uiState.isSubmitting
+                        enabled = !uiState.isLoading && !uiState.isSubmitting,
+                        modifier = Modifier.testTag("consent_checkbox")
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
@@ -137,7 +139,8 @@ fun ConsentScreen(
                     enabled = uiState.termsAccepted && !uiState.isSubmitting,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(56.dp),
+                        .height(56.dp)
+                        .testTag("consent_accept_button"),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = CareLogColors.Primary
                     )
@@ -156,7 +159,7 @@ fun ConsentScreen(
 
                 TextButton(
                     onClick = onCancel,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth().testTag("consent_cancel")
                 ) {
                     Text("Cancel Registration")
                 }

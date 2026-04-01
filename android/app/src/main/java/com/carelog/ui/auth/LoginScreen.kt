@@ -17,6 +17,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -89,7 +90,7 @@ fun LoginScreen(
             label = { Text("Email") },
             leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
             singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().testTag("login_email"),
             keyboardOptions = KeyboardOptions(
                 keyboardType = KeyboardType.Email,
                 imeAction = ImeAction.Next
@@ -117,7 +118,7 @@ fun LoginScreen(
             },
             singleLine = true,
             visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().testTag("login_password"),
             keyboardOptions = KeyboardOptions(
                 keyboardType = KeyboardType.Password,
                 imeAction = ImeAction.Done
@@ -149,7 +150,8 @@ fun LoginScreen(
             Text(
                 text = (uiState as LoginUiState.Error).message,
                 color = MaterialTheme.colorScheme.error,
-                style = MaterialTheme.typography.bodyMedium
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.testTag("login_error")
             )
             Spacer(modifier = Modifier.height(16.dp))
         }
@@ -161,6 +163,7 @@ fun LoginScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(56.dp)
+                .testTag("login_button")
         ) {
             if (uiState is LoginUiState.Loading) {
                 CircularProgressIndicator(
@@ -182,7 +185,7 @@ fun LoginScreen(
                 text = "Don't have an account?",
                 style = MaterialTheme.typography.bodyMedium
             )
-            TextButton(onClick = onNavigateToRegister) {
+            TextButton(onClick = onNavigateToRegister, modifier = Modifier.testTag("login_signup_link")) {
                 Text("Sign up")
             }
         }

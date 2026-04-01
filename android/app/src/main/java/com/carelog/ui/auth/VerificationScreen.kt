@@ -12,6 +12,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -90,7 +91,7 @@ fun VerificationScreen(
                 onValueChange = { if (it.length <= 6) code = it },
                 label = { Text("Verification Code") },
                 singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().testTag("verification_code"),
                 keyboardOptions = KeyboardOptions(
                     keyboardType = KeyboardType.Number,
                     imeAction = ImeAction.Done
@@ -111,7 +112,8 @@ fun VerificationScreen(
                 Text(
                     text = (uiState as VerificationUiState.Error).message,
                     color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodyMedium
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.testTag("verification_error")
                 )
                 Spacer(modifier = Modifier.height(16.dp))
             }
@@ -123,6 +125,7 @@ fun VerificationScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(56.dp)
+                    .testTag("verification_button")
             ) {
                 if (uiState is VerificationUiState.Loading) {
                     CircularProgressIndicator(
@@ -139,7 +142,8 @@ fun VerificationScreen(
             // Resend code button
             TextButton(
                 onClick = { viewModel.resendCode(email) },
-                enabled = uiState !is VerificationUiState.Loading
+                enabled = uiState !is VerificationUiState.Loading,
+                modifier = Modifier.testTag("verification_resend")
             ) {
                 Text("Resend verification code")
             }

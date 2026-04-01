@@ -1,0 +1,22 @@
+{
+  "valid": {
+    "blood_pressure": { "systolic": "120", "diastolic": "80" },
+    "glucose": { "value": "110", "unit": "mg/dL" },
+    "temperature": { "value": "98.6", "unit": "°F" },
+    "weight": { "value": "72", "unit": "kg" },
+    "pulse": { "value": "72" },
+    "spo2": { "value": "98" }
+  },
+  "invalid": {
+    "blood_pressure_high": { "systolic": "500", "diastolic": "300" },
+    "blood_pressure_zero": { "systolic": "0", "diastolic": "0" },
+    "glucose_negative": { "value": "-10" },
+    "temperature_extreme": { "value": "200" },
+    "spo2_over_100": { "value": "150" }
+  },
+  "threshold_breach": {
+    "blood_pressure": { "systolic": "160", "diastolic": "100" },
+    "glucose": { "value": "300", "unit": "mg/dL" },
+    "spo2": { "value": "88" }
+  }
+}

@@ -12,6 +12,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -105,7 +106,7 @@ fun PatientOnboardingScreen(
                 label = { Text("Patient's Full Name *") },
                 leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
                 singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().testTag("onboarding_name"),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next)
             )
 
@@ -118,7 +119,7 @@ fun PatientOnboardingScreen(
                 label = { Text("Date of Birth (DD/MM/YYYY)") },
                 leadingIcon = { Icon(Icons.Default.DateRange, contentDescription = null) },
                 singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().testTag("onboarding_dob"),
                 keyboardOptions = KeyboardOptions(
                     keyboardType = KeyboardType.Number,
                     imeAction = ImeAction.Next
@@ -142,6 +143,7 @@ fun PatientOnboardingScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .menuAnchor()
+                        .testTag("onboarding_gender")
                 )
                 ExposedDropdownMenu(
                     expanded = showGenderDropdown,
@@ -271,7 +273,8 @@ fun PatientOnboardingScreen(
                 Text(
                     text = (uiState as PatientOnboardingUiState.Error).message,
                     color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodyMedium
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.testTag("onboarding_error")
                 )
                 Spacer(modifier = Modifier.height(16.dp))
             }
@@ -295,6 +298,7 @@ fun PatientOnboardingScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(56.dp)
+                    .testTag("onboarding_create_button")
             ) {
                 if (uiState is PatientOnboardingUiState.Loading) {
                     CircularProgressIndicator(
