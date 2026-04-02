@@ -112,7 +112,7 @@ fun PatientOnboardingScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Date of Birth
+            // Date of Birth — use Text keyboard so / separator is available
             OutlinedTextField(
                 value = dateOfBirth,
                 onValueChange = { dateOfBirth = it },
@@ -121,7 +121,7 @@ fun PatientOnboardingScreen(
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth().testTag("onboarding_dob"),
                 keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Number,
+                    keyboardType = KeyboardType.Text,
                     imeAction = ImeAction.Next
                 )
             )
@@ -259,11 +259,11 @@ fun PatientOnboardingScreen(
             OutlinedTextField(
                 value = emergencyContactPhone,
                 onValueChange = { emergencyContactPhone = it },
-                label = { Text("Contact Phone") },
+                label = { Text("Contact Phone (e.g. +91...)") },
                 leadingIcon = { Icon(Icons.Default.Phone, contentDescription = null) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone)
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text)
             )
 
             Spacer(modifier = Modifier.height(24.dp))

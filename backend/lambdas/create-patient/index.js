@@ -85,13 +85,17 @@ async function createCognitoUser(patientId, patientName) {
   // Generate a temporary password
   const tempPassword = crypto.randomBytes(16).toString("base64") + "Aa1!";
 
-  // Use patient ID as username (patients log in with ID)
+  // Pool requires email as username — generate a placeholder email for the patient
+  const patientEmail = `patient.${patientId}@carelog.internal`;
+
   const command = new AdminCreateUserCommand({
     UserPoolId: process.env.COGNITO_USER_POOL_ID,
-    Username: patientId,
+    Username: patientEmail,
     UserAttributes: [
+      { Name: "email", Value: patientEmail },
       { Name: "name", Value: patientName },
       { Name: "custom:persona_type", Value: "patient" },
+      { Name: "custom:linked_patient_id", Value: patientId },
     ],
     TemporaryPassword: tempPassword,
     MessageAction: "SUPPRESS", // Don't send welcome email yet
@@ -103,7 +107,7 @@ async function createCognitoUser(patientId, patientName) {
   await cognitoClient.send(
     new AdminAddUserToGroupCommand({
       UserPoolId: process.env.COGNITO_USER_POOL_ID,
-      Username: patientId,
+      Username: patientEmail,
       GroupName: "patients",
     })
   );
