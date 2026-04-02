@@ -579,85 +579,176 @@ xcodebuild test -scheme CareLog \
 
 ## 9. Firebase App Distribution
 
-### 9.1 Setup
+### 9.1 Prerequisites
+
+| Tool | Install | Purpose |
+|------|---------|---------|
+| Ruby (Homebrew) | `brew install ruby` | Fastlane runtime (macOS system Ruby is too old) |
+| Bundler | `gem install bundler` | Ruby dependency management |
+| Firebase CLI | `brew install firebase-cli` | Tester management, direct uploads |
+| JDK 17 | `brew install openjdk@17` | Android builds via Gradle |
+
+**Shell environment** (add to `~/.zshrc`):
 
 ```bash
+export JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home
+export PATH="/opt/homebrew/opt/ruby/bin:/opt/homebrew/lib/ruby/gems/4.0.0/bin:$JAVA_HOME/bin:$PATH"
+```
+
+Also symlink JDK so the system can find it:
+
+```bash
+sudo ln -sfn /opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk /Library/Java/JavaVirtualMachines/openjdk-17.jdk
+```
+
+**Android SDK** must be discoverable by Gradle. Create `android/local.properties`:
+
+```properties
+sdk.dir=/opt/homebrew/share/android-commandlinetools
+```
+
+Or if using Android Studio, it typically installs at `~/Library/Android/sdk`.
+
+### 9.2 Firebase Authentication
+
+```bash
+# Login to Firebase (opens browser)
 firebase login
-firebase projects:list
-fastlane add_plugin firebase_app_distribution
-firebase login:ci   # generates CI token — save it securely
+
+# Generate a CI token for automated distribution
+firebase login:ci
+# Save the printed token — you'll use it as FIREBASE_TOKEN
 ```
 
-### 9.2 Android Distribution
+**Firebase project:** `carelog-7de0c`
+**Android App ID:** `1:191872106923:android:63245761468592e0d612ee`
 
-Create `android/fastlane/Fastfile`:
-
-```ruby
-default_platform(:android)
-
-platform :android do
-  lane :distribute do
-    gradle(task: "clean assembleRelease", print_command: false)
-    firebase_app_distribution(
-      app: "1:YOUR_FIREBASE_APP_ID:android:xxxxxxxx",
-      groups: "internal-testers, qa-team",
-      release_notes: "Build #{lane_context[SharedValues::BUILD_NUMBER]} - #{Time.now.strftime('%Y-%m-%d %H:%M')}",
-      firebase_cli_token: ENV["FIREBASE_TOKEN"],
-      apk_path: "app/build/outputs/apk/release/app-release.apk"
-    )
-  end
-end
-```
-
-Create `android/fastlane/Appfile`:
-
-```ruby
-json_key_file("path/to/google-play-service-account.json")
-package_name("com.carelog")
-```
-
-Run: `export FIREBASE_TOKEN="your_token" && cd android && fastlane distribute`
-
-### 9.3 iOS Distribution
-
-Create `ios/CareLog/fastlane/Fastfile`:
-
-```ruby
-default_platform(:ios)
-
-platform :ios do
-  lane :distribute do
-    increment_build_number(build_number: Time.now.strftime("%Y%m%d%H%M"))
-    build_app(scheme: "CareLog", export_method: "ad-hoc", output_directory: "./build", output_name: "CareLog.ipa")
-    firebase_app_distribution(
-      app: "1:YOUR_FIREBASE_APP_ID:ios:xxxxxxxx",
-      groups: "internal-testers, qa-team",
-      release_notes: "Build #{lane_context[SharedValues::BUILD_NUMBER]} - #{Time.now.strftime('%Y-%m-%d %H:%M')}",
-      firebase_cli_token: ENV["FIREBASE_TOKEN"],
-      ipa_path: "./build/CareLog.ipa"
-    )
-  end
-end
-```
-
-Create `ios/CareLog/fastlane/Appfile`:
-
-```ruby
-app_identifier("com.carelog.CareLog")
-apple_id("your-apple-id@email.com")
-team_id("YOUR_TEAM_ID")
-```
-
-Requires ad-hoc provisioning: `fastlane match init && fastlane match adhoc`
-
-Run: `export FIREBASE_TOKEN="your_token" && cd ios/CareLog && fastlane distribute`
-
-### 9.4 Managing Testers
+### 9.3 Install Fastlane Dependencies
 
 ```bash
-firebase appdistribution:testers:add user@example.com
-firebase appdistribution:testers:add --group "internal-testers" user1@example.com user2@example.com
+cd android
+bundle install    # Installs fastlane + firebase_app_distribution plugin from Gemfile
 ```
+
+The `Gemfile` and `fastlane/` directory are already configured in the repo.
+
+### 9.4 Android Distribution (Fastlane)
+
+Three distribution lanes are available:
+
+| Lane | Build Type | Tester Groups | Command |
+|------|-----------|---------------|---------|
+| `distribute_debug` | Debug APK | `internal-testers` | `bundle exec fastlane distribute_debug` |
+| `distribute` | Release APK | `internal-testers`, `qa-team` | `bundle exec fastlane distribute` |
+| `beta` | Release APK | `beta-testers` | `bundle exec fastlane beta` |
+
+**Distribute a debug build to internal testers:**
+
+```bash
+cd android
+export FIREBASE_TOKEN="<your-firebase-ci-token>"
+bundle exec fastlane distribute_debug
+```
+
+This will:
+1. Build the debug APK (`./gradlew clean assembleDebug`)
+2. Generate release notes from recent git commits
+3. Upload APK to Firebase App Distribution
+4. Distribute to the `internal-testers` group
+5. Testers receive an email with a download link
+
+**Distribute a release build** (requires signing credentials):
+
+```bash
+cd android
+export FIREBASE_TOKEN="<your-firebase-ci-token>"
+export KEYSTORE_PATH="/path/to/release.keystore"
+export KEYSTORE_PASSWORD="<password>"
+export KEY_ALIAS="<alias>"
+export KEY_PASSWORD="<key-password>"
+bundle exec fastlane distribute
+```
+
+**Custom release notes:**
+
+```bash
+bundle exec fastlane distribute_debug release_notes:"Fix persona routing and history bugs"
+```
+
+### 9.5 Creating Tester Groups
+
+Before distributing, create the tester groups in Firebase:
+
+```bash
+# Create groups
+firebase appdistribution:group:create internal-testers "Internal Testers" --project carelog-7de0c
+firebase appdistribution:group:create qa-team "QA Team" --project carelog-7de0c
+firebase appdistribution:group:create beta-testers "Beta Testers" --project carelog-7de0c
+```
+
+### 9.6 Managing Testers
+
+```bash
+# Add testers to a group
+firebase appdistribution:testers:add \
+  --emails "dev1@example.com,dev2@example.com" \
+  --group-aliases internal-testers \
+  --project carelog-7de0c
+
+# List all testers
+firebase appdistribution:testers:list --project carelog-7de0c
+
+# Remove a tester
+firebase appdistribution:testers:remove \
+  --emails "old-tester@example.com" \
+  --project carelog-7de0c
+```
+
+Or manage testers via the [Firebase Console](https://console.firebase.google.com/project/carelog-7de0c/appdistribution).
+
+### 9.7 iOS Distribution
+
+```bash
+cd ios/CareLog
+bundle install
+export FIREBASE_TOKEN="<your-firebase-ci-token>"
+bundle exec fastlane distribute
+```
+
+Requires ad-hoc provisioning profile. Set up with:
+
+```bash
+fastlane match init
+fastlane match adhoc
+```
+
+### 9.8 GitHub Actions (Automated)
+
+The CI workflow (`.github/workflows/android-ci.yml`) automatically distributes to `internal-testers` on pushes to `develop`:
+
+```bash
+# Merge to develop to trigger automatic distribution
+git checkout develop
+git merge main
+git push origin develop
+```
+
+**Required GitHub Secrets** (configure in repo Settings → Secrets):
+
+| Secret | Value |
+|--------|-------|
+| `FIREBASE_APP_ID` | `1:191872106923:android:63245761468592e0d612ee` |
+| `FIREBASE_SERVICE_ACCOUNT` | Firebase service account JSON content |
+
+### 9.9 Troubleshooting Firebase Distribution
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `Unable to locate a Java Runtime` | JAVA_HOME not set | `export JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home` |
+| `SDK location not found` | Missing local.properties | Create `android/local.properties` with `sdk.dir=<path-to-sdk>` |
+| `Keystore file not found for signing config 'externalOverride'` | Fastlane injects empty signing env vars | Use `distribute_debug` lane (no signing needed) or set `KEYSTORE_*` env vars |
+| `Invalid request` during distribution | Tester group doesn't exist | Create group first: `firebase appdistribution:group:create <name> "<display>" --project carelog-7de0c` |
+| `Could not locate Gemfile` | Wrong directory | Run from `android/` directory, not project root |
 
 Get Firebase App IDs from: **Firebase Console → Project Settings → General → Your apps**.
 
