@@ -51,10 +51,10 @@ output "lambda_security_group_id" {
 # }
 
 # API Gateway Outputs (T-005)
-# output "api_gateway_url" {
-#   description = "URL of the API Gateway"
-#   value       = module.api_gateway.api_url
-# }
+output "api_gateway_url" {
+  description = "URL of the API Gateway"
+  value       = module.api_gateway.api_url
+}
 
 # S3 Outputs (T-007)
 # output "documents_bucket_name" {
