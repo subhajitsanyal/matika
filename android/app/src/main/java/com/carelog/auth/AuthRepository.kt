@@ -276,14 +276,17 @@ class AuthRepository @Inject constructor(
     fun getCurrentUser(): CareLogUser? = _currentUser.value
 
     /**
-     * Get the current access token for API calls.
+     * Get the current token for API calls.
+     *
+     * Returns the ID token because the API Gateway uses a COGNITO_USER_POOLS
+     * authorizer which validates ID tokens (not access tokens).
      */
     suspend fun getAccessToken(): String? {
         return try {
             val session = fetchAuthSession() as? AWSCognitoAuthSession
-            session?.userPoolTokensResult?.value?.accessToken
+            session?.userPoolTokensResult?.value?.idToken
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to get access token", e)
+            Log.e(TAG, "Failed to get ID token", e)
             null
         }
     }
