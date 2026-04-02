@@ -843,17 +843,47 @@ aws lambda update-function-code --function-name carelog-dev-FUNCTION-NAME --zip-
 **1. Delete all Cognito users:**
 
 ```bash
-POOL_ID=$(aws cognito-idp list-user-pools --max-results 10 --region ap-south-1 \
-    --query 'UserPools[?Name==`carelog-dev-users`].Id' --output text)
+POOL_ID="ap-south-1_uiEZhWVXB"
+REGION="ap-south-1"
 
-for user in $(aws cognito-idp list-users --user-pool-id $POOL_ID --region ap-south-1 \
-    --query 'Users[].Username' --output text); do
-    echo "Deleting $user"
-    aws cognito-idp admin-delete-user --user-pool-id $POOL_ID --username "$user" --region ap-south-1
-done
+# List all users first
+aws cognito-idp list-users --user-pool-id $POOL_ID --region $REGION \
+    --query 'Users[].{Username:Username,Status:UserStatus}' --output table
+
+# Delete all users (handles usernames with special characters correctly)
+aws cognito-idp list-users --user-pool-id $POOL_ID --region $REGION \
+    --query 'Users[].Username' --output json | \
+    python3 -c "
+import json, sys, subprocess
+users = json.load(sys.stdin)
+print(f'Deleting {len(users)} users...')
+for u in users:
+    print(f'  Deleting {u}')
+    subprocess.run(['aws', 'cognito-idp', 'admin-delete-user',
+        '--user-pool-id', '$POOL_ID', '--username', u, '--region', '$REGION'],
+        capture_output=True)
+print('Done.')
+"
+
+# Verify pool is empty
+aws cognito-idp list-users --user-pool-id $POOL_ID --region $REGION \
+    --query 'Users[].Username'
+# Should output: []
 ```
 
-**2. Reset the database** (requires SSM port-forward running in another terminal):
+> **Note:** The `--output text` format joins usernames with tabs which breaks `for` loops.
+> Always use `--output json` with `python3` for reliable parsing.
+
+**2. Delete a single user:**
+
+```bash
+aws cognito-idp admin-delete-user \
+    --user-pool-id ap-south-1_uiEZhWVXB \
+    --username "USERNAME_OR_SUB_UUID" \
+    --region ap-south-1
+```
+
+**3. Reset the database** (requires SSM port-forward running in another terminal):
 
 ```bash
 cd backend/database
@@ -863,6 +893,39 @@ flyway migrate  # recreates schema from scratch
 ```
 
 > **Warning:** `flyway clean` drops everything — only use in dev.
+
+### How do I create pre-confirmed test accounts?
+
+Useful for testing without email verification:
+
+```bash
+POOL_ID="ap-south-1_uiEZhWVXB"
+CLIENT_ID="1kjdqj21bljak87e602d8r84f2"
+REGION="ap-south-1"
+PASSWORD="Carelog2026@x"
+
+# Create and confirm a user in one go
+EMAIL="testuser@example.com"
+NAME="Test User"
+PERSONA="relative"  # or: patient, attendant, doctor
+
+aws cognito-idp sign-up --client-id $CLIENT_ID --username "$EMAIL" \
+    --password "$PASSWORD" \
+    --user-attributes "Name=email,Value=$EMAIL" "Name=name,Value=$NAME" \
+    --region $REGION
+
+aws cognito-idp admin-confirm-sign-up \
+    --user-pool-id $POOL_ID --username "$EMAIL" --region $REGION
+
+aws cognito-idp admin-update-user-attributes \
+    --user-pool-id $POOL_ID --username "$EMAIL" \
+    --user-attributes "Name=custom:persona_type,Value=$PERSONA" \
+    --region $REGION
+```
+
+> **Note:** `custom:persona_type` cannot be sent during `sign-up` via Amplify — it must
+> be set afterwards via `admin-update-user-attributes` or through the app's post-sign-in
+> `flushPendingPersona()` flow.
 
 ### How do I manually confirm a user (skip email verification)?
 
