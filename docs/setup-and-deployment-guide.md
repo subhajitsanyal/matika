@@ -246,9 +246,41 @@ This deploys everything in one step: VPC, Cognito, RDS, S3, SQS, SNS, API Gatewa
 terraform output
 ```
 
-Key outputs: `vpc_id`, `bastion_instance_id`, `public_subnet_ids`, `private_subnet_ids`.
+Key outputs: `vpc_id`, `bastion_instance_id`, `public_subnet_ids`, `private_subnet_ids`, `api_gateway_url`.
 
-### 3.6 Troubleshooting Deployment Issues
+### 3.6 Update App Configs After Deploy
+
+After every `terraform apply`, run the config update script to sync the app with the new infrastructure values (API Gateway URL, Cognito pool IDs, S3 bucket name):
+
+```bash
+# From the project root
+./scripts/update-app-config.sh          # defaults to dev environment
+./scripts/update-app-config.sh staging  # or specify another environment
+```
+
+This script queries AWS for the current:
+- **API Gateway URL** (changes on every `terraform destroy` + `apply`)
+- **Cognito User Pool ID and App Client ID**
+- **S3 documents bucket name**
+
+And updates these files automatically:
+- `android/app/src/main/java/com/carelog/core/BuildConfig.kt`
+- `android/app/src/main/res/raw/amplifyconfiguration.json`
+- `ios/CareLog/CareLog/amplifyconfiguration.json`
+- `android/app/build.gradle.kts` (debug build URL)
+
+Then rebuild and distribute:
+
+```bash
+cd android
+./gradlew assembleDebug
+bundle exec fastlane distribute_debug
+```
+
+> **Important:** Never hardcode API Gateway IDs in source files. Always use `update-app-config.sh`
+> after infrastructure changes. The API Gateway ID changes on every fresh `terraform apply`.
+
+### 3.7 Troubleshooting Deployment Issues
 
 **Secrets Manager: "secret already scheduled for deletion"**
 ```bash
