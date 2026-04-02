@@ -15,6 +15,7 @@
 const {
   CognitoIdentityProviderClient,
   AdminAddUserToGroupCommand,
+  AdminUpdateUserAttributesCommand,
 } = require("@aws-sdk/client-cognito-identity-provider");
 const { Client } = require("pg");
 const {
@@ -62,6 +63,23 @@ async function createDbConnection() {
 
   await client.connect();
   return client;
+}
+
+/**
+ * Set custom:persona_type attribute on the user.
+ * This ensures the app can read the persona for dashboard routing.
+ */
+async function setPersonaAttribute(userPoolId, username, personaType) {
+  const command = new AdminUpdateUserAttributesCommand({
+    UserPoolId: userPoolId,
+    Username: username,
+    UserAttributes: [
+      { Name: "custom:persona_type", Value: personaType },
+    ],
+  });
+
+  await cognitoClient.send(command);
+  console.log(`Set custom:persona_type=${personaType} for user ${username}`);
 }
 
 /**
@@ -192,6 +210,11 @@ exports.handler = async (event) => {
   let dbClient = null;
 
   try {
+    // Set custom:persona_type attribute if not already set
+    if (!userAttributes["custom:persona_type"]) {
+      await setPersonaAttribute(userPoolId, username, userData.personaType);
+    }
+
     // Add user to Cognito group
     await addUserToGroup(userPoolId, username, userData.personaType);
 

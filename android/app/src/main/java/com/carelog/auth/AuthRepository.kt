@@ -190,9 +190,19 @@ class AuthRepository @Inject constructor(
         }
     }
 
-    /** Persona selected during registration, to be written after first sign-in. */
-    @Volatile
-    private var _pendingPersona: PersonaType? = null
+    /** Persona selected during registration, persisted to SharedPreferences
+     *  so it survives process death between registration and first sign-in. */
+    private val prefs = context.getSharedPreferences("carelog_auth", Context.MODE_PRIVATE)
+
+    private var _pendingPersona: PersonaType?
+        get() = prefs.getString("pending_persona", null)?.let { PersonaType.fromString(it) }
+        set(value) {
+            if (value != null) {
+                prefs.edit().putString("pending_persona", value.name.lowercase()).apply()
+            } else {
+                prefs.edit().remove("pending_persona").apply()
+            }
+        }
 
     /**
      * Write the pending persona type to Cognito user attributes.
