@@ -169,12 +169,11 @@ class AuthRepository @Inject constructor(
     ): Result<AuthSignUpResult> {
         return try {
             // Only send standard attributes during signup.
-            // custom:persona_type is set after first sign-in via updatePersonaType()
-            // to avoid errors if the Cognito pool hasn't been configured with the custom attribute.
+            // custom:persona_type is set after first sign-in via flushPendingPersona()
+            // because Amplify's SignUp may reject custom attributes depending on pool config.
             val attributes = listOf(
                 AuthUserAttribute(AuthUserAttributeKey.email(), email),
-                AuthUserAttribute(AuthUserAttributeKey.name(), name),
-                AuthUserAttribute(AuthUserAttributeKey.custom("persona_type"), personaType.name.lowercase())
+                AuthUserAttribute(AuthUserAttributeKey.name(), name)
             )
 
             val options = AuthSignUpOptions.builder()
