@@ -36,7 +36,7 @@ android {
     buildTypes {
         debug {
             isDebuggable = true
-            buildConfigField("String", "API_BASE_URL", "\"https://api.dev.carelog.com\"")
+            buildConfigField("String", "API_BASE_URL", "\"https://x6v72ekrcl.execute-api.ap-south-1.amazonaws.com/dev\"")
         }
         release {
             isMinifyEnabled = true
