@@ -45,8 +45,8 @@ class TrendsViewModel @Inject constructor(
             _uiState.update { it.copy(isLoading = true) }
 
             try {
-                val user = authRepository.currentUser.value
-                val patientId = user?.linkedPatientId ?: return@launch
+                val patientId = authRepository.fetchLinkedPatientId()
+                    ?: throw Exception("No patient linked to this account")
 
                 val endDate = Instant.now()
                 val startDate = endDate.minus(

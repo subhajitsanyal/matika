@@ -579,9 +579,8 @@ class AuditLogViewModel @Inject constructor(
             currentPage = 0
 
             try {
-                val user = authRepository.getCurrentUser()
-                val patientId = user?.linkedPatientId
-                    ?: throw Exception("No linked patient found")
+                val patientId = authRepository.fetchLinkedPatientId()
+                    ?: throw Exception("No patient linked to this account")
 
                 val state = _uiState.value
                 val response = apiService.getAuditLogs(
@@ -618,8 +617,8 @@ class AuditLogViewModel @Inject constructor(
 
         viewModelScope.launch {
             try {
-                val user = authRepository.getCurrentUser()
-                val patientId = user?.linkedPatientId ?: return@launch
+                val patientId = authRepository.fetchLinkedPatientId()
+                    ?: throw Exception("No patient linked to this account")
 
                 val nextPage = currentPage + 1
                 val state = _uiState.value

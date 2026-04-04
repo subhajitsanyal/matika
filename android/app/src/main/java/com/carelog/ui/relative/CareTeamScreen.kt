@@ -609,8 +609,8 @@ class CareTeamViewModel @Inject constructor(
             _uiState.update { it.copy(isLoading = true, error = null) }
 
             try {
-                val user = authRepository.currentUser.value
-                val patientId = user?.linkedPatientId ?: return@launch
+                val patientId = authRepository.fetchLinkedPatientId()
+                    ?: throw Exception("No patient linked to this account")
 
                 val careTeam = apiService.getCareTeam(patientId)
 
