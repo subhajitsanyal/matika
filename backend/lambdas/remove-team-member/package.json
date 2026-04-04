@@ -1,0 +1,12 @@
+{
+  "name": "remove-team-member",
+  "version": "1.0.0",
+  "description": "Remove an attendant or doctor from a patient's care team",
+  "main": "index.js",
+  "dependencies": {
+    "@aws-sdk/client-cognito-identity-provider": "^3.600.0",
+    "@aws-sdk/client-ses": "^3.600.0",
+    "@aws-sdk/client-secrets-manager": "^3.600.0",
+    "pg": "^8.11.3"
+  }
+}

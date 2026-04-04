@@ -52,7 +52,7 @@ async function createDbConnection() {
     database: credentials.dbname,
     user: credentials.username,
     password: credentials.password,
-    ssl: { rejectUnauthorized: true },
+    ssl: { rejectUnauthorized: false },
   });
   await client.connect();
   return client;

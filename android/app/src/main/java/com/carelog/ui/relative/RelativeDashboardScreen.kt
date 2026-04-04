@@ -118,6 +118,9 @@ fun RelativeDashboardScreen(
                         modifier = Modifier.align(Alignment.Center)
                     )
                 }
+                uiState.noPatientRegistered -> {
+                    NoPatientContent()
+                }
                 uiState.error != null -> {
                     ErrorContent(
                         message = uiState.error!!,
@@ -338,6 +341,35 @@ private fun VitalSummaryCard(
                 tint = CareLogColors.OnSurfaceVariant
             )
         }
+    }
+}
+
+@Composable
+private fun NoPatientContent() {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Icon(
+            Icons.Default.PersonAdd,
+            contentDescription = null,
+            modifier = Modifier.size(64.dp),
+            tint = CareLogColors.OnSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        Text(
+            "No patient registered",
+            style = MaterialTheme.typography.titleLarge
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            "Go to Settings to create a patient profile.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = CareLogColors.OnSurfaceVariant
+        )
     }
 }
 

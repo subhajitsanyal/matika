@@ -411,7 +411,7 @@ exports.handler = async (event) => {
 
     // Generate password and create the attendant's account
     const password = generatePassword();
-    const downloadLink = process.env.APP_DOWNLOAD_URL || "https://appdistribution.firebase.dev/i/carelog";
+    const downloadLink = process.env.APP_DOWNLOAD_URL || "https://appdistribution.firebase.google.com/testerapps/1:191872106923:android:63245761468592e0d612ee";
 
     // Create Cognito account + RDS records
     await createAttendantAccount(

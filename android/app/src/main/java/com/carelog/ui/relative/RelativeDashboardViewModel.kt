@@ -50,7 +50,7 @@ class RelativeDashboardViewModel @Inject constructor(
                     _uiState.update {
                         it.copy(
                             isLoading = false,
-                            error = "No patient linked. DEBUG: $debugInfo"
+                            noPatientRegistered = true
                         )
                     }
                     return@launch
@@ -83,5 +83,6 @@ class RelativeDashboardViewModel @Inject constructor(
 data class RelativeDashboardUiState(
     val isLoading: Boolean = false,
     val patientSummary: PatientSummary? = null,
+    val noPatientRegistered: Boolean = false,
     val error: String? = null
 )
