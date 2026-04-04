@@ -202,11 +202,19 @@ function mapGender(gender) {
 /**
  * Create patient records in RDS.
  */
-async function createPatientRecords(dbClient, patientData, relativeCognitoSub) {
+async function createPatientRecords(dbClient, patientData, relativeCognitoSub, relativeEmail, relativeName) {
   // Start transaction
   await dbClient.query("BEGIN");
 
   try {
+    // Ensure relative's user record exists (post-confirmation may have failed)
+    await dbClient.query(
+      `INSERT INTO users (cognito_sub, email, name, persona_type, is_active, created_at, updated_at)
+       VALUES ($1, $2, $3, 'relative', true, NOW(), NOW())
+       ON CONFLICT (cognito_sub) DO UPDATE SET updated_at = NOW()`,
+      [relativeCognitoSub, relativeEmail, relativeName]
+    );
+
     // Create user record for patient
     const userResult = await dbClient.query(
       `INSERT INTO users (cognito_sub, email, name, persona_type, is_active)
@@ -295,7 +303,10 @@ exports.handler = async (event) => {
 
   // Parse request
   const body = JSON.parse(event.body);
-  const relativeCognitoSub = event.requestContext.authorizer.claims.sub;
+  const claims = event.requestContext.authorizer.claims;
+  const relativeCognitoSub = claims.sub;
+  const relativeEmail = claims.email || "unknown@carelog.internal";
+  const relativeName = claims.name || claims.email || "Unknown";
 
   // Validate required fields
   if (!body.name) {
@@ -349,7 +360,9 @@ exports.handler = async (event) => {
         emergencyContactPhone: body.emergencyContactPhone,
         fhirPatientId,
       },
-      relativeCognitoSub
+      relativeCognitoSub,
+      relativeEmail,
+      relativeName
     );
 
     console.log(`Patient created: ${patientId}`);

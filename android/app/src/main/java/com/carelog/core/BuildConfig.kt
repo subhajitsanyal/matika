@@ -8,7 +8,7 @@ object BuildConfig {
     const val DEBUG = true
     const val APPLICATION_ID = "com.carelog"
     const val BUILD_TYPE = "debug"
-    const val VERSION_CODE = 3
-    const val VERSION_NAME = "1.2.0"
+    const val VERSION_CODE = 4
+    const val VERSION_NAME = "1.3.0"
     const val API_BASE_URL = "https://x6v72ekrcl.execute-api.ap-south-1.amazonaws.com/dev"
 }
