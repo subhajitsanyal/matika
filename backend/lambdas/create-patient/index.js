@@ -48,6 +48,22 @@ function generatePatientId() {
 }
 
 /**
+ * Parse date of birth from DD/MM/YYYY to YYYY-MM-DD (ISO) for PostgreSQL.
+ * Returns null if input is empty or unparseable.
+ */
+function parseDateOfBirth(dob) {
+  if (!dob) return null;
+  // Handle DD/MM/YYYY format
+  const parts = dob.split("/");
+  if (parts.length === 3) {
+    const [dd, mm, yyyy] = parts;
+    return `${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`;
+  }
+  // Already ISO format or other — pass through
+  return dob;
+}
+
+/**
  * Get database credentials from Secrets Manager.
  */
 async function getDatabaseCredentials() {
@@ -215,7 +231,7 @@ async function createPatientRecords(dbClient, patientData, relativeCognitoSub) {
       [
         userId,
         patientData.patientId,
-        patientData.dateOfBirth || null,
+        parseDateOfBirth(patientData.dateOfBirth),
         patientData.gender || null,
         patientData.bloodType || null,
         patientData.medicalConditions || [],
