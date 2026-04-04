@@ -9,7 +9,6 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
-import java.util.UUID
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -50,19 +49,16 @@ class PatientRepositoryImpl @Inject constructor() : PatientRepository {
             .post(requestBody.toRequestBody("application/json".toMediaType()))
             .build()
 
-        try {
-            val response = httpClient.newCall(httpRequest).execute()
+        val response = httpClient.newCall(httpRequest).execute()
 
-            if (response.isSuccessful) {
-                val responseBody = response.body?.string() ?: "{}"
-                val json = JSONObject(responseBody)
-                json.optString("patientId", UUID.randomUUID().toString())
-            } else {
-                throw Exception("Failed to create patient: ${response.code}")
-            }
-        } catch (e: Exception) {
-            // For development, return a mock patient ID
-            UUID.randomUUID().toString()
+        if (response.isSuccessful) {
+            val responseBody = response.body?.string() ?: "{}"
+            val json = JSONObject(responseBody)
+            json.optString("patientId").takeIf { it.isNotEmpty() }
+                ?: throw Exception("Server did not return a patientId")
+        } else {
+            val errorBody = response.body?.string() ?: ""
+            throw Exception("Failed to create patient: HTTP ${response.code} $errorBody")
         }
     }
 }
