@@ -148,13 +148,14 @@ async function createAttendantAccount(dbClient, email, name, password, patientDb
   );
   const userId = userResult.rows[0].id;
 
-  // Create persona_link
+  // Create persona_link (look up inviter's user ID from cognito_sub)
   await dbClient.query(
     `INSERT INTO persona_links (
       patient_id, linked_user_id, relationship, is_primary,
       can_log_vitals, can_configure_thresholds, can_view_history, can_receive_alerts,
       invited_by, accepted_at, is_active
-    ) VALUES ($1, $2, 'attendant', false, true, false, true, true, $3, NOW(), true)`,
+    ) VALUES ($1, $2, 'attendant', false, true, false, true, true,
+      (SELECT id FROM users WHERE cognito_sub = $3), NOW(), true)`,
     [patientDbId, userId, invitedBy]
   );
 
