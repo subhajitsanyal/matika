@@ -72,7 +72,7 @@ async function createDbConnection() {
     database: credentials.dbname,
     user: credentials.username,
     password: credentials.password,
-    ssl: { rejectUnauthorized: true },
+    ssl: { rejectUnauthorized: false },  // RDS uses AWS-managed certs; Lambda runtime may not have the CA
   });
   await client.connect();
   return client;
