@@ -1,6 +1,6 @@
 # CareLog Setup and Deployment Guide
 
-**Version:** 2.1
+**Version:** 2.2
 **Last Updated:** April 2026
 
 ---
@@ -143,26 +143,105 @@ aws secretsmanager delete-secret --secret-id carelog-dev-db-password \
     --force-delete-without-recovery --region ap-south-1
 
 # Delete any leftover CloudWatch log groups
-for lg in $(aws logs describe-log-groups --log-group-name-prefix /aws/vpc/carelog-dev \
-    --query 'logGroups[].logGroupName' --output text --region ap-south-1); do
-    echo "Deleting $lg"
-    aws logs delete-log-group --log-group-name "$lg" --region ap-south-1
-done
-
-for lg in $(aws logs describe-log-groups --log-group-name-prefix /aws/apigateway/carelog-dev \
-    --query 'logGroups[].logGroupName' --output text --region ap-south-1); do
-    echo "Deleting $lg"
-    aws logs delete-log-group --log-group-name "$lg" --region ap-south-1
-done
-
-for lg in $(aws logs describe-log-groups --log-group-name-prefix /aws/lambda/carelog-dev \
-    --query 'logGroups[].logGroupName' --output text --region ap-south-1); do
-    echo "Deleting $lg"
-    aws logs delete-log-group --log-group-name "$lg" --region ap-south-1
+for prefix in /aws/vpc/carelog-dev /aws/apigateway/carelog-dev /aws/lambda/carelog-dev; do
+    for lg in $(aws logs describe-log-groups --log-group-name-prefix "$prefix" \
+        --query 'logGroups[].logGroupName' --output text --region ap-south-1); do
+        echo "Deleting $lg"
+        aws logs delete-log-group --log-group-name "$lg" --region ap-south-1
+    done
 done
 ```
 
-#### 3.0.3 Reset Local Terraform State
+#### 3.0.3 Clean Up Cognito Users and Domain
+
+If you want a completely clean slate with no dangling users or roles from before:
+
+```bash
+REGION="ap-south-1"
+
+# Find the Cognito user pool (if it survived destroy or was created outside TF)
+POOL_ID=$(aws cognito-idp list-user-pools --max-results 20 --region $REGION \
+    --query 'UserPools[?contains(Name, `carelog`)].Id' --output text)
+
+if [ -n "$POOL_ID" ]; then
+    echo "Found Cognito pool: $POOL_ID"
+
+    # Delete all users
+    aws cognito-idp list-users --user-pool-id $POOL_ID --region $REGION \
+        --query 'Users[].Username' --output json | \
+        python3 -c "
+import json, sys, subprocess
+users = json.load(sys.stdin)
+print(f'Deleting {len(users)} users...')
+for u in users:
+    print(f'  Deleting {u}')
+    subprocess.run(['aws', 'cognito-idp', 'admin-delete-user',
+        '--user-pool-id', '$POOL_ID', '--username', u, '--region', '$REGION'],
+        capture_output=True)
+print('Done.')
+"
+
+    # Delete custom domain if one exists
+    DOMAIN=$(aws cognito-idp describe-user-pool --user-pool-id $POOL_ID \
+        --region $REGION --query 'UserPool.Domain' --output text 2>/dev/null)
+    if [ -n "$DOMAIN" ] && [ "$DOMAIN" != "None" ]; then
+        echo "Deleting Cognito domain: $DOMAIN"
+        aws cognito-idp delete-user-pool-domain \
+            --user-pool-id $POOL_ID --domain "$DOMAIN" --region $REGION
+    fi
+
+    # Delete the user pool itself (if Terraform didn't)
+    aws cognito-idp delete-user-pool --user-pool-id $POOL_ID --region $REGION 2>/dev/null && \
+        echo "Deleted user pool $POOL_ID" || echo "Pool already deleted by Terraform"
+fi
+```
+
+#### 3.0.4 Verify Clean State
+
+```bash
+REGION="ap-south-1"
+
+echo "=== Cognito pools ==="
+aws cognito-idp list-user-pools --max-results 20 --region $REGION \
+    --query 'UserPools[?contains(Name, `carelog`)].{Name:Name,Id:Id}' --output table
+
+echo "=== Secrets Manager ==="
+aws secretsmanager list-secrets --region $REGION \
+    --query 'SecretList[?contains(Name, `carelog`)].{Name:Name,DeletedDate:DeletedDate}' --output table
+
+echo "=== CloudWatch log groups ==="
+aws logs describe-log-groups --log-group-name-prefix /aws/lambda/carelog-dev \
+    --query 'logGroups[].logGroupName' --output text --region $REGION
+
+echo "=== S3 buckets ==="
+aws s3 ls | grep carelog
+
+echo "=== IAM roles ==="
+aws iam list-roles --query 'Roles[?contains(RoleName, `carelog`)].RoleName' --output text
+```
+
+All of the above should return empty. If any IAM roles remain, delete them:
+
+```bash
+for role in $(aws iam list-roles --query 'Roles[?contains(RoleName, `carelog`)].RoleName' --output text); do
+    echo "Cleaning up IAM role: $role"
+    # Detach policies first
+    for policy in $(aws iam list-attached-role-policies --role-name $role --query 'AttachedPolicies[].PolicyArn' --output text); do
+        aws iam detach-role-policy --role-name $role --policy-arn $policy
+    done
+    for policy in $(aws iam list-role-policies --role-name $role --query 'PolicyNames[]' --output text); do
+        aws iam delete-role-policy --role-name $role --policy-name $policy
+    done
+    # Remove from instance profiles
+    for profile in $(aws iam list-instance-profiles-for-role --role-name $role --query 'InstanceProfiles[].InstanceProfileName' --output text); do
+        aws iam remove-role-from-instance-profile --instance-profile-name $profile --role-name $role
+        aws iam delete-instance-profile --instance-profile-name $profile
+    done
+    aws iam delete-role --role-name $role
+done
+```
+
+#### 3.0.5 Reset Local Terraform State
 
 ```bash
 cd infrastructure/terraform/environments/dev
@@ -180,7 +259,7 @@ A single `terraform apply` deploys everything:
 | VPC | Public/private subnets, NAT gateways, security groups |
 | Cognito | User Pool with 4 groups (patients, attendants, relatives, doctors), OAuth clients, post-confirmation Lambda trigger |
 | API Gateway | REST API with Cognito authorizer, Lambda proxy integrations |
-| Lambda | 8 deployed functions + 2 MOCK-stubbed routes (see §5) |
+| Lambda | 8 functions deployed via Terraform + 2 MOCK-stubbed routes (see §5). Additional Lambdas like `patient-summary`, `get-observations`, `care-team`, and `process-pending-invites` exist in code but must be deployed manually — see §5.4 |
 | RDS | PostgreSQL 15 in private subnet, encrypted, password in Secrets Manager |
 | S3 | Documents + observations bucket (KMS encrypted, lifecycle rules) + access logs bucket |
 | SQS | Document processing queue + alerts queue (both with DLQs) |
@@ -414,20 +493,31 @@ These are set automatically by Terraform when the Lambda module deploys:
 
 ### 5.4 Lambda Functions Reference
 
-#### Deployed (10+ functions — packaged and deployed by Terraform + manual)
+#### Deployed via Terraform (8 functions — packaged and deployed automatically by `terraform apply`)
 
 | Lambda | Route | Description |
 |--------|-------|-------------|
 | `create-patient` | `POST /patients` | Creates patient in RDS + Cognito; ensures relative's user record exists; sets `custom:linked_patient_id` on relative's Cognito account server-side |
-| `patient-summary` | `GET /patients/{patientId}/summary` | Returns patient info, latest vitals from S3, unread alert count, last activity time (used by relative dashboard) |
 | `invite-attendant` | `POST /invites/attendant` | Creates attendant Cognito account + RDS records immediately, emails credentials + app download link via SES. Handles SES sandbox by triggering verification first if recipient not verified. |
 | `invite-doctor` | `POST /invites/doctor` | Sends doctor invite email via SES |
 | `accept-invite` | `GET,POST /invites/accept` | GET serves HTML registration page; POST creates Cognito account for doctor invitees (no auth — user not yet registered) |
-| `process-pending-invites` | EventBridge (every 2 min) | Checks pending invites for newly SES-verified emails and sends credentials emails automatically |
 | `post-confirmation` | Cognito trigger | Runs after user confirms signup; creates user record in RDS, sets persona_type, adds to Cognito group |
 | `sync-observation` | `POST /observations/sync` | Stores FHIR Observation as JSON in S3 (`observations/{patientId}/{YYYY}/{MM}/{DD}/{id}.json`, KMS encrypted) |
 | `bulk-sync` | `POST /observations/bulk-sync` | Batch stores FHIR resources in S3 |
 | `presigned-url` | `POST /documents/presigned-url` | Generates S3 presigned upload/download URLs |
+
+#### Manually Deployed (code complete, API routes added manually — NOT yet in Terraform modules)
+
+These Lambdas have working code and are needed by the app, but are not part of `terraform apply`. After Terraform deploys the base infrastructure, deploy these manually using the AWS CLI or add them to the Terraform modules.
+
+| Lambda | Route | Description |
+|--------|-------|-------------|
+| `patient-summary` | `GET /patients/{patientId}/summary` | Returns patient info, latest vitals from S3, unread alert count, last activity time (used by relative dashboard) |
+| `get-observations` | `GET /patients/{patientId}/observations` | Returns FHIR observations from S3 filtered by vital type and date range (used by trends view) |
+| `care-team` | `GET /patients/{patientId}/team` | Returns care team members (attendants, doctors, relatives) + pending invites |
+| `process-pending-invites` | EventBridge (every 2 min) | Checks pending invites for newly SES-verified emails and sends credentials emails automatically |
+
+> **Note:** These need to be added to `infrastructure/terraform/modules/lambda/main.tf` and `infrastructure/terraform/modules/api_gateway/main.tf` for fully automated deployment.
 
 #### MOCK-Stubbed Routes (API Gateway routes exist but return mock responses — Lambda code exists but not yet wired in Terraform)
 
@@ -446,15 +536,38 @@ These are set automatically by Terraform when the Lambda module deploys:
 | `/device-tokens` | `device-token` |
 | `/audit-log` | `audit-log` |
 
-#### Scaffolded (code in `backend/lambdas/` but not yet in Terraform)
+#### Scaffolded (code in `backend/lambdas/` but not yet deployed or wired)
 
 `account-deletion`, `alert-crud`, `audit-log`, `care-plan`, `consent`, `create-document-reference`, `data-export`, `device-token`, `doctor-documents`, `doctor-patients`, `notification-sender`, `observation-annotation`, `reminder-crud`, `threshold-crud`
 
 ### 5.5 EventBridge Schedules
 
+> **Note:** EventBridge schedules are NOT managed by Terraform — they must be created manually after deployment.
+
 | Rule | Schedule | Lambda | Description |
 |------|----------|--------|-------------|
 | `carelog-dev-process-pending-invites` | Every 2 minutes | `process-pending-invites` | Polls pending invite records; checks SES verification status; sends credentials email once verified |
+
+To create the schedule manually after deploying the `process-pending-invites` Lambda:
+
+```bash
+REGION="ap-south-1"
+LAMBDA_ARN=$(aws lambda get-function --function-name carelog-dev-process-pending-invites \
+    --region $REGION --query 'Configuration.FunctionArn' --output text)
+
+aws events put-rule --name carelog-dev-process-pending-invites \
+    --schedule-expression "rate(2 minutes)" --state ENABLED --region $REGION
+
+aws events put-targets --rule carelog-dev-process-pending-invites \
+    --targets "Id=1,Arn=$LAMBDA_ARN" --region $REGION
+
+aws lambda add-permission --function-name carelog-dev-process-pending-invites \
+    --statement-id eventbridge-invoke --action lambda:InvokeFunction \
+    --principal events.amazonaws.com \
+    --source-arn $(aws events describe-rule --name carelog-dev-process-pending-invites \
+        --region $REGION --query 'Arn' --output text) \
+    --region $REGION
+```
 
 ### 5.6 Persona Flow
 
@@ -888,8 +1001,9 @@ aws lambda update-function-code --function-name carelog-dev-FUNCTION-NAME --zip-
 **1. Delete all Cognito users:**
 
 ```bash
-POOL_ID="ap-south-1_uiEZhWVXB"
 REGION="ap-south-1"
+POOL_ID=$(aws cognito-idp list-user-pools --max-results 10 --region $REGION \
+    --query 'UserPools[?Name==`carelog-dev-users`].Id' --output text)
 
 # List all users first
 aws cognito-idp list-users --user-pool-id $POOL_ID --region $REGION \
@@ -922,10 +1036,14 @@ aws cognito-idp list-users --user-pool-id $POOL_ID --region $REGION \
 **2. Delete a single user:**
 
 ```bash
+REGION="ap-south-1"
+POOL_ID=$(aws cognito-idp list-user-pools --max-results 10 --region $REGION \
+    --query 'UserPools[?Name==`carelog-dev-users`].Id' --output text)
+
 aws cognito-idp admin-delete-user \
-    --user-pool-id ap-south-1_uiEZhWVXB \
+    --user-pool-id $POOL_ID \
     --username "USERNAME_OR_SUB_UUID" \
-    --region ap-south-1
+    --region $REGION
 ```
 
 **3. Reset the database** (requires SSM port-forward running in another terminal):
@@ -944,9 +1062,11 @@ flyway migrate  # recreates schema from scratch
 Useful for testing without email verification:
 
 ```bash
-POOL_ID="ap-south-1_uiEZhWVXB"
-CLIENT_ID="1kjdqj21bljak87e602d8r84f2"
 REGION="ap-south-1"
+POOL_ID=$(aws cognito-idp list-user-pools --max-results 10 --region $REGION \
+    --query 'UserPools[?Name==`carelog-dev-users`].Id' --output text)
+CLIENT_ID=$(aws cognito-idp list-user-pool-clients --user-pool-id $POOL_ID \
+    --region $REGION --query 'UserPoolClients[?ClientName==`carelog-mobile-client`].ClientId' --output text)
 PASSWORD="Carelog2026@x"
 
 # Create and confirm a user in one go
@@ -1061,4 +1181,4 @@ Then rebuild and deploy the app.
 
 ---
 
-*CareLog Setup and Deployment Guide v2.1 — April 2026*
+*CareLog Setup and Deployment Guide v2.2 — April 2026*
