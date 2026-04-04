@@ -3,10 +3,14 @@
 # Usage: source seed-accounts.sh && seed_all_accounts
 set -euo pipefail
 
-POOL_ID="ap-south-1_uiEZhWVXB"
-CLIENT_ID="1kjdqj21bljak87e602d8r84f2"
-REGION="ap-south-1"
-TEST_PASSWORD="Carelog2026@x"
+# These should be set via environment variables or queried from AWS.
+# Defaults are for the dev environment — override for other environments.
+REGION="${AWS_REGION:-ap-south-1}"
+POOL_ID="${COGNITO_POOL_ID:-$(aws cognito-idp list-user-pools --max-results 10 --region "$REGION" \
+    --query 'UserPools[?contains(Name,`carelog`)].Id | [0]' --output text 2>/dev/null || echo 'POOL_ID_NOT_SET')}"
+CLIENT_ID="${COGNITO_CLIENT_ID:-$(aws cognito-idp list-user-pool-clients --user-pool-id "$POOL_ID" --region "$REGION" \
+    --query 'UserPoolClients[?contains(ClientName,`mobile`)].ClientId | [0]' --output text 2>/dev/null || echo 'CLIENT_ID_NOT_SET')}"
+TEST_PASSWORD="${TEST_PASSWORD:-Carelog2026@x}"
 CREDS_FILE="${CREDS_FILE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/test-data/credentials.json}"
 RUN_ID="${RUN_ID:-$(date +%s)}"
 

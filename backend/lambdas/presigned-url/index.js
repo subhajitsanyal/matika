@@ -8,10 +8,37 @@
 
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+const { Client } = require('pg');
+const { SecretsManagerClient, GetSecretValueCommand } = require('@aws-sdk/client-secrets-manager');
 
 const s3Client = new S3Client({
   region: process.env.AWS_REGION || 'ap-south-1',
 });
+const secretsClient = new SecretsManagerClient({});
+
+let dbCredentials = null;
+
+async function getDatabaseCredentials() {
+  if (dbCredentials) return dbCredentials;
+  const command = new GetSecretValueCommand({ SecretId: process.env.DB_SECRET_NAME });
+  const response = await secretsClient.send(command);
+  dbCredentials = JSON.parse(response.SecretString);
+  return dbCredentials;
+}
+
+async function createDbConnection() {
+  const credentials = await getDatabaseCredentials();
+  const client = new Client({
+    host: credentials.host,
+    port: credentials.port,
+    database: credentials.dbname,
+    user: credentials.username,
+    password: credentials.password,
+    ssl: { rejectUnauthorized: false },
+  });
+  await client.connect();
+  return client;
+}
 
 const BUCKET_NAME = process.env.S3_BUCKET_NAME;
 const URL_EXPIRATION_SECONDS = 15 * 60; // 15 minutes
@@ -45,6 +72,8 @@ const CONTENT_TYPE_EXTENSIONS = {
 exports.handler = async (event) => {
   console.log('Received presigned URL request');
 
+  let dbClient = null;
+
   try {
     // Parse request
     const body = typeof event.body === 'string' ? JSON.parse(event.body) : event.body;
@@ -52,7 +81,6 @@ exports.handler = async (event) => {
     // Get user info from Cognito authorizer
     const claims = event.requestContext?.authorizer?.claims || {};
     const userId = claims.sub;
-    const userGroups = claims['cognito:groups'] || '';
 
     if (!userId) {
       return errorResponse(401, 'Unauthorized');
@@ -77,8 +105,9 @@ exports.handler = async (event) => {
       return errorResponse(400, `Unsupported content type: ${contentType}`);
     }
 
-    // Check authorization
-    const hasAccess = await checkPatientAccess(userId, patientId, userGroups);
+    // Check authorization against RDS persona_links
+    dbClient = await createDbConnection();
+    const hasAccess = await checkPatientAccess(dbClient, userId, patientId);
     if (!hasAccess) {
       return errorResponse(403, 'Access denied to patient data');
     }
@@ -132,6 +161,10 @@ exports.handler = async (event) => {
   } catch (error) {
     console.error('Error generating presigned URL:', error);
     return errorResponse(500, 'Internal server error');
+  } finally {
+    if (dbClient) {
+      await dbClient.end();
+    }
   }
 };
 
@@ -150,13 +183,36 @@ function sanitizeFilename(filename) {
 }
 
 /**
- * Check if user has access to patient data.
+ * Check if user has access to patient data via persona_links table.
+ * Returns true if the user is linked to the patient (as a caregiver/doctor)
+ * or if the user IS the patient.
  */
-async function checkPatientAccess(userId, patientId, userGroups) {
-  // TODO: Implement actual access check against RDS persona_links table
-  const validGroups = ['patients', 'attendants', 'relatives', 'doctors'];
-  const groups = userGroups.split(',').map((g) => g.trim());
-  return groups.some((g) => validGroups.includes(g));
+async function checkPatientAccess(dbClient, userId, patientId) {
+  // Check if user is linked to patient via persona_links
+  const linkResult = await dbClient.query(
+    `SELECT 1 FROM persona_links pl
+     JOIN users u ON u.id = pl.linked_user_id
+     JOIN patients p ON p.id = pl.patient_id
+     WHERE u.cognito_sub = $1
+       AND (p.id::text = $2 OR p.patient_id = $2)
+       AND pl.is_active = true`,
+    [userId, patientId]
+  );
+
+  if (linkResult.rows.length > 0) {
+    return true;
+  }
+
+  // Check if user is the patient themselves
+  const patientResult = await dbClient.query(
+    `SELECT 1 FROM users u
+     JOIN patients p ON p.user_id = u.id
+     WHERE u.cognito_sub = $1
+       AND (p.id::text = $2 OR p.patient_id = $2)`,
+    [userId, patientId]
+  );
+
+  return patientResult.rows.length > 0;
 }
 
 /**

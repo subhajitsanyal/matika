@@ -1,0 +1,16 @@
+{
+  "name": "carelog-account-deletion",
+  "version": "1.0.0",
+  "description": "CareLog Account Deletion Lambda",
+  "main": "index.js",
+  "dependencies": {
+    "@aws-sdk/client-cognito-identity-provider": "^3.978.0",
+    "@aws-sdk/client-s3": "^3.978.0",
+    "@aws-sdk/client-secrets-manager": "^3.978.0",
+    "pg": "^8.11.0",
+    "uuid": "^9.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

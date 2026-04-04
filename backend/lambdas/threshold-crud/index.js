@@ -6,16 +6,32 @@
  */
 
 const { Client } = require('pg');
+const { SecretsManagerClient, GetSecretValueCommand } = require('@aws-sdk/client-secrets-manager');
 
-// Database connection
-const dbConfig = {
-  host: process.env.DB_HOST,
-  port: process.env.DB_PORT || 5432,
-  database: process.env.DB_NAME,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  ssl: { rejectUnauthorized: false },
-};
+const secretsClient = new SecretsManagerClient({});
+let dbCredentials = null;
+
+async function getDatabaseCredentials() {
+  if (dbCredentials) return dbCredentials;
+  const command = new GetSecretValueCommand({ SecretId: process.env.DB_SECRET_NAME });
+  const response = await secretsClient.send(command);
+  dbCredentials = JSON.parse(response.SecretString);
+  return dbCredentials;
+}
+
+async function createDbConnection() {
+  const credentials = await getDatabaseCredentials();
+  const client = new Client({
+    host: credentials.host,
+    port: credentials.port,
+    database: credentials.dbname,
+    user: credentials.username,
+    password: credentials.password,
+    ssl: { rejectUnauthorized: false },
+  });
+  await client.connect();
+  return client;
+}
 
 // Valid vital types
 const VITAL_TYPES = [
@@ -40,11 +56,9 @@ const DEFAULT_THRESHOLDS = {
 exports.handler = async (event) => {
   console.log('Threshold CRUD request:', event.httpMethod, event.path);
 
-  const client = new Client(dbConfig);
+  const client = await createDbConnection();
 
   try {
-    await client.connect();
-
     const httpMethod = event.httpMethod || event.requestContext?.http?.method;
     const claims = event.requestContext?.authorizer?.claims || {};
     const userId = claims.sub;
@@ -87,15 +101,17 @@ exports.handler = async (event) => {
 async function getThresholds(client, patientId) {
   const result = await client.query(
     `SELECT
-       vital_type,
-       min_value,
-       max_value,
-       unit,
-       set_by_doctor,
-       doctor_id,
-       updated_at
-     FROM thresholds
-     WHERE patient_id = $1`,
+       t.vital_type,
+       t.min_value,
+       t.max_value,
+       t.unit,
+       t.set_by_doctor,
+       t.doctor_id,
+       t.updated_at,
+       u.name AS doctor_name
+     FROM thresholds t
+     LEFT JOIN users u ON t.doctor_id = u.cognito_sub
+     WHERE t.patient_id = $1`,
     [patientId]
   );
 
@@ -110,7 +126,7 @@ async function getThresholds(client, patientId) {
         maxValue: existing.max_value,
         unit: existing.unit,
         setByDoctor: existing.set_by_doctor || false,
-        doctorName: null, // TODO: Join with users table
+        doctorName: existing.doctor_name || null,
         updatedAt: existing.updated_at,
       };
     }

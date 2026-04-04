@@ -629,14 +629,17 @@ class CareTeamViewModel @Inject constructor(
         }
     }
 
-    @Suppress("UNUSED_PARAMETER")
     fun sendInvite(email: String, name: String, role: String) {
+        val patientId = _uiState.value.patientId ?: return
         viewModelScope.launch {
             try {
-                // Note: Would call invite API here
-                // For now, just show success and refresh
-                _uiState.update { it.copy(inviteSuccess = true) }
-                loadCareTeam()
+                val success = apiService.sendAttendantInvite(patientId, name, email)
+                if (success) {
+                    _uiState.update { it.copy(inviteSuccess = true) }
+                    loadCareTeam()
+                } else {
+                    _uiState.update { it.copy(error = "Failed to send invite") }
+                }
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(error = e.message ?: "Failed to send invite")

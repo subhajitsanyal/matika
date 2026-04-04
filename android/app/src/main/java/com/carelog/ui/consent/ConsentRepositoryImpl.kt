@@ -2,6 +2,8 @@ package com.carelog.ui.consent
 
 import com.carelog.auth.AuthRepository
 import com.carelog.core.BuildConfig
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -66,14 +68,29 @@ class ConsentRepositoryImpl @Inject constructor(
         )
     }
 
-    override suspend fun getConsentStatus(): ConsentStatus {
-        // Placeholder implementation
-        return ConsentStatus(
-            hasConsent = false,
-            consentVersion = null,
-            acceptedAt = null,
-            currentVersion = "1.0",
-            needsUpdate = false
+    override suspend fun getConsentStatus(): ConsentStatus = withContext(Dispatchers.IO) {
+        val token = authRepository.getAccessToken() ?: throw Exception("Not authenticated")
+
+        val request = Request.Builder()
+            .url("$apiBaseUrl/consent")
+            .header("Authorization", "Bearer $token")
+            .get()
+            .build()
+
+        val response = httpClient.newCall(request).execute()
+        val responseBody = response.body?.string() ?: ""
+
+        if (!response.isSuccessful) {
+            throw Exception("API ${response.code}: $responseBody")
+        }
+
+        val json = JSONObject(responseBody)
+        ConsentStatus(
+            hasConsent = json.optBoolean("hasConsent", false),
+            consentVersion = json.optString("consentVersion", null),
+            acceptedAt = json.optString("acceptedAt", null),
+            currentVersion = json.optString("currentVersion", "1.0"),
+            needsUpdate = json.optBoolean("needsUpdate", false)
         )
     }
 
@@ -87,14 +104,20 @@ class ConsentRepositoryImpl @Inject constructor(
         }.toString()
 
         val request = Request.Builder()
-            .url("$apiBaseUrl/consent/accept")
+            .url("$apiBaseUrl/consent")
             .header("Authorization", "Bearer $token")
             .header("Content-Type", "application/json")
             .post(requestBody.toRequestBody("application/json".toMediaType()))
             .build()
 
-        // In a real implementation, execute the request
-        // For now, just succeed silently
+        val response = withContext(Dispatchers.IO) {
+            httpClient.newCall(request).execute()
+        }
+
+        if (!response.isSuccessful) {
+            val body = response.body?.string() ?: ""
+            throw Exception("Failed to record consent: API ${response.code}: $body")
+        }
     }
 
     override suspend fun withdrawConsent(reason: String?) {
@@ -106,12 +129,19 @@ class ConsentRepositoryImpl @Inject constructor(
         }.toString()
 
         val request = Request.Builder()
-            .url("$apiBaseUrl/consent/withdraw")
+            .url("$apiBaseUrl/consent")
             .header("Authorization", "Bearer $token")
             .header("Content-Type", "application/json")
-            .post(requestBody.toRequestBody("application/json".toMediaType()))
+            .delete(requestBody.toRequestBody("application/json".toMediaType()))
             .build()
 
-        // In a real implementation, execute the request
+        val response = withContext(Dispatchers.IO) {
+            httpClient.newCall(request).execute()
+        }
+
+        if (!response.isSuccessful) {
+            val body = response.body?.string() ?: ""
+            throw Exception("Failed to withdraw consent: API ${response.code}: $body")
+        }
     }
 }

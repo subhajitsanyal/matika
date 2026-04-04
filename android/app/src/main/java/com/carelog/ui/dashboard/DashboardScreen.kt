@@ -38,6 +38,7 @@ fun DashboardScreen(
     onNavigateToChat: () -> Unit,
     onNavigateToHistory: () -> Unit,
     onNavigateToSettings: () -> Unit,
+    onNavigateToAlerts: () -> Unit = {},
     viewModel: DashboardViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -95,7 +96,7 @@ fun DashboardScreen(
                     icon = { Icon(Icons.Default.Notifications, contentDescription = "Alerts") },
                     label = { Text("Alerts") },
                     selected = false,
-                    onClick = { /* TODO: Navigate to alerts */ }
+                    onClick = { onNavigateToAlerts() }
                 )
             }
         }

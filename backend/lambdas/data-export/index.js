@@ -9,15 +9,32 @@ const { Client } = require('pg');
 const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { v4: uuidv4 } = require('uuid');
+const { SecretsManagerClient, GetSecretValueCommand } = require('@aws-sdk/client-secrets-manager');
 
-const dbConfig = {
-  host: process.env.DB_HOST,
-  port: process.env.DB_PORT || 5432,
-  database: process.env.DB_NAME,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  ssl: { rejectUnauthorized: false },
-};
+const secretsClient = new SecretsManagerClient({});
+let dbCredentials = null;
+
+async function getDatabaseCredentials() {
+  if (dbCredentials) return dbCredentials;
+  const command = new GetSecretValueCommand({ SecretId: process.env.DB_SECRET_NAME });
+  const response = await secretsClient.send(command);
+  dbCredentials = JSON.parse(response.SecretString);
+  return dbCredentials;
+}
+
+async function createDbConnection() {
+  const credentials = await getDatabaseCredentials();
+  const client = new Client({
+    host: credentials.host,
+    port: credentials.port,
+    database: credentials.dbname,
+    user: credentials.username,
+    password: credentials.password,
+    ssl: { rejectUnauthorized: false },
+  });
+  await client.connect();
+  return client;
+}
 
 const s3Client = new S3Client({ region: process.env.AWS_REGION || 'us-east-1' });
 const EXPORT_BUCKET = process.env.EXPORT_BUCKET_NAME;
@@ -26,11 +43,9 @@ const HEALTHLAKE_ENDPOINT = process.env.HEALTHLAKE_ENDPOINT;
 exports.handler = async (event) => {
   console.log('Data export request:', event.httpMethod, event.path);
 
-  const client = new Client(dbConfig);
+  const client = await createDbConnection();
 
   try {
-    await client.connect();
-
     const httpMethod = event.httpMethod || event.requestContext?.http?.method;
     const claims = event.requestContext?.authorizer?.claims || {};
     const userId = claims.sub;

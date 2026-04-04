@@ -37,8 +37,9 @@ module "carelog" {
   db_username       = "carelog_dev_admin"
 
   # SES email for Cognito verification emails
-  ses_email_arn  = "arn:aws:ses:ap-south-1:316643066568:identity/subhajit@kyabla.in"
-  ses_from_email = "CareLog <subhajit@kyabla.in>"
+  # Set these to your verified SES identity — see docs/setup-and-deployment-guide.md §1.4
+  ses_email_arn  = var.ses_email_arn
+  ses_from_email = var.ses_from_email
 
   # Feature flags
   enable_healthlake = false # Disable for dev to save costs

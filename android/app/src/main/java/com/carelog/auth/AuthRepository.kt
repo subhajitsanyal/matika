@@ -281,6 +281,46 @@ class AuthRepository @Inject constructor(
     }
 
     /**
+     * Initiate a password reset. Sends a confirmation code to the user's email.
+     */
+    suspend fun resetPassword(email: String): Result<Unit> {
+        return try {
+            suspendCancellableCoroutine<Unit> { cont ->
+                Amplify.Auth.resetPassword(
+                    email,
+                    { cont.resume(Unit) },
+                    { cont.resumeWithException(it) }
+                )
+            }
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Log.e(TAG, "Reset password failed", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Confirm password reset with the code and new password.
+     */
+    suspend fun confirmResetPassword(email: String, code: String, newPassword: String): Result<Unit> {
+        return try {
+            suspendCancellableCoroutine<Unit> { cont ->
+                Amplify.Auth.confirmResetPassword(
+                    email,
+                    newPassword,
+                    code,
+                    { cont.resume(Unit) },
+                    { cont.resumeWithException(it) }
+                )
+            }
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Log.e(TAG, "Confirm reset password failed", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
      * Get the currently authenticated user synchronously.
      */
     fun getCurrentUser(): CareLogUser? = _currentUser.value

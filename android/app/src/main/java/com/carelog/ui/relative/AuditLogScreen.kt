@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.carelog.api.AuditLogEntryDto
 import com.carelog.api.RelativeApiService
 import com.carelog.auth.AuthRepository
 import com.carelog.ui.theme.CareLogColors
@@ -564,6 +565,10 @@ class AuditLogViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(AuditLogUiState())
     val uiState: StateFlow<AuditLogUiState> = _uiState.asStateFlow()
 
+    private var currentPage = 0
+    private val pageSize = 20
+    private var isLoadingMore = false
+
     init {
         loadLogs()
     }
@@ -571,43 +576,32 @@ class AuditLogViewModel @Inject constructor(
     fun loadLogs() {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
+            currentPage = 0
 
             try {
-                // Note: Would fetch from API
-                // For now, use mock data
-                val mockLogs = listOf(
-                    AuditLogEntry(
-                        id = "1",
-                        action = "CREATE",
-                        resourceType = "Observation",
-                        resourceId = "obs-1",
-                        actorId = "user-1",
-                        actorName = "John (Attendant)",
-                        actorRole = "attendant",
-                        details = mapOf("vitalType" to "BLOOD_PRESSURE"),
-                        timestamp = Instant.now().minusSeconds(3600)
-                    ),
-                    AuditLogEntry(
-                        id = "2",
-                        action = "UPDATE",
-                        resourceType = "Threshold",
-                        resourceId = "thresh-1",
-                        actorId = "user-2",
-                        actorName = "Mary (Relative)",
-                        actorRole = "relative",
-                        details = mapOf("vitalType" to "GLUCOSE"),
-                        timestamp = Instant.now().minusSeconds(7200)
-                    )
+                val user = authRepository.getCurrentUser()
+                val patientId = user?.linkedPatientId
+                    ?: throw Exception("No linked patient found")
+
+                val state = _uiState.value
+                val response = apiService.getAuditLogs(
+                    patientId = patientId,
+                    page = 0,
+                    pageSize = pageSize,
+                    actorId = state.selectedActorId,
+                    action = state.selectedAction,
+                    resourceType = state.selectedResourceType
                 )
+
+                val logs = response.logs.map { it.toAuditLogEntry() }
+                val actors = response.actors.map { ActorInfo(it.id, it.name, it.role) }
 
                 _uiState.update {
                     it.copy(
                         isLoading = false,
-                        logs = mockLogs,
-                        actors = listOf(
-                            ActorInfo("user-1", "John (Attendant)", "attendant"),
-                            ActorInfo("user-2", "Mary (Relative)", "relative")
-                        )
+                        logs = logs,
+                        actors = actors,
+                        hasMore = response.hasMore
                     )
                 }
             } catch (e: Exception) {
@@ -619,8 +613,57 @@ class AuditLogViewModel @Inject constructor(
     }
 
     fun loadMore() {
-        // Implementation for pagination
+        if (isLoadingMore) return
+        isLoadingMore = true
+
+        viewModelScope.launch {
+            try {
+                val user = authRepository.getCurrentUser()
+                val patientId = user?.linkedPatientId ?: return@launch
+
+                val nextPage = currentPage + 1
+                val state = _uiState.value
+                val response = apiService.getAuditLogs(
+                    patientId = patientId,
+                    page = nextPage,
+                    pageSize = pageSize,
+                    actorId = state.selectedActorId,
+                    action = state.selectedAction,
+                    resourceType = state.selectedResourceType
+                )
+
+                val newLogs = response.logs.map { it.toAuditLogEntry() }
+                currentPage = nextPage
+
+                _uiState.update {
+                    it.copy(
+                        logs = it.logs + newLogs,
+                        hasMore = response.hasMore
+                    )
+                }
+            } catch (e: Exception) {
+                // Silently fail on load-more; existing logs remain visible
+            } finally {
+                isLoadingMore = false
+            }
+        }
     }
+
+    private fun AuditLogEntryDto.toAuditLogEntry() = AuditLogEntry(
+        id = id,
+        action = action,
+        resourceType = resourceType,
+        resourceId = resourceId,
+        actorId = actorId,
+        actorName = actorName,
+        actorRole = actorRole,
+        details = null,
+        timestamp = try {
+            Instant.parse(timestamp)
+        } catch (e: Exception) {
+            Instant.now()
+        }
+    )
 
     fun applyFilters(actorId: String?, action: String?, resourceType: String?) {
         val actorName = _uiState.value.actors.find { it.id == actorId }?.name

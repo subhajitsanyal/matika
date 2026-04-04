@@ -1,0 +1,14 @@
+{
+  "name": "carelog-notification-sender",
+  "version": "1.0.0",
+  "description": "CareLog Notification Sender Lambda",
+  "main": "index.js",
+  "dependencies": {
+    "@aws-sdk/client-sns": "^3.978.0",
+    "@aws-sdk/client-secrets-manager": "^3.978.0",
+    "pg": "^8.11.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

@@ -33,6 +33,7 @@ import javax.inject.Inject
 import com.carelog.ui.attendant.AttendantDashboardScreen
 import com.carelog.ui.attendant.AttendantLoginScreen
 import com.carelog.ui.attendant.AttendantNotesScreen
+import com.carelog.ui.auth.ForgotPasswordScreen
 import com.carelog.ui.auth.LoginScreen
 import com.carelog.ui.auth.RegisterScreen
 import com.carelog.ui.auth.VerificationScreen
@@ -110,6 +111,9 @@ object CareLogRoutes {
     const val INVITE_ATTENDANT = "invite_attendant"
     const val INVITE_DOCTOR = "invite_doctor"
 
+    // Forgot password
+    const val FORGOT_PASSWORD = "forgot_password"
+
     // LLM Chat placeholder
     const val CHAT = "chat"
 
@@ -158,7 +162,9 @@ fun CareLogNavHost() {
                         popUpTo(CareLogRoutes.LOGIN) { inclusive = true }
                     }
                 },
-                onNavigateToForgotPassword = { /* TODO */ }
+                onNavigateToForgotPassword = {
+                    navController.navigate(CareLogRoutes.FORGOT_PASSWORD)
+                }
             )
         }
 
@@ -242,6 +248,9 @@ fun CareLogNavHost() {
                 },
                 onNavigateToSettings = {
                     navController.navigate(CareLogRoutes.SETTINGS)
+                },
+                onNavigateToAlerts = {
+                    navController.navigate(CareLogRoutes.ALERTS)
                 }
             )
         }
@@ -436,6 +445,18 @@ fun CareLogNavHost() {
 
         composable(CareLogRoutes.ATTENDANT_NOTES) {
             AttendantNotesScreen(onNavigateBack = { navController.popBackStack() })
+        }
+
+        // ── Forgot Password ─────────────────────────────────────
+        composable(CareLogRoutes.FORGOT_PASSWORD) {
+            ForgotPasswordScreen(
+                onNavigateBack = { navController.popBackStack() },
+                onPasswordResetSuccess = {
+                    navController.navigate(CareLogRoutes.LOGIN) {
+                        popUpTo(CareLogRoutes.FORGOT_PASSWORD) { inclusive = true }
+                    }
+                }
+            )
         }
 
         // ── Chat (Placeholder) ──────────────────────────────────

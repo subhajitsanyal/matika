@@ -7,18 +7,33 @@
 
 const { SNSClient, PublishCommand } = require('@aws-sdk/client-sns');
 const { Client } = require('pg');
+const { SecretsManagerClient, GetSecretValueCommand } = require('@aws-sdk/client-secrets-manager');
 
 const snsClient = new SNSClient({ region: process.env.AWS_REGION });
+const secretsClient = new SecretsManagerClient({});
+let dbCredentials = null;
 
-// Database connection
-const dbConfig = {
-  host: process.env.DB_HOST,
-  port: process.env.DB_PORT || 5432,
-  database: process.env.DB_NAME,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  ssl: { rejectUnauthorized: false },
-};
+async function getDatabaseCredentials() {
+  if (dbCredentials) return dbCredentials;
+  const command = new GetSecretValueCommand({ SecretId: process.env.DB_SECRET_NAME });
+  const response = await secretsClient.send(command);
+  dbCredentials = JSON.parse(response.SecretString);
+  return dbCredentials;
+}
+
+async function createDbConnection() {
+  const credentials = await getDatabaseCredentials();
+  const client = new Client({
+    host: credentials.host,
+    port: credentials.port,
+    database: credentials.dbname,
+    user: credentials.username,
+    password: credentials.password,
+    ssl: { rejectUnauthorized: false },
+  });
+  await client.connect();
+  return client;
+}
 
 // Alert types
 const ALERT_TYPES = {
@@ -39,11 +54,9 @@ const VITAL_DISPLAY_NAMES = {
 exports.handler = async (event) => {
   console.log('Notification sender triggered:', JSON.stringify(event));
 
-  const client = new Client(dbConfig);
+  const client = await createDbConnection();
 
   try {
-    await client.connect();
-
     // Handle different trigger types
     if (event.source === 'aws.events') {
       // CloudWatch scheduled event - check for reminder lapses
