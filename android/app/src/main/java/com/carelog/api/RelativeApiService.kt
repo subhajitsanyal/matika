@@ -563,7 +563,7 @@ class RelativeApiService @Inject constructor(
                 secondaryValue = obj.optDouble("secondaryValue").takeIf { !it.isNaN() },
                 unit = obj.getString("unit"),
                 timestamp = Instant.parse(obj.getString("timestamp")),
-                performerName = obj.optString("performerName"),
+                performerName = obj.optString("performerName", "").takeIf { it.isNotEmpty() && it != "null" },
                 status = ThresholdStatus.valueOf(obj.optString("status", "NORMAL").uppercase())
             )
         }
