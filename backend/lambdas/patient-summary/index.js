@@ -67,7 +67,7 @@ async function checkAccess(dbClient, cognitoSub, patientId) {
  */
 async function getPatientInfo(dbClient, patientId) {
   const result = await dbClient.query(
-    `SELECT p.patient_id, u.name, p.date_of_birth, p.gender, p.blood_type
+    `SELECT p.patient_id, u.name, u.cognito_sub, p.date_of_birth, p.gender, p.blood_type
      FROM patients p
      JOIN users u ON p.user_id = u.id
      WHERE p.patient_id = $1`,
@@ -95,6 +95,25 @@ async function getUnreadAlertCount(dbClient, patientId, cognitoSub) {
  * Get the latest observation for each vital type from S3.
  * Observations are stored at: observations/{patientId}/{YYYY}/{MM}/{DD}/{id}.json
  */
+async function getLatestVitalsMultiSub(subs) {
+  const bucket = process.env.OBSERVATIONS_BUCKET;
+  if (!bucket) { console.log("No OBSERVATIONS_BUCKET set"); return {}; }
+  if (subs.length === 0) return {};
+
+  // Merge results from all subs
+  const allVitals = {};
+  for (const sub of subs) {
+    const vitals = await getLatestVitals(sub);
+    for (const [type, vital] of Object.entries(vitals)) {
+      // Keep the most recent reading per vital type
+      if (!allVitals[type] || vital.timestamp > allVitals[type].timestamp) {
+        allVitals[type] = vital;
+      }
+    }
+  }
+  return allVitals;
+}
+
 async function getLatestVitals(patientId) {
   const bucket = process.env.OBSERVATIONS_BUCKET;
   if (!bucket) return {};
@@ -111,6 +130,7 @@ async function getLatestVitals(patientId) {
       const d = new Date(now);
       d.setDate(d.getDate() - daysAgo);
       const prefix = `observations/${patientId}/${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}/`;
+      console.log(`Checking S3 prefix: ${prefix}`);
 
       try {
         const listResult = await s3Client.send(
@@ -121,13 +141,15 @@ async function getLatestVitals(patientId) {
           })
         );
         if (listResult.Contents) {
+          console.log(`  Found ${listResult.Contents.length} files at ${prefix}`);
           files.push(...listResult.Contents);
         }
       } catch (e) {
-        // Day folder doesn't exist, continue
+        console.log(`  S3 list error for ${prefix}: ${e.message}`);
       }
     }
 
+    console.log(`Total files found: ${files.length}`);
     // Sort by last modified descending
     files.sort((a, b) => (b.LastModified || 0) - (a.LastModified || 0));
 
@@ -156,7 +178,7 @@ async function getLatestVitals(patientId) {
           };
         }
       } catch (e) {
-        // Skip unreadable files
+        console.log(`  Error reading ${file.Key}: ${e.message}`);
       }
     }
   } catch (e) {
@@ -238,18 +260,35 @@ exports.handler = async (event) => {
       return response(403, { error: "Access denied" });
     }
 
-    // Fetch data in parallel
-    const [patientInfo, unreadAlertCount, latestVitals, lastActivityTime] =
-      await Promise.all([
-        getPatientInfo(dbClient, patientId),
-        getUnreadAlertCount(dbClient, patientId, cognitoSub),
-        getLatestVitals(patientId),
-        getLastActivityTime(dbClient, patientId),
-      ]);
-
+    // Fetch patient info first (need cognito_sub for S3 path)
+    const patientInfo = await getPatientInfo(dbClient, patientId);
     if (!patientInfo) {
       return response(404, { error: "Patient not found" });
     }
+
+    // Get all Cognito subs that might have logged observations for this patient
+    // (patient themselves, plus all linked attendants/relatives)
+    const subsResult = await dbClient.query(
+      `SELECT u.cognito_sub FROM users u
+       JOIN persona_links pl ON pl.linked_user_id = u.id
+       JOIN patients p ON pl.patient_id = p.id
+       WHERE p.patient_id = $1 AND pl.is_active = true
+       UNION
+       SELECT u.cognito_sub FROM users u
+       JOIN patients p ON p.user_id = u.id
+       WHERE p.patient_id = $1`,
+      [patientId]
+    );
+    const allSubs = subsResult.rows.map((r) => r.cognito_sub);
+    console.log(`Looking for observations under subs: ${allSubs.join(", ")}`);
+
+    // Fetch remaining data in parallel
+    const [unreadAlertCount, latestVitals, lastActivityTime] =
+      await Promise.all([
+        getUnreadAlertCount(dbClient, patientId, cognitoSub),
+        getLatestVitalsMultiSub(allSubs),
+        getLastActivityTime(dbClient, patientId),
+      ]);
 
     return response(200, {
       patientId: patientInfo.patient_id,
