@@ -1,7 +1,7 @@
 # CareLog Setup and Deployment Guide
 
-**Version:** 2.0
-**Last Updated:** March 2026
+**Version:** 2.1
+**Last Updated:** April 2026
 
 ---
 
@@ -405,21 +405,26 @@ These are set automatically by Terraform when the Lambda module deploys:
 |----------|--------|---------------|
 | `DB_SECRET_NAME` | RDS module → `db_password_secret_name` | post-confirmation, create-patient, accept-invite, invite-attendant, invite-doctor |
 | `COGNITO_USER_POOL_ID` | Cognito module → extracted from ARN | post-confirmation, create-patient, accept-invite |
-| `FROM_EMAIL` | Terraform variable (default: `noreply@carelog.com`) | invite-attendant, invite-doctor |
+| `FROM_EMAIL` | Terraform variable (default: `noreply@carelog.com`) | invite-attendant, invite-doctor, process-pending-invites |
+| `WEB_PORTAL_URL` | API Gateway base URL | invite-attendant, process-pending-invites |
+| `APP_DOWNLOAD_URL` | Firebase App Distribution link | invite-attendant |
+| `OBSERVATIONS_BUCKET` | S3 observations bucket name | patient-summary |
 | `S3_BUCKET_NAME` | S3 module → `documents_bucket_name` | sync-observation, bulk-sync, presigned-url |
 | `S3_KMS_KEY_ID` | S3 module → `kms_key_arn` | sync-observation, bulk-sync |
 
 ### 5.4 Lambda Functions Reference
 
-#### Deployed (8 functions — packaged and deployed by Terraform)
+#### Deployed (10+ functions — packaged and deployed by Terraform + manual)
 
 | Lambda | Route | Description |
 |--------|-------|-------------|
-| `create-patient` | `POST /patients` | Creates patient in RDS + Cognito |
-| `invite-attendant` | `POST /invites/attendant` | Sends invite email via SES |
-| `invite-doctor` | `POST /invites/doctor` | Sends invite email via SES |
-| `accept-invite` | `POST /invites/accept` | Creates Cognito account for invitee (no auth — user not yet registered) |
-| `post-confirmation` | Cognito trigger | Runs after user confirms signup |
+| `create-patient` | `POST /patients` | Creates patient in RDS + Cognito; ensures relative's user record exists; sets `custom:linked_patient_id` on relative's Cognito account server-side |
+| `patient-summary` | `GET /patients/{patientId}/summary` | Returns patient info, latest vitals from S3, unread alert count, last activity time (used by relative dashboard) |
+| `invite-attendant` | `POST /invites/attendant` | Creates attendant Cognito account + RDS records immediately, emails credentials + app download link via SES. Handles SES sandbox by triggering verification first if recipient not verified. |
+| `invite-doctor` | `POST /invites/doctor` | Sends doctor invite email via SES |
+| `accept-invite` | `GET,POST /invites/accept` | GET serves HTML registration page; POST creates Cognito account for doctor invitees (no auth — user not yet registered) |
+| `process-pending-invites` | EventBridge (every 2 min) | Checks pending invites for newly SES-verified emails and sends credentials emails automatically |
+| `post-confirmation` | Cognito trigger | Runs after user confirms signup; creates user record in RDS, sets persona_type, adds to Cognito group |
 | `sync-observation` | `POST /observations/sync` | Stores FHIR Observation as JSON in S3 (`observations/{patientId}/{YYYY}/{MM}/{DD}/{id}.json`, KMS encrypted) |
 | `bulk-sync` | `POST /observations/bulk-sync` | Batch stores FHIR resources in S3 |
 | `presigned-url` | `POST /documents/presigned-url` | Generates S3 presigned upload/download URLs |
@@ -445,13 +450,21 @@ These are set automatically by Terraform when the Lambda module deploys:
 
 `account-deletion`, `alert-crud`, `audit-log`, `care-plan`, `consent`, `create-document-reference`, `data-export`, `device-token`, `doctor-documents`, `doctor-patients`, `notification-sender`, `observation-annotation`, `reminder-crud`, `threshold-crud`
 
+### 5.5 EventBridge Schedules
+
+| Rule | Schedule | Lambda | Description |
+|------|----------|--------|-------------|
+| `carelog-dev-process-pending-invites` | Every 2 minutes | `process-pending-invites` | Polls pending invite records; checks SES verification status; sends credentials email once verified |
+
 ### 5.6 Persona Flow
 
 1. Only **caregivers** (persona: `relative`) can self-register via the app
-2. Caregivers create a patient → `create-patient`
-3. Caregivers invite attendants/doctors → `invite-attendant` / `invite-doctor`
-4. Invitees receive email, accept → `accept-invite` creates their Cognito account
+2. Caregivers create a patient → `create-patient` (also creates caregiver's RDS user record if missing, and sets `custom:linked_patient_id` on their Cognito account)
+3. Caregivers invite attendants → `invite-attendant` creates the attendant's Cognito account + RDS records immediately, emails credentials
+   - **SES sandbox mode:** If recipient email not verified in SES, a verification email is sent first. After verification, `process-pending-invites` (scheduled every 2 min) sends the credentials email automatically.
+4. Caregivers invite doctors → `invite-doctor` sends invite email; doctors accept via `accept-invite` HTML registration page
 5. Caregivers can remove members (`remove-team-member`) or delete entire patient cascade (`delete-patient`)
+6. **Relative dashboard** calls `GET /patients/{patientId}/summary` via `patient-summary` Lambda for patient data
 
 ---
 
@@ -996,7 +1009,7 @@ aws logs tail /aws/lambda/carelog-dev-FUNCTION-NAME --follow --region ap-south-1
 aws logs tail /aws/lambda/carelog-dev-FUNCTION-NAME --since 5m --region ap-south-1
 ```
 
-Deployed function names: `post-confirmation`, `create-patient`, `accept-invite`, `invite-attendant`, `invite-doctor`, `sync-observation`, `bulk-sync`, `presigned-url`.
+Deployed function names: `post-confirmation`, `create-patient`, `patient-summary`, `accept-invite`, `invite-attendant`, `invite-doctor`, `process-pending-invites`, `sync-observation`, `bulk-sync`, `presigned-url`.
 
 ### How do I get the database password?
 
@@ -1048,4 +1061,4 @@ Then rebuild and deploy the app.
 
 ---
 
-*CareLog Setup and Deployment Guide v2.0 — March 2026*
+*CareLog Setup and Deployment Guide v2.1 — April 2026*

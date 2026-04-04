@@ -1,7 +1,7 @@
 # CareLog — Product Requirements Document
 
-**Version:** 0.2
-**Date:** March 2026
+**Version:** 0.3
+**Date:** April 2026
 **Status:** In Review
 **Classification:** Confidential
 
@@ -94,8 +94,9 @@ The relative initiates account setup for both themselves and the patient in a si
 2. Relative creates their own account (email/phone + password via AWS Cognito).
 3. Relative enters patient details (name, age, gender, medical conditions).
 4. App creates a linked patient account and generates a unique Patient ID.
-5. Relative optionally adds an attendant by entering their name and contact details.
-6. App sends the attendant an invite to set up their own login credentials.
+5. Relative optionally adds an attendant by entering their name and email address.
+6. System creates the attendant's account automatically and emails them their login credentials and a link to download the CareLog app.
+   - **SES sandbox flow (dev):** If the attendant's email is not yet verified in SES, a verification email is sent first. Once verified, a scheduled Lambda (every 2 minutes) detects the verification and sends the credentials email automatically.
 7. Doctor onboarding is deferred — relative can initiate this later from Settings.
 
 ### 4.2 Doctor Onboarding Flow
@@ -243,7 +244,8 @@ A placeholder entry point for an LLM-powered health chat assistant is included o
 | Async Processing Queue | Amazon SQS | Document processing queue + alerts queue (both with DLQs); S3 upload triggers |
 | Identity & Auth | Amazon Cognito | All persona authentication; 4 groups with custom attributes (`persona_type`, `linked_patient_id`) |
 | Push Notifications | Amazon SNS / Firebase FCM | Push alerts to relative's device for threshold violations and reminder breaches |
-| Serverless Compute | AWS Lambda (Node.js 20) | 8 deployed functions for CRUD, sync, invites, notifications (packaged and deployed by Terraform) |
+| Serverless Compute | AWS Lambda (Node.js 20) | 10+ deployed functions for CRUD, sync, invites, notifications, patient summary (packaged and deployed by Terraform + manual) |
+| Scheduled Tasks | Amazon EventBridge | Scheduled rules for processing pending invites (SES verification polling) |
 | Infrastructure | Terraform | VPC, Cognito, API Gateway, RDS, S3, SQS, SNS, Bastion, Lambda — all deployed as IaC in a single `terraform apply` |
 | RDS Access | EC2 Bastion + SSM | Port-forwarding via AWS Systems Manager Session Manager (no exposed DB endpoints) |
 | Database Migrations | Flyway | Versioned SQL migrations in `backend/database/migrations/` |
@@ -291,10 +293,11 @@ A placeholder entry point for an LLM-powered health chat assistant is included o
 
 **Persona lifecycle:**
 1. Only caregivers (relatives) can self-register
-2. Caregivers create patients → `create-patient` Lambda
-3. Caregivers invite attendants/doctors → `invite-attendant` / `invite-doctor` Lambdas send SES emails
-4. Invitees accept → `accept-invite` Lambda creates their Cognito account
+2. Caregivers create patients → `create-patient` Lambda (also ensures caregiver's own RDS user record exists and sets `custom:linked_patient_id` on their Cognito account server-side)
+3. Caregivers invite attendants → `invite-attendant` Lambda creates the attendant's Cognito account immediately with a generated password, creates RDS user record + persona_link, and emails the credentials. No separate acceptance step required.
+4. Caregivers invite doctors → `invite-doctor` Lambda sends SES invite email; doctors accept via `accept-invite` Lambda which creates their Cognito account
 5. Caregivers can remove team members or cascade-delete patients via `remove-team-member` / `delete-patient`
+6. **Relative dashboard** fetches patient data via `patient-summary` Lambda (`GET /patients/{patientId}/summary`) which returns patient info, latest vitals from S3, unread alert count, and last activity time
 
 ---
 
@@ -580,4 +583,4 @@ M6  Compliance & Launch     │        │        │         │    ██    �
 
 ---
 
-*CareLog PRD v0.2 — DRAFT — March 2026 — CONFIDENTIAL*
+*CareLog PRD v0.3 — DRAFT — April 2026 — CONFIDENTIAL*
