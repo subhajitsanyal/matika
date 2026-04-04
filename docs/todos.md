@@ -185,15 +185,69 @@ The doctor web portal (`web-portal/`) is missing:
 
 ---
 
+## Critical — Hardcoded Credentials & Secrets
+
+### Android: Hardcoded API Gateway URL
+**File:** `android/.../core/BuildConfig.kt` line 13
+- `API_BASE_URL = "https://x6v72ekrcl.execute-api.ap-south-1.amazonaws.com/dev"` is hardcoded
+- Should be injected via Gradle build config or `update-app-config.sh`
+- This URL changes on every fresh `terraform apply`
+
+### Android/iOS: Hardcoded Cognito Pool ID and Client ID
+- `android/app/src/main/res/raw/amplifyconfiguration.json` lines 14-15: Pool ID `ap-south-1_uiEZhWVXB`, Client ID `1kjdqj21bljak87e602d8r84f2`
+- `ios/CareLog/CareLog/amplifyconfiguration.json` lines 14-15: Same values
+- Should be populated by `update-app-config.sh` from Terraform outputs, never committed with real values
+
+### Android/iOS: Hardcoded S3 Bucket Name
+- `ios/CareLog/CareLog/amplifyconfiguration.json` line 65: `carelog-v2-dev-documents-316643066568`
+- Should come from Terraform outputs
+
+### Test Automation: Hardcoded Test Password
+- `test-automation/scripts/seed-accounts.sh` line 9: `TEST_PASSWORD="Carelog2026@x"`
+- `test-automation/test-data/credentials.json` line 3: same password in plaintext
+- `docs/setup-and-deployment-guide.md` line 950: same password in docs
+- Should use environment variable or secrets manager; credentials.json should be gitignored
+
+### Terraform: Hardcoded SES Email Identity
+- `infrastructure/terraform/environments/dev/main.tf` lines 40-41: `subhajit@kyabla.in` and AWS account ID `316643066568`
+- Should use variables, not personal email addresses
+
+### Backend: Inconsistent DB Connection Patterns
+12 scaffolded Lambdas use `DB_PASSWORD` as a plaintext env var instead of Secrets Manager:
+
+| Lambda | Issue |
+|--------|-------|
+| `alert-crud` | `password: process.env.DB_PASSWORD` (line 16) |
+| `audit-log` | Same (line 16) |
+| `care-plan` | Same (line 16) |
+| `consent` | Same (line 17) |
+| `data-export` | Same (line 18) |
+| `device-token` | Same (line 19) |
+| `doctor-documents` | Same (line 16) |
+| `doctor-patients` | Same (line 14) |
+| `notification-sender` | Same (line 19) |
+| `observation-annotation` | Same (line 15) |
+| `reminder-crud` | Same (line 16) |
+| `threshold-crud` | Same (line 16) |
+| `account-deletion` | Same (line 22) |
+
+The deployed Lambdas (`create-patient`, `post-confirmation`, `invite-attendant`, `accept-invite`, `patient-summary`, `care-team`, `process-pending-invites`) correctly use Secrets Manager via `DB_SECRET_NAME`. The scaffolded Lambdas must be migrated to the same pattern before deployment.
+
+### Test Script: Hardcoded Cognito Client ID
+- `test-automation/scripts/seed-accounts.sh` line 7: `CLIENT_ID="1kjdqj21bljak87e602d8r84f2"`
+- Should query from AWS or use environment variable
+
+---
+
 ## Summary
 
 | Priority | Count | Category |
 |----------|-------|----------|
-| Critical | 6 | Missing DB tables, security gaps, mock API routes, Terraform state |
+| Critical | 13 | Missing DB tables, security gaps, mock API routes, Terraform state, hardcoded credentials |
 | High | 8 | Stubbed features, 19 undeployed Lambdas, unused Terraform modules |
 | Medium | 6 | Silent failures, TODO stubs, missing joins |
 | Low | 6 | Placeholders (per PRD), disabled security, missing web portal pages |
-| **Total** | **26** | |
+| **Total** | **33** | |
 
 ---
 
