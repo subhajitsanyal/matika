@@ -55,7 +55,14 @@ variable "api_execution_arn" {
 # Email
 variable "from_email" {
   type    = string
-  default = "noreply@carelog.com"
+  default = ""
+}
+
+# Domain
+variable "domain_name" {
+  description = "Base domain name for email templates and links"
+  type        = string
+  default     = "carelog.com"
 }
 
 # Lambda source path

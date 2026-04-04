@@ -17,14 +17,8 @@ terraform {
   }
 
   # Backend configuration for state management
-  # Uncomment and configure for production use
-  # backend "s3" {
-  #   bucket         = "carelog-terraform-state"
-  #   key            = "terraform.tfstate"
-  #   region         = "us-east-1"
-  #   encrypt        = true
-  #   dynamodb_table = "carelog-terraform-locks"
-  # }
+  # Each environment has its own backend config in environments/{env}/main.tf
+  # This root-level backend is not used directly — deploy from environments/
 }
 
 # AWS Provider Configuration
@@ -41,21 +35,8 @@ provider "aws" {
   }
 }
 
-# Secondary provider for ap-south-1 (Mumbai) - DPDP Act compliance for Indian users
-provider "aws" {
-  alias  = "mumbai"
-  region = "ap-south-1"
-
-  default_tags {
-    tags = {
-      Project     = "CareLog"
-      Environment = var.environment
-      ManagedBy   = "Terraform"
-      HIPAA       = "true"
-      DPDP        = "true"
-    }
-  }
-}
+# All environments deploy to ap-south-1 (Mumbai) for DPDP Act data residency.
+# A secondary provider alias can be added later if multi-region is needed.
 
 # VPC Module
 module "vpc" {
@@ -75,10 +56,11 @@ module "cognito" {
   environment                  = var.environment
   mobile_callback_urls         = ["carelog://callback", "carelog://signin"]
   mobile_logout_urls           = ["carelog://signout"]
-  web_callback_urls            = var.environment == "prod" ? ["https://portal.carelog.com/callback"] : ["https://portal.${var.environment}.carelog.com/callback"]
-  web_logout_urls              = var.environment == "prod" ? ["https://portal.carelog.com/logout"] : ["https://portal.${var.environment}.carelog.com/logout"]
+  web_callback_urls            = var.environment == "prod" ? ["https://portal.${var.domain_name}/callback"] : ["https://portal.${var.environment}.${var.domain_name}/callback"]
+  web_logout_urls              = var.environment == "prod" ? ["https://portal.${var.domain_name}/logout"] : ["https://portal.${var.environment}.${var.domain_name}/logout"]
   ses_email_arn                = var.ses_email_arn
   ses_from_email               = var.ses_from_email
+  domain_name                  = var.domain_name
 }
 
 # Attach post-confirmation Lambda trigger to Cognito (breaks circular dependency)
@@ -99,7 +81,7 @@ module "api_gateway" {
 
   environment           = var.environment
   cognito_user_pool_arn = module.cognito.user_pool_arn
-  cors_origin           = var.environment == "prod" ? "https://portal.carelog.com" : "*"
+  cors_origin           = var.environment == "prod" ? "https://portal.${var.domain_name}" : "*"
   throttle_burst_limit  = var.environment == "prod" ? 200 : 100
   throttle_rate_limit   = var.environment == "prod" ? 100 : 50
   quota_limit           = var.environment == "prod" ? 100000 : 10000
@@ -128,7 +110,7 @@ module "s3" {
 
   environment   = var.environment
   bucket_prefix = var.s3_bucket_prefix
-  cors_origins  = var.environment == "prod" ? ["https://portal.carelog.com", "https://app.carelog.com"] : ["*"]
+  cors_origins  = var.environment == "prod" ? ["https://portal.${var.domain_name}", "https://app.${var.domain_name}"] : ["*"]
 }
 
 # SQS Module
@@ -169,6 +151,8 @@ module "lambda" {
   documents_bucket_arn     = module.s3.documents_bucket_arn
   s3_kms_key_arn           = module.s3.kms_key_arn
   api_execution_arn        = module.api_gateway.api_execution_arn
+  from_email               = var.ses_from_email != "" ? var.ses_from_email : "noreply@${var.domain_name}"
+  domain_name              = var.domain_name
   lambdas_source_path      = "${path.module}/../../backend/lambdas"
 }
 

@@ -41,6 +41,13 @@ variable "private_subnet_cidrs" {
   default     = ["10.0.11.0/24", "10.0.12.0/24", "10.0.13.0/24"]
 }
 
+# Domain
+variable "domain_name" {
+  description = "Base domain name for the application (used in Cognito callbacks, CORS, email templates)"
+  type        = string
+  default     = "carelog.com"
+}
+
 # Cognito variables (T-004)
 variable "cognito_user_pool_name" {
   description = "Name of the Cognito user pool"

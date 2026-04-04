@@ -146,8 +146,8 @@ resource "aws_db_instance" "main" {
   backup_window           = "03:00-04:00"
   maintenance_window      = "Mon:04:00-Mon:05:00"
 
-  # Multi-AZ for production
-  multi_az = var.environment == "prod"
+  # Multi-AZ disabled for now — enable when scaling requires it
+  multi_az = false
 
   # Performance Insights
   performance_insights_enabled          = true

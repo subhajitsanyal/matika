@@ -1,19 +1,19 @@
 # CareLog Infrastructure - Production Environment
 #
 # This configuration sets up the production environment for CareLog.
-# Full redundancy and appropriate instance sizes for production workloads.
+# Appropriate instance sizes for production workloads.
 #
 # HIPAA Compliance: All production resources are encrypted and audited.
-# DPDP Compliance: Indian user data will be replicated to ap-south-1.
+# DPDP Compliance: All data resides in ap-south-1 (Mumbai).
 
 terraform {
-  required_version = ">= 1.6.0"
+  required_version = ">= 1.5.0"
 
   # Backend configuration for production
   # backend "s3" {
   #   bucket         = "carelog-terraform-state"
   #   key            = "prod/terraform.tfstate"
-  #   region         = "us-east-1"
+  #   region         = "ap-south-1"
   #   encrypt        = true
   #   dynamodb_table = "carelog-terraform-locks"
   # }
@@ -23,22 +23,27 @@ module "carelog" {
   source = "../../"
 
   environment = "prod"
-  aws_region  = "us-east-1"
+  aws_region  = "ap-south-1"
 
-  # VPC Configuration - full HA setup
+  # VPC Configuration
   vpc_cidr             = "10.2.0.0/16"
-  availability_zones   = ["us-east-1a", "us-east-1b", "us-east-1c"]
-  public_subnet_cidrs  = ["10.2.1.0/24", "10.2.2.0/24", "10.2.3.0/24"]
-  private_subnet_cidrs = ["10.2.11.0/24", "10.2.12.0/24", "10.2.13.0/24"]
+  availability_zones   = ["ap-south-1a", "ap-south-1b"]
+  public_subnet_cidrs  = ["10.2.1.0/24", "10.2.2.0/24"]
+  private_subnet_cidrs = ["10.2.11.0/24", "10.2.12.0/24"]
 
   # Database - production instance
   db_instance_class = "db.t3.medium"
   db_name           = "carelog_prod"
   db_username       = "carelog_prod_admin"
 
+  # SES email for Cognito verification emails
+  ses_email_arn  = var.ses_email_arn
+  ses_from_email = var.ses_from_email
+
   # Feature flags
-  enable_healthlake = true
+  enable_healthlake = false
   enable_waf        = true
+  enable_bastion    = true
 }
 
 # Outputs
@@ -54,8 +59,11 @@ output "private_subnet_ids" {
   value = module.carelog.private_subnet_ids
 }
 
-# Note: Additional production-specific resources like:
-# - Multi-region replication for DPDP compliance
-# - Enhanced monitoring
-# - AWS Backup plans
-# Will be added as needed.
+output "bastion_instance_id" {
+  value = module.carelog.bastion_instance_id
+}
+
+output "bastion_ssm_port_forward_command" {
+  description = "Run this command to port-forward RDS to localhost:5432"
+  value       = module.carelog.bastion_ssm_port_forward_command
+}

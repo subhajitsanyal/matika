@@ -154,7 +154,7 @@ resource "aws_cognito_user_pool" "main" {
 
     invite_message_template {
       email_subject = "Welcome to CareLog"
-      email_message = "Your username is {username}. You have been invited to CareLog. Your temporary password is {####}. Please login at https://app.carelog.com"
+      email_message = "Your username is {username}. You have been invited to CareLog. Your temporary password is {####}. Please login at https://app.${var.domain_name}"
       sms_message   = "Your CareLog username is {username}. Your temporary password is {####}"
     }
   }

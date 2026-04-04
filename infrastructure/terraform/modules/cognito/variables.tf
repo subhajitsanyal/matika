@@ -20,13 +20,11 @@ variable "mobile_logout_urls" {
 variable "web_callback_urls" {
   description = "Callback URLs for web portal OAuth"
   type        = list(string)
-  default     = ["https://portal.carelog.com/callback"]
 }
 
 variable "web_logout_urls" {
   description = "Logout URLs for web portal OAuth"
   type        = list(string)
-  default     = ["https://portal.carelog.com/logout"]
 }
 
 variable "ses_email_arn" {
@@ -39,5 +37,11 @@ variable "ses_from_email" {
   description = "SES verified sender email address"
   type        = string
   default     = ""
+}
+
+variable "domain_name" {
+  description = "Base domain name for email templates and links"
+  type        = string
+  default     = "carelog.com"
 }
 
