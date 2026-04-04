@@ -16,6 +16,7 @@ const {
   CognitoIdentityProviderClient,
   AdminCreateUserCommand,
   AdminAddUserToGroupCommand,
+  AdminUpdateUserAttributesCommand,
 } = require("@aws-sdk/client-cognito-identity-provider");
 const {
   HealthLakeClient,
@@ -364,6 +365,25 @@ exports.handler = async (event) => {
       relativeEmail,
       relativeName
     );
+
+    // Link patient to the relative's Cognito account
+    // (server-side is more reliable than depending on the app to do it)
+    const relativeUsername = claims["cognito:username"] || claims.email || claims.sub;
+    try {
+      await cognitoClient.send(
+        new AdminUpdateUserAttributesCommand({
+          UserPoolId: process.env.COGNITO_USER_POOL_ID,
+          Username: relativeUsername,
+          UserAttributes: [
+            { Name: "custom:linked_patient_id", Value: patientId },
+          ],
+        })
+      );
+      console.log(`Linked patient ${patientId} to relative ${relativeUsername}`);
+    } catch (linkError) {
+      console.error("Failed to link patient to relative in Cognito:", linkError);
+      // Don't fail the whole request — patient was created, app can retry linking
+    }
 
     console.log(`Patient created: ${patientId}`);
 

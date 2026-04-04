@@ -1,5 +1,6 @@
 package com.carelog.ui.onboarding
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.carelog.auth.AuthRepository
@@ -61,7 +62,9 @@ class PatientOnboardingViewModel @Inject constructor(
                 )
 
                 // Link patient ID to user so vitals use the real patient entity
+                // (server also sets this, but try client-side too for immediate refresh)
                 authRepository.updateLinkedPatientId(patientId)
+                    .getOrElse { Log.w("PatientOnboarding", "Client-side link failed, server-side should have set it", it) }
 
                 _uiState.value = PatientOnboardingUiState.Success(patientId)
             } catch (e: Exception) {
