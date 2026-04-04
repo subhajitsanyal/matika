@@ -62,9 +62,13 @@ class TrendsViewModel @Inject constructor(
                     endDate = endDate
                 )
 
-                // Fetch threshold for the selected vital
-                val thresholds = apiService.getThresholds(patientId)
-                val threshold = thresholds.find { it.vitalType == _uiState.value.selectedVitalType }
+                // Fetch threshold for the selected vital (non-blocking — don't fail if thresholds API is unavailable)
+                val threshold = try {
+                    val thresholds = apiService.getThresholds(patientId)
+                    thresholds.find { it.vitalType == _uiState.value.selectedVitalType }
+                } catch (e: Exception) {
+                    null // Thresholds are optional for the chart
+                }
 
                 _uiState.update {
                     it.copy(
