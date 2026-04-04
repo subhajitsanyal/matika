@@ -55,7 +55,7 @@ async function createDbConnection() {
     database: credentials.dbname,
     user: credentials.username,
     password: credentials.password,
-    ssl: { rejectUnauthorized: true },
+    ssl: { rejectUnauthorized: false },
   });
   await client.connect();
   return client;
@@ -105,10 +105,139 @@ async function createCognitoUser(email, password, name, personaType) {
 }
 
 /**
+ * Serve the HTML registration page for GET requests.
+ */
+function serveRegistrationPage(token) {
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Accept CareLog Invitation</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+    .card { background: white; border-radius: 12px; box-shadow: 0 4px 24px rgba(0,0,0,0.1); max-width: 420px; width: 100%; overflow: hidden; }
+    .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 24px; text-align: center; }
+    .header h1 { font-size: 22px; margin-bottom: 4px; }
+    .header p { opacity: 0.9; font-size: 14px; }
+    .form { padding: 24px; }
+    .field { margin-bottom: 16px; }
+    .field label { display: block; font-size: 14px; font-weight: 600; margin-bottom: 6px; color: #333; }
+    .field input { width: 100%; padding: 10px 12px; border: 1.5px solid #ddd; border-radius: 8px; font-size: 15px; transition: border-color 0.2s; }
+    .field input:focus { outline: none; border-color: #667eea; }
+    .hint { font-size: 12px; color: #888; margin-top: 4px; }
+    .btn { width: 100%; padding: 12px; background: #667eea; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer; transition: background 0.2s; }
+    .btn:hover { background: #5a6fd6; }
+    .btn:disabled { background: #ccc; cursor: not-allowed; }
+    .error { background: #fee; color: #c33; padding: 10px 12px; border-radius: 8px; margin-bottom: 16px; font-size: 14px; display: none; }
+    .success { background: #efe; color: #363; padding: 16px; border-radius: 8px; text-align: center; font-size: 15px; display: none; }
+    .success h3 { margin-bottom: 8px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="header">
+      <h1>Welcome to CareLog</h1>
+      <p>Create your attendant account</p>
+    </div>
+    <div class="form" id="form-section">
+      <div class="error" id="error-msg"></div>
+      <form id="reg-form" onsubmit="return handleSubmit(event)">
+        <div class="field">
+          <label>Full Name</label>
+          <input type="text" id="name" required placeholder="Your full name">
+        </div>
+        <div class="field">
+          <label>Email</label>
+          <input type="email" id="email" required placeholder="your@email.com">
+        </div>
+        <div class="field">
+          <label>Password</label>
+          <input type="password" id="password" required placeholder="Create a password">
+          <div class="hint">Min 8 chars: uppercase, lowercase, number, and symbol</div>
+        </div>
+        <div class="field">
+          <label>Phone (optional)</label>
+          <input type="tel" id="phone" placeholder="+91...">
+        </div>
+        <button type="submit" class="btn" id="submit-btn">Create Account</button>
+      </form>
+    </div>
+    <div class="success" id="success-section">
+      <h3>Account Created!</h3>
+      <p>You can now log in to the CareLog app as an attendant.</p>
+      <p style="margin-top:12px;font-size:13px;color:#666;">Download the CareLog app and sign in with your email and password.</p>
+    </div>
+  </div>
+  <script>
+    async function handleSubmit(e) {
+      e.preventDefault();
+      const btn = document.getElementById('submit-btn');
+      const err = document.getElementById('error-msg');
+      btn.disabled = true;
+      btn.textContent = 'Creating account...';
+      err.style.display = 'none';
+      try {
+        const res = await fetch(window.location.pathname, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            token: '${token}',
+            name: document.getElementById('name').value,
+            email: document.getElementById('email').value,
+            password: document.getElementById('password').value,
+            phone: document.getElementById('phone').value || undefined
+          })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          document.getElementById('form-section').style.display = 'none';
+          document.getElementById('success-section').style.display = 'block';
+        } else {
+          err.textContent = data.error || 'Registration failed';
+          err.style.display = 'block';
+          btn.disabled = false;
+          btn.textContent = 'Create Account';
+        }
+      } catch (ex) {
+        err.textContent = 'Network error. Please try again.';
+        err.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = 'Create Account';
+      }
+    }
+  </script>
+</body>
+</html>`;
+
+  return {
+    statusCode: 200,
+    headers: { "Content-Type": "text/html" },
+    body: html,
+  };
+}
+
+/**
  * Lambda handler.
  */
 exports.handler = async (event) => {
   console.log("Accept invite request received");
+
+  const httpMethod = event.httpMethod || event.requestContext?.http?.method;
+
+  // GET — serve registration HTML page
+  if (httpMethod === "GET") {
+    const token = event.queryStringParameters?.token;
+    if (!token) {
+      return {
+        statusCode: 400,
+        headers: { "Content-Type": "text/html" },
+        body: "<h1>Invalid invitation link</h1><p>No token provided.</p>",
+      };
+    }
+    return serveRegistrationPage(token);
+  }
 
   const body = JSON.parse(event.body);
 

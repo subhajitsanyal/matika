@@ -38,10 +38,15 @@ class InviteAttendantViewModel @Inject constructor(
                 val token = authRepository.getAccessToken()
                     ?: throw Exception("Not authenticated")
 
+                // Resolve patient ID from auth state if not provided
+                val resolvedPatientId = patientId.takeIf { it.isNotEmpty() }
+                    ?: authRepository.fetchLinkedPatientId()
+                    ?: throw Exception("No patient linked to this account")
+
                 val result = inviteRepository.sendAttendantInvite(
                     token = token,
                     request = SendInviteRequest(
-                        patientId = patientId,
+                        patientId = resolvedPatientId,
                         attendantName = attendantName,
                         email = email,
                         phone = phone

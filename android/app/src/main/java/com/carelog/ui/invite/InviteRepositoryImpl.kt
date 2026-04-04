@@ -44,28 +44,18 @@ class InviteRepositoryImpl @Inject constructor() : InviteRepository {
             .post(requestBody.toRequestBody("application/json".toMediaType()))
             .build()
 
-        try {
-            val response = httpClient.newCall(httpRequest).execute()
+        val response = httpClient.newCall(httpRequest).execute()
+        val responseBody = response.body?.string() ?: "{}"
 
-            if (response.isSuccessful) {
-                val responseBody = response.body?.string() ?: "{}"
-                val json = JSONObject(responseBody)
-
-                SendInviteResponse(
-                    inviteId = json.optString("inviteId", UUID.randomUUID().toString()),
-                    message = json.optString("message", "Invitation sent successfully"),
-                    expiresAt = json.optString("expiresAt", "")
-                )
-            } else {
-                throw Exception("Failed to send invitation: ${response.code}")
-            }
-        } catch (e: Exception) {
-            // For now, return a mock response for development
+        if (response.isSuccessful) {
+            val json = JSONObject(responseBody)
             SendInviteResponse(
-                inviteId = UUID.randomUUID().toString(),
-                message = "Invitation sent successfully",
-                expiresAt = ""
+                inviteId = json.optString("inviteId", ""),
+                message = json.optString("message", "Invitation sent successfully"),
+                expiresAt = json.optString("expiresAt", "")
             )
+        } else {
+            throw Exception("Failed to send invitation: HTTP ${response.code} $responseBody")
         }
     }
 
@@ -87,28 +77,18 @@ class InviteRepositoryImpl @Inject constructor() : InviteRepository {
             .post(requestBody.toRequestBody("application/json".toMediaType()))
             .build()
 
-        try {
-            val response = httpClient.newCall(httpRequest).execute()
+        val response = httpClient.newCall(httpRequest).execute()
+        val responseBody = response.body?.string() ?: "{}"
 
-            if (response.isSuccessful) {
-                val responseBody = response.body?.string() ?: "{}"
-                val json = JSONObject(responseBody)
-
-                SendInviteResponse(
-                    inviteId = json.optString("inviteId", UUID.randomUUID().toString()),
-                    message = json.optString("message", "Invitation sent successfully"),
-                    expiresAt = json.optString("expiresAt", "")
-                )
-            } else {
-                throw Exception("Failed to send invitation: ${response.code}")
-            }
-        } catch (e: Exception) {
-            // For now, return a mock response for development
+        if (response.isSuccessful) {
+            val json = JSONObject(responseBody)
             SendInviteResponse(
-                inviteId = UUID.randomUUID().toString(),
-                message = "Invitation sent successfully",
-                expiresAt = ""
+                inviteId = json.optString("inviteId", ""),
+                message = json.optString("message", "Invitation sent successfully"),
+                expiresAt = json.optString("expiresAt", "")
             )
+        } else {
+            throw Exception("Failed to send invitation: HTTP ${response.code} $responseBody")
         }
     }
 }

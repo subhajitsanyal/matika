@@ -6,19 +6,30 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import androidx.navigation.NavController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import com.amplifyframework.auth.AuthUserAttributeKey
-import com.amplifyframework.core.Amplify
+import com.carelog.auth.AuthState
+import com.carelog.auth.AuthRepository
 import com.carelog.auth.PersonaType
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import javax.inject.Inject
 import com.carelog.ui.attendant.AttendantDashboardScreen
 import com.carelog.ui.attendant.AttendantLoginScreen
 import com.carelog.ui.attendant.AttendantNotesScreen
@@ -53,7 +64,6 @@ import com.carelog.ui.vitals.SpO2Screen
 import com.carelog.ui.vitals.TemperatureScreen
 import com.carelog.ui.vitals.WeightScreen
 import com.carelog.upload.FileType
-import kotlinx.coroutines.delay
 
 /**
  * Navigation routes for CareLog app.
@@ -338,7 +348,7 @@ fun CareLogNavHost() {
         // ── Invite Screens ──────────────────────────────────────
         composable(CareLogRoutes.INVITE_ATTENDANT) {
             InviteAttendantScreen(
-                patientId = "",
+                patientId = "",  // ViewModel resolves this from auth state
                 patientName = "",
                 onNavigateBack = { navController.popBackStack() },
                 onInviteSent = { navController.popBackStack() }
@@ -437,53 +447,50 @@ fun CareLogNavHost() {
     }
 }
 
-@Composable
-private fun SplashScreen(navController: NavController) {
-    val navigateTo = remember { mutableStateOf<String?>(null) }
+/**
+ * ViewModel for SplashScreen.
+ * Uses AuthRepository to check session AND populate currentUser,
+ * so downstream ViewModels (RelativeDashboard, etc.) have user data.
+ */
+@HiltViewModel
+class SplashViewModel @Inject constructor(
+    private val authRepository: AuthRepository
+) : ViewModel() {
 
-    LaunchedEffect(Unit) {
-        delay(1500)
-        try {
-            Amplify.Auth.fetchAuthSession(
-                { session ->
-                    if (session.isSignedIn) {
-                        // Fetch user attributes to determine persona and route accordingly
-                        Amplify.Auth.fetchUserAttributes(
-                            { attributes ->
-                                val personaValue = attributes.find {
-                                    it.key == AuthUserAttributeKey.custom("persona_type") ||
-                                    it.key.keyString == "custom:persona_type"
-                                }?.value
-                                Log.d("SplashScreen", "Persona attribute value: '$personaValue'")
-                                // Also log all attribute keys for debugging
-                                attributes.forEach { attr ->
-                                    Log.d("SplashScreen", "  Attribute: ${attr.key.keyString} = ${attr.value}")
-                                }
-                                val persona = PersonaType.fromString(personaValue)
-                                Log.d("SplashScreen", "Resolved persona: $persona -> route: ${dashboardRouteForPersona(persona)}")
-                                navigateTo.value = dashboardRouteForPersona(persona)
-                            },
-                            { error ->
-                                Log.w("SplashScreen", "Failed to fetch user attributes", error)
-                                navigateTo.value = CareLogRoutes.PATIENT_DASHBOARD
-                            }
-                        )
-                    } else {
-                        navigateTo.value = CareLogRoutes.LOGIN
+    private val _navigateTo = MutableStateFlow<String?>(null)
+    val navigateTo: StateFlow<String?> = _navigateTo.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            try {
+                // This populates authRepository.currentUser AND authState
+                authRepository.checkAuthSession()
+
+                val state = authRepository.authState.value
+                when (state) {
+                    is AuthState.Authenticated -> {
+                        val persona = state.user.personaType
+                        Log.d("SplashViewModel", "Authenticated as $persona, linkedPatientId=${state.user.linkedPatientId}")
+                        _navigateTo.value = dashboardRouteForPersona(persona)
                     }
-                },
-                { error ->
-                    Log.w("SplashScreen", "Auth check failed, navigating to login", error)
-                    navigateTo.value = CareLogRoutes.LOGIN
+                    else -> {
+                        _navigateTo.value = CareLogRoutes.LOGIN
+                    }
                 }
-            )
-        } catch (e: Exception) {
-            Log.w("SplashScreen", "Amplify not configured, navigating to login", e)
-            navigateTo.value = CareLogRoutes.LOGIN
+            } catch (e: Exception) {
+                Log.w("SplashViewModel", "Auth check failed", e)
+                _navigateTo.value = CareLogRoutes.LOGIN
+            }
         }
     }
+}
 
-    navigateTo.value?.let { destination ->
+@Composable
+private fun SplashScreen(navController: NavController) {
+    val viewModel: SplashViewModel = hiltViewModel()
+    val navigateTo by viewModel.navigateTo.collectAsState()
+
+    navigateTo?.let { destination ->
         LaunchedEffect(destination) {
             navController.navigate(destination) {
                 popUpTo(CareLogRoutes.SPLASH) { inclusive = true }

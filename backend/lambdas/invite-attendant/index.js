@@ -12,8 +12,19 @@
  * - Audit logging for invite actions
  */
 
-const { SESClient, SendEmailCommand } = require("@aws-sdk/client-ses");
+const {
+  SESClient,
+  SendEmailCommand,
+  VerifyEmailIdentityCommand,
+  GetIdentityVerificationAttributesCommand,
+} = require("@aws-sdk/client-ses");
 const { SNSClient, PublishCommand } = require("@aws-sdk/client-sns");
+const {
+  CognitoIdentityProviderClient,
+  AdminCreateUserCommand,
+  AdminAddUserToGroupCommand,
+  AdminSetUserPasswordCommand,
+} = require("@aws-sdk/client-cognito-identity-provider");
 const {
   SecretsManagerClient,
   GetSecretValueCommand,
@@ -24,6 +35,7 @@ const { v4: uuidv4 } = require("uuid");
 
 const sesClient = new SESClient({});
 const snsClient = new SNSClient({});
+const cognitoClient = new CognitoIdentityProviderClient({});
 const secretsClient = new SecretsManagerClient({});
 
 let dbCredentials = null;
@@ -53,7 +65,7 @@ async function createDbConnection() {
     database: credentials.dbname,
     user: credentials.username,
     password: credentials.password,
-    ssl: { rejectUnauthorized: true },
+    ssl: { rejectUnauthorized: false },
   });
   await client.connect();
   return client;
@@ -67,9 +79,92 @@ function generateInviteToken() {
 }
 
 /**
- * Send invite email via SES.
+ * Generate a human-readable password.
  */
-async function sendInviteEmail(email, attendantName, patientName, inviteLink) {
+function generatePassword() {
+  const upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  const lower = "abcdefghjkmnpqrstuvwxyz";
+  const digits = "23456789";
+  const symbols = "@#$!";
+  let pwd = "";
+  pwd += upper[Math.floor(Math.random() * upper.length)];
+  pwd += lower[Math.floor(Math.random() * lower.length)];
+  pwd += digits[Math.floor(Math.random() * digits.length)];
+  pwd += symbols[Math.floor(Math.random() * symbols.length)];
+  const all = upper + lower + digits + symbols;
+  for (let i = 0; i < 4; i++) {
+    pwd += all[Math.floor(Math.random() * all.length)];
+  }
+  // Shuffle
+  return pwd.split("").sort(() => Math.random() - 0.5).join("");
+}
+
+/**
+ * Create Cognito account for attendant and RDS records.
+ */
+async function createAttendantAccount(dbClient, email, name, password, patientDbId, invitedBy) {
+  // Create Cognito user
+  const createResult = await cognitoClient.send(
+    new AdminCreateUserCommand({
+      UserPoolId: process.env.COGNITO_USER_POOL_ID,
+      Username: email,
+      UserAttributes: [
+        { Name: "email", Value: email },
+        { Name: "email_verified", Value: "true" },
+        { Name: "name", Value: name },
+        { Name: "custom:persona_type", Value: "attendant" },
+      ],
+      MessageAction: "SUPPRESS",
+    })
+  );
+  const cognitoSub = createResult.User.Attributes.find((a) => a.Name === "sub")?.Value;
+
+  // Set permanent password
+  await cognitoClient.send(
+    new AdminSetUserPasswordCommand({
+      UserPoolId: process.env.COGNITO_USER_POOL_ID,
+      Username: email,
+      Password: password,
+      Permanent: true,
+    })
+  );
+
+  // Add to attendants group
+  await cognitoClient.send(
+    new AdminAddUserToGroupCommand({
+      UserPoolId: process.env.COGNITO_USER_POOL_ID,
+      Username: email,
+      GroupName: "attendants",
+    })
+  );
+
+  // Create user record in RDS
+  const userResult = await dbClient.query(
+    `INSERT INTO users (cognito_sub, email, name, persona_type, is_active, created_at, updated_at)
+     VALUES ($1, $2, $3, 'attendant', true, NOW(), NOW())
+     ON CONFLICT (cognito_sub) DO UPDATE SET updated_at = NOW()
+     RETURNING id`,
+    [cognitoSub, email, name]
+  );
+  const userId = userResult.rows[0].id;
+
+  // Create persona_link
+  await dbClient.query(
+    `INSERT INTO persona_links (
+      patient_id, linked_user_id, relationship, is_primary,
+      can_log_vitals, can_configure_thresholds, can_view_history, can_receive_alerts,
+      invited_by, accepted_at, is_active
+    ) VALUES ($1, $2, 'attendant', false, true, false, true, true, $3, NOW(), true)`,
+    [patientDbId, userId, invitedBy]
+  );
+
+  return cognitoSub;
+}
+
+/**
+ * Send invite email via SES with login credentials and download link.
+ */
+async function sendInviteEmail(email, attendantName, patientName, password, downloadLink) {
   const params = {
     Source: process.env.FROM_EMAIL || "noreply@carelog.com",
     Destination: {
@@ -92,6 +187,9 @@ async function sendInviteEmail(email, attendantName, patientName, inviteLink) {
                 .container { max-width: 600px; margin: 0 auto; padding: 20px; }
                 .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 8px 8px 0 0; text-align: center; }
                 .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 8px 8px; }
+                .credentials { background: white; border: 2px solid #667eea; border-radius: 8px; padding: 16px; margin: 16px 0; }
+                .credentials p { margin: 4px 0; }
+                .credentials strong { color: #667eea; }
                 .button { display: inline-block; background: #667eea; color: white; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: bold; margin: 20px 0; }
                 .footer { text-align: center; margin-top: 20px; color: #666; font-size: 14px; }
               </style>
@@ -106,23 +204,28 @@ async function sendInviteEmail(email, attendantName, patientName, inviteLink) {
 
                   <p>You've been invited to join CareLog as an attendant for <strong>${patientName}</strong>.</p>
 
+                  <p>Your account has been created. Here are your login credentials:</p>
+
+                  <div class="credentials">
+                    <p><strong>Email:</strong> ${email}</p>
+                    <p><strong>Password:</strong> ${password}</p>
+                  </div>
+
+                  <p>Please change your password after your first login.</p>
+
+                  <p><strong>Step 1:</strong> Download the CareLog app:</p>
+                  <p style="text-align: center;">
+                    <a href="${downloadLink}" class="button">Download CareLog App</a>
+                  </p>
+
+                  <p><strong>Step 2:</strong> Open the app and sign in with the credentials above.</p>
+
                   <p>As an attendant, you'll be able to:</p>
                   <ul>
                     <li>Log vital signs and health observations</li>
                     <li>Track medication and care activities</li>
                     <li>Receive health alerts and reminders</li>
-                    <li>Communicate with the care team</li>
                   </ul>
-
-                  <p>Click the button below to accept this invitation and create your account:</p>
-
-                  <p style="text-align: center;">
-                    <a href="${inviteLink}" class="button">Accept Invitation</a>
-                  </p>
-
-                  <p><em>This invitation expires in 7 days.</em></p>
-
-                  <p>If you didn't expect this invitation, you can safely ignore this email.</p>
                 </div>
                 <div class="footer">
                   <p>CareLog - Health monitoring made simple</p>
@@ -135,26 +238,19 @@ async function sendInviteEmail(email, attendantName, patientName, inviteLink) {
           Charset: "UTF-8",
         },
         Text: {
-          Data: `
-Hello ${attendantName},
+          Data: `Hello ${attendantName},
 
 You've been invited to join CareLog as an attendant for ${patientName}.
 
-As an attendant, you'll be able to:
-- Log vital signs and health observations
-- Track medication and care activities
-- Receive health alerts and reminders
-- Communicate with the care team
+Your account has been created:
+  Email: ${email}
+  Password: ${password}
 
-Click the link below to accept this invitation:
-${inviteLink}
+Step 1: Download the CareLog app: ${downloadLink}
+Step 2: Open the app and sign in with the credentials above.
+Please change your password after your first login.
 
-This invitation expires in 7 days.
-
-If you didn't expect this invitation, you can safely ignore this email.
-
-CareLog - Health monitoring made simple
-          `,
+CareLog - Health monitoring made simple`,
           Charset: "UTF-8",
         },
       },
@@ -295,35 +391,73 @@ exports.handler = async (event) => {
       ]
     );
 
-    // Generate invite link
-    const baseUrl = process.env.WEB_PORTAL_URL || "https://portal.carelog.com";
-    const inviteLink = `${baseUrl}/invite/accept?token=${inviteToken}`;
+    // Generate password and create the attendant's account
+    const password = generatePassword();
+    const downloadLink = process.env.APP_DOWNLOAD_URL || "https://appdistribution.firebase.dev/i/carelog";
 
-    // Send invite
+    // Create Cognito account + RDS records
+    await createAttendantAccount(
+      dbClient,
+      body.email,
+      body.attendantName,
+      password,
+      patientDbId,
+      relativeCognitoSub
+    );
+
+    // Mark invite as accepted (account already created)
+    await dbClient.query(
+      `UPDATE attendant_invites SET status = 'accepted', accepted_at = NOW() WHERE id = $1`,
+      [inviteId]
+    );
+
+    // Send credentials email
+    let emailStatus = "sent";
     if (body.email) {
-      await sendInviteEmail(
-        body.email,
-        body.attendantName,
-        patientName,
-        inviteLink
+      // Check if recipient is verified in SES (sandbox mode)
+      const verifyResult = await sesClient.send(
+        new GetIdentityVerificationAttributesCommand({
+          Identities: [body.email],
+        })
       );
-    } else if (body.phone) {
-      await sendInviteSMS(
-        body.phone,
-        body.attendantName,
-        patientName,
-        inviteLink
-      );
+      const status =
+        verifyResult.VerificationAttributes?.[body.email]?.VerificationStatus;
+
+      if (status === "Success") {
+        await sendInviteEmail(
+          body.email,
+          body.attendantName,
+          patientName,
+          password,
+          downloadLink
+        );
+        emailStatus = "sent";
+      } else {
+        // Recipient not verified — trigger verification email first
+        await sesClient.send(
+          new VerifyEmailIdentityCommand({ EmailAddress: body.email })
+        );
+        console.log(
+          `SES verification sent to ${body.email} (sandbox mode). Credentials email will be sent after verification.`
+        );
+        emailStatus = "verification_pending";
+      }
     }
 
-    console.log(`Attendant invite sent: ${inviteId}`);
+    console.log(`Attendant account created and invite sent: ${inviteId}, emailStatus: ${emailStatus}`);
+
+    const message =
+      emailStatus === "verification_pending"
+        ? "Account created. A verification email has been sent to the attendant. Once verified, they will receive their login credentials."
+        : "Invitation sent successfully. The attendant will receive their login credentials by email.";
 
     return {
       statusCode: 201,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         inviteId,
-        message: "Invitation sent successfully",
+        message,
+        emailStatus,
         expiresAt: expiresAt.toISOString(),
       }),
     };

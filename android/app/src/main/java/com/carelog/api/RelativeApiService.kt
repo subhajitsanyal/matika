@@ -34,24 +34,29 @@ class RelativeApiService @Inject constructor(
     /**
      * Fetch patient summary including latest vitals.
      */
-    suspend fun getPatientSummary(patientId: String): PatientSummary? = withContext(Dispatchers.IO) {
-        try {
-            val token = authRepository.getAccessToken() ?: return@withContext null
+    /**
+     * Fetch patient summary including latest vitals.
+     * Throws on error so callers can report the issue.
+     */
+    suspend fun getPatientSummary(patientId: String): PatientSummary = withContext(Dispatchers.IO) {
+        val token = authRepository.getAccessToken()
+            ?: throw Exception("No auth token available")
 
-            val request = Request.Builder()
-                .url("$apiBaseUrl/patients/$patientId/summary")
-                .header("Authorization", "Bearer $token")
-                .get()
-                .build()
+        val request = Request.Builder()
+            .url("$apiBaseUrl/patients/$patientId/summary")
+            .header("Authorization", "Bearer $token")
+            .get()
+            .build()
 
-            val response = httpClient.newCall(request).execute()
-            if (!response.isSuccessful) return@withContext null
+        val response = httpClient.newCall(request).execute()
+        val responseBody = response.body?.string() ?: ""
 
-            val json = JSONObject(response.body?.string() ?: return@withContext null)
-            parsePatientSummary(json)
-        } catch (e: Exception) {
-            null
+        if (!response.isSuccessful) {
+            throw Exception("API ${response.code}: $responseBody")
         }
+
+        val json = JSONObject(responseBody)
+        parsePatientSummary(json)
     }
 
     /**
@@ -414,8 +419,8 @@ class RelativeApiService @Inject constructor(
             patientName = json.getString("patientName"),
             latestVitals = latestVitals,
             unreadAlertCount = json.optInt("unreadAlertCount", 0),
-            lastActivityTime = json.optString("lastActivityTime")?.let {
-                if (it.isNotEmpty()) Instant.parse(it) else null
+            lastActivityTime = json.optString("lastActivityTime", "").let {
+                if (it.isNotEmpty() && it != "null") Instant.parse(it) else null
             }
         )
     }

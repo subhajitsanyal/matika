@@ -1,5 +1,6 @@
 package com.carelog.ui.relative
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.carelog.api.PatientSummary
@@ -38,42 +39,37 @@ class RelativeDashboardViewModel @Inject constructor(
             _uiState.update { it.copy(isLoading = true, error = null) }
 
             try {
-                val user = authRepository.currentUser.value
-                val patientId = user?.linkedPatientId
+                // Fetch linked patient ID directly from Cognito (not from cache)
+                val patientId = authRepository.fetchLinkedPatientId()
+                // Also check currentUser for comparison
+                val cachedUser = authRepository.currentUser.value
+                val debugInfo = "fetchLinkedPatientId=$patientId, cachedUser.linked=${cachedUser?.linkedPatientId}, cachedUser.email=${cachedUser?.email}"
+                Log.d("RelativeDashboard", debugInfo)
 
                 if (patientId == null) {
                     _uiState.update {
                         it.copy(
                             isLoading = false,
-                            error = "No patient linked to this account"
+                            error = "No patient linked. DEBUG: $debugInfo"
                         )
                     }
                     return@launch
                 }
 
                 val summary = apiService.getPatientSummary(patientId)
-
-                if (summary != null) {
-                    _uiState.update {
-                        it.copy(
-                            isLoading = false,
-                            patientSummary = summary,
-                            error = null
-                        )
-                    }
-                } else {
-                    _uiState.update {
-                        it.copy(
-                            isLoading = false,
-                            error = "Failed to load patient data"
-                        )
-                    }
-                }
-            } catch (e: Exception) {
                 _uiState.update {
                     it.copy(
                         isLoading = false,
-                        error = e.message ?: "An error occurred"
+                        patientSummary = summary,
+                        error = null
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e("RelativeDashboard", "Error loading patient summary", e)
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        error = "Exception: ${e.javaClass.simpleName}: ${e.message}"
                     )
                 }
             }

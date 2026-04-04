@@ -1,0 +1,11 @@
+{
+  "name": "carelog-process-pending-invites",
+  "version": "1.0.0",
+  "description": "Processes pending attendant invites after SES email verification",
+  "main": "index.js",
+  "dependencies": {
+    "pg": "^8.13.1",
+    "@aws-sdk/client-ses": "^3.700.0",
+    "@aws-sdk/client-secrets-manager": "^3.700.0"
+  }
+}

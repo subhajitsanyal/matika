@@ -286,6 +286,30 @@ class AuthRepository @Inject constructor(
     fun getCurrentUser(): CareLogUser? = _currentUser.value
 
     /**
+     * Fetch the linked patient ID directly from Cognito (bypasses local cache).
+     */
+    suspend fun fetchLinkedPatientId(): String? {
+        return try {
+            val attributes = suspendCancellableCoroutine<List<AuthUserAttribute>> { cont ->
+                Amplify.Auth.fetchUserAttributes(
+                    { cont.resume(it) },
+                    { cont.resumeWithException(it) }
+                )
+            }
+            val patientId = attributes.find {
+                it.key == AuthUserAttributeKey.custom("linked_patient_id") ||
+                it.key.keyString == "custom:linked_patient_id"
+            }?.value?.takeIf { it.isNotEmpty() }
+            Log.d(TAG, "fetchLinkedPatientId: raw attributes=${attributes.map { "${it.key.keyString}=${it.value}" }}")
+            Log.d(TAG, "fetchLinkedPatientId: result=$patientId")
+            patientId
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to fetch linked patient ID", e)
+            null
+        }
+    }
+
+    /**
      * Get the current token for API calls.
      *
      * Returns the ID token because the API Gateway uses a COGNITO_USER_POOLS
