@@ -672,11 +672,16 @@ class CareTeamViewModel @Inject constructor(
         // Implementation would call API to resend invite
     }
 
-    @Suppress("UNUSED_PARAMETER")
     fun cancelInvite(inviteId: String) {
-        // Implementation would call API to cancel invite
-        // Then refresh care team
-        loadCareTeam()
+        val patientId = _uiState.value.patientId ?: return
+        viewModelScope.launch {
+            try {
+                apiService.cancelInvite(patientId, inviteId)
+                loadCareTeam()
+            } catch (e: Exception) {
+                _uiState.update { it.copy(error = e.message ?: "Failed to cancel invite") }
+            }
+        }
     }
 
     fun clearInviteSuccess() {

@@ -391,6 +391,31 @@ class RelativeApiService @Inject constructor(
         }
     }
 
+    /**
+     * Cancel a pending invite.
+     */
+    suspend fun cancelInvite(patientId: String, inviteId: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val token = authRepository.getAccessToken() ?: return@withContext false
+
+            val body = JSONObject().apply {
+                put("inviteId", inviteId)
+            }.toString()
+
+            val request = Request.Builder()
+                .url("$apiBaseUrl/patients/$patientId/care-team")
+                .header("Authorization", "Bearer $token")
+                .header("Content-Type", "application/json")
+                .delete(body.toRequestBody("application/json".toMediaType()))
+                .build()
+
+            val response = httpClient.newCall(request).execute()
+            response.isSuccessful
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     // Parsing helpers
 
     private fun parsePatientSummary(json: JSONObject): PatientSummary {

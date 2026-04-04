@@ -429,9 +429,7 @@ fun CareLogNavHost() {
                     navController.navigate(CareLogRoutes.SETTINGS)
                 },
                 onSwitchToPatient = {
-                    navController.navigate(CareLogRoutes.PATIENT_DASHBOARD) {
-                        popUpTo(CareLogRoutes.ATTENDANT_DASHBOARD) { inclusive = true }
-                    }
+                    navController.navigate(CareLogRoutes.PATIENT_DASHBOARD)
                 }
             )
         }
