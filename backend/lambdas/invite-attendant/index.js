@@ -24,6 +24,7 @@ const {
   AdminCreateUserCommand,
   AdminAddUserToGroupCommand,
   AdminSetUserPasswordCommand,
+  AdminGetUserCommand,
 } = require("@aws-sdk/client-cognito-identity-provider");
 const {
   SecretsManagerClient,
@@ -103,21 +104,36 @@ function generatePassword() {
  * Create Cognito account for attendant and RDS records.
  */
 async function createAttendantAccount(dbClient, email, name, password, patientDbId, invitedBy) {
-  // Create Cognito user
-  const createResult = await cognitoClient.send(
-    new AdminCreateUserCommand({
-      UserPoolId: process.env.COGNITO_USER_POOL_ID,
-      Username: email,
-      UserAttributes: [
-        { Name: "email", Value: email },
-        { Name: "email_verified", Value: "true" },
-        { Name: "name", Value: name },
-        { Name: "custom:persona_type", Value: "attendant" },
-      ],
-      MessageAction: "SUPPRESS",
-    })
-  );
-  const cognitoSub = createResult.User.Attributes.find((a) => a.Name === "sub")?.Value;
+  let cognitoSub;
+
+  // Create Cognito user (or reuse existing)
+  try {
+    const createResult = await cognitoClient.send(
+      new AdminCreateUserCommand({
+        UserPoolId: process.env.COGNITO_USER_POOL_ID,
+        Username: email,
+        UserAttributes: [
+          { Name: "email", Value: email },
+          { Name: "email_verified", Value: "true" },
+          { Name: "name", Value: name },
+          { Name: "custom:persona_type", Value: "attendant" },
+        ],
+        MessageAction: "SUPPRESS",
+      })
+    );
+    cognitoSub = createResult.User.Attributes.find((a) => a.Name === "sub")?.Value;
+  } catch (err) {
+    if (err.name === "UsernameExistsException") {
+      // Account already exists — look up their sub and reset password
+      console.log(`Cognito user ${email} already exists, resetting password`);
+      const existingUser = await cognitoClient.send(
+        new AdminGetUserCommand({ UserPoolId: process.env.COGNITO_USER_POOL_ID, Username: email })
+      );
+      cognitoSub = existingUser.UserAttributes.find((a) => a.Name === "sub")?.Value;
+    } else {
+      throw err;
+    }
+  }
 
   // Set permanent password
   await cognitoClient.send(
@@ -138,11 +154,11 @@ async function createAttendantAccount(dbClient, email, name, password, patientDb
     })
   );
 
-  // Create user record in RDS
+  // Create or update user record in RDS
   const userResult = await dbClient.query(
     `INSERT INTO users (cognito_sub, email, name, persona_type, is_active, created_at, updated_at)
      VALUES ($1, $2, $3, 'attendant', true, NOW(), NOW())
-     ON CONFLICT (cognito_sub) DO UPDATE SET updated_at = NOW()
+     ON CONFLICT (email) DO UPDATE SET cognito_sub = $1, name = $3, is_active = true, updated_at = NOW()
      RETURNING id`,
     [cognitoSub, email, name]
   );
@@ -155,7 +171,8 @@ async function createAttendantAccount(dbClient, email, name, password, patientDb
       can_log_vitals, can_configure_thresholds, can_view_history, can_receive_alerts,
       invited_by, accepted_at, is_active
     ) VALUES ($1, $2, 'attendant', false, true, false, true, true,
-      (SELECT id FROM users WHERE cognito_sub = $3), NOW(), true)`,
+      (SELECT id FROM users WHERE cognito_sub = $3), NOW(), true)
+    ON CONFLICT (patient_id, linked_user_id) DO UPDATE SET is_active = true, updated_at = NOW()`,
     [patientDbId, userId, invitedBy]
   );
 
