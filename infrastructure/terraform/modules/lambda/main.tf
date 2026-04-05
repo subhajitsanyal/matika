@@ -119,13 +119,24 @@ resource "aws_iam_role_policy" "rds_ses_inline" {
       },
       {
         Effect   = "Allow"
-        Action   = ["ses:SendEmail", "ses:SendRawEmail"]
+        Action   = ["ses:SendEmail", "ses:SendRawEmail", "ses:GetIdentityVerificationAttributes"]
         Resource = ["*"]
       },
       {
         Effect   = "Allow"
         Action   = ["sns:Publish"]
         Resource = ["*"]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "cognito-idp:AdminCreateUser",
+          "cognito-idp:AdminSetUserPassword",
+          "cognito-idp:AdminAddUserToGroup",
+          "cognito-idp:AdminGetUser",
+          "cognito-idp:AdminUpdateUserAttributes"
+        ]
+        Resource = [var.cognito_user_pool_arn]
       }
     ]
   })
