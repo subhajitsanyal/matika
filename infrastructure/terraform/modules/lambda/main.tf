@@ -235,6 +235,18 @@ data "archive_file" "invite_doctor" {
   output_path = "${path.module}/archives/invite-doctor.zip"
 }
 
+data "archive_file" "care_team" {
+  type        = "zip"
+  source_dir  = "${var.lambdas_source_path}/care-team"
+  output_path = "${path.module}/archives/care-team.zip"
+}
+
+data "archive_file" "process_pending_invites" {
+  type        = "zip"
+  source_dir  = "${var.lambdas_source_path}/process-pending-invites"
+  output_path = "${path.module}/archives/process-pending-invites.zip"
+}
+
 data "archive_file" "patient_summary" {
   type        = "zip"
   source_dir  = "${var.lambdas_source_path}/patient-summary"
@@ -485,6 +497,48 @@ resource "aws_lambda_function" "get_observations" {
   }
 }
 
+resource "aws_lambda_function" "care_team" {
+  function_name    = "${local.function_prefix}-care-team"
+  role             = aws_iam_role.lambda_rds_cognito.arn
+  handler          = "index.handler"
+  runtime          = "nodejs20.x"
+  timeout          = 30
+  memory_size      = 256
+  filename         = data.archive_file.care_team.output_path
+  source_code_hash = data.archive_file.care_team.output_base64sha256
+
+  vpc_config {
+    subnet_ids         = var.private_subnet_ids
+    security_group_ids = [var.lambda_security_group_id]
+  }
+
+  environment {
+    variables = local.rds_env
+  }
+}
+
+resource "aws_lambda_function" "process_pending_invites" {
+  function_name    = "${local.function_prefix}-process-pending-invites"
+  role             = aws_iam_role.lambda_rds_ses.arn
+  handler          = "index.handler"
+  runtime          = "nodejs20.x"
+  timeout          = 60
+  memory_size      = 256
+  filename         = data.archive_file.process_pending_invites.output_path
+  source_code_hash = data.archive_file.process_pending_invites.output_base64sha256
+
+  vpc_config {
+    subnet_ids         = var.private_subnet_ids
+    security_group_ids = [var.lambda_security_group_id]
+  }
+
+  environment {
+    variables = merge(local.rds_env, {
+      FROM_EMAIL = var.from_email
+    })
+  }
+}
+
 # ============================================================
 # CLOUDWATCH LOG GROUPS
 # ============================================================
@@ -526,6 +580,16 @@ resource "aws_cloudwatch_log_group" "bulk_sync" {
 
 resource "aws_cloudwatch_log_group" "presigned_url" {
   name              = "/aws/lambda/${aws_lambda_function.presigned_url.function_name}"
+  retention_in_days = 365
+}
+
+resource "aws_cloudwatch_log_group" "care_team" {
+  name              = "/aws/lambda/${aws_lambda_function.care_team.function_name}"
+  retention_in_days = 365
+}
+
+resource "aws_cloudwatch_log_group" "process_pending_invites" {
+  name              = "/aws/lambda/${aws_lambda_function.process_pending_invites.function_name}"
   retention_in_days = 365
 }
 
@@ -595,6 +659,14 @@ resource "aws_lambda_permission" "presigned_url" {
   statement_id  = "AllowAPIGateway"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.presigned_url.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${var.api_execution_arn}/*"
+}
+
+resource "aws_lambda_permission" "care_team" {
+  statement_id  = "AllowAPIGateway"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.care_team.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${var.api_execution_arn}/*"
 }

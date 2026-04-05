@@ -30,6 +30,10 @@ output "presigned_url_invoke_arn" {
   value = aws_lambda_function.presigned_url.invoke_arn
 }
 
+output "care_team_invoke_arn" {
+  value = aws_lambda_function.care_team.invoke_arn
+}
+
 output "patient_summary_invoke_arn" {
   value = aws_lambda_function.patient_summary.invoke_arn
 }

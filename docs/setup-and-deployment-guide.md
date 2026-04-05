@@ -259,7 +259,7 @@ A single `terraform apply` deploys everything:
 | VPC | Public/private subnets, NAT gateways, security groups |
 | Cognito | User Pool with 4 groups (patients, attendants, relatives, doctors), OAuth clients, post-confirmation Lambda trigger |
 | API Gateway | REST API with Cognito authorizer, Lambda proxy integrations |
-| Lambda | 10 functions deployed via Terraform + 2 MOCK-stubbed routes (see §5) |
+| Lambda | 12 functions deployed via Terraform + 2 MOCK-stubbed routes (see §5) |
 | RDS | PostgreSQL 15 in private subnet, encrypted, password in Secrets Manager |
 | S3 | Documents + observations bucket (KMS encrypted, lifecycle rules) + access logs bucket |
 | SQS | Document processing queue + alerts queue (both with DLQs) |
@@ -484,7 +484,7 @@ These are set automatically by Terraform when the Lambda module deploys:
 
 ### 5.4 Lambda Functions Reference
 
-#### Deployed via Terraform (10 functions — packaged and deployed automatically by `terraform apply`)
+#### Deployed via Terraform (12 functions — packaged and deployed automatically by `terraform apply`)
 
 All Lambda code changes are deployed automatically by running `terraform apply` — Terraform zips each Lambda directory (including `node_modules/`) and uploads it. No manual deployment needed.
 
@@ -500,11 +500,6 @@ All Lambda code changes are deployed automatically by running `terraform apply` 
 | `sync-observation` | `POST /observations/sync` | Stores FHIR Observation as JSON in S3 (`observations/{patientId}/{YYYY}/{MM}/{DD}/{id}.json`, KMS encrypted) |
 | `bulk-sync` | `POST /observations/bulk-sync` | Batch stores FHIR resources in S3 |
 | `presigned-url` | `POST /documents/presigned-url` | Generates S3 presigned upload/download URLs |
-
-#### Not Yet in Terraform (code complete, must be deployed manually or added to Terraform)
-
-| Lambda | Route | Description |
-|--------|-------|-------------|
 | `care-team` | `GET /patients/{patientId}/team` | Returns care team members (attendants, doctors, relatives) + pending invites |
 | `process-pending-invites` | EventBridge (every 2 min) | Checks pending invites for newly SES-verified emails and sends credentials emails automatically |
 

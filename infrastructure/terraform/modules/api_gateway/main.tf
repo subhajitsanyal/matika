@@ -438,6 +438,24 @@ resource "aws_api_gateway_integration" "accept_invite_post" {
   uri                     = var.accept_invite_invoke_arn
 }
 
+# GET /patients/{patientId}/team → care-team Lambda
+resource "aws_api_gateway_method" "patient_team_get" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.patient_team.id
+  http_method   = "GET"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+}
+
+resource "aws_api_gateway_integration" "patient_team_get" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.patient_team.id
+  http_method             = aws_api_gateway_method.patient_team_get.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = var.care_team_invoke_arn
+}
+
 # GET /patients/{patientId}/summary → patient-summary Lambda
 resource "aws_api_gateway_method" "patient_summary_get" {
   rest_api_id   = aws_api_gateway_rest_api.main.id
@@ -601,6 +619,8 @@ resource "aws_api_gateway_deployment" "main" {
       aws_api_gateway_method.invite_attendant_post.id,
       aws_api_gateway_method.invite_doctor_post.id,
       aws_api_gateway_method.accept_invite_post.id,
+      aws_api_gateway_method.patient_team_get.id,
+      aws_api_gateway_integration.patient_team_get.id,
       aws_api_gateway_method.patient_summary_get.id,
       aws_api_gateway_integration.patient_summary_get.id,
       aws_api_gateway_method.patient_observations_get.id,
