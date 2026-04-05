@@ -502,9 +502,9 @@ resource "aws_lambda_function" "get_observations" {
   }
 
   environment {
-    variables = {
+    variables = merge(local.rds_env, {
       OBSERVATIONS_BUCKET = var.documents_bucket_name
-    }
+    })
   }
 }
 
