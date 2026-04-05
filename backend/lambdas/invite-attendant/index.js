@@ -464,6 +464,28 @@ exports.handler = async (event) => {
 
     console.log(`Attendant account created and invite sent: ${inviteId}, emailStatus: ${emailStatus}`);
 
+    // Notify admin to add attendant to Firebase testers group
+    try {
+      const adminEmail = (process.env.FROM_EMAIL || "").replace(/.*<(.+)>.*/, "$1") || "noreply@carelog.com";
+      await sesClient.send(
+        new SendEmailCommand({
+          Source: process.env.FROM_EMAIL || "noreply@carelog.com",
+          Destination: { ToAddresses: [adminEmail] },
+          Message: {
+            Subject: { Data: `[CareLog] Add tester: ${body.email}` },
+            Body: {
+              Text: {
+                Data: `A new attendant has been invited and needs access to the app.\n\nAttendant: ${body.attendantName}\nEmail: ${body.email}\nPatient: ${patientName}\n\nPlease add them to the Firebase App Distribution testers group:\n\nfirebase appdistribution:testers:add --emails "${body.email}" --group-aliases internal-testers --project carelog-7de0c\n\nOr add via Firebase Console:\nhttps://console.firebase.google.com/project/carelog-7de0c/appdistribution`,
+              },
+            },
+          },
+        })
+      );
+      console.log(`Admin notification sent to ${adminEmail} to add ${body.email} as Firebase tester`);
+    } catch (notifyErr) {
+      console.warn("Failed to send admin notification:", notifyErr.message);
+    }
+
     const message =
       emailStatus === "verification_pending"
         ? "Account created. A verification email has been sent to the attendant. Once verified, they will receive their login credentials."
