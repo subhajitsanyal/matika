@@ -45,3 +45,5 @@ variable "domain_name" {
   default     = "carelog.com"
 }
 
+
+

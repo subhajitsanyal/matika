@@ -16,5 +16,5 @@ object BuildConfig {
     const val VERSION_CODE = 5
     const val VERSION_NAME = "1.3.1"
     // Updated by scripts/update-app-config.sh — do not hardcode personal API Gateway IDs
-    const val API_BASE_URL = "https://x6v72ekrcl.execute-api.ap-south-1.amazonaws.com/dev"
+    const val API_BASE_URL = "https://7xhgzfiebc.execute-api.ap-south-1.amazonaws.com/dev"
 }
