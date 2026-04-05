@@ -266,33 +266,22 @@ A single `terraform apply` deploys everything:
 | SNS | Push notification platform apps (APNs, FCM) + alert topics |
 | Bastion | EC2 instance for SSM port-forwarding to RDS (dev only) |
 
-### 3.2 Configure Environment Variables
+### 3.2 Configure SES Email (Optional)
+
+All infrastructure variables (VPC, DB, feature flags, etc.) are already configured in each environment's `main.tf`. The only optional configuration is SES email for Cognito verification emails.
+
+Without SES, Cognito uses its built-in email sender (50 emails/day limit, generic sender). To use SES, create a `terraform.tfvars` file (gitignored):
 
 ```bash
 cd infrastructure/terraform/environments/dev
 ```
 
-A `terraform.tfvars` should exist (gitignored). If not, create one:
-
 ```hcl
-environment          = "dev"
-aws_region           = "ap-south-1"
-vpc_cidr             = "10.0.0.0/16"
-availability_zones   = ["ap-south-1a", "ap-south-1b"]
-public_subnet_cidrs  = ["10.0.1.0/24", "10.0.2.0/24"]
-private_subnet_cidrs = ["10.0.11.0/24", "10.0.12.0/24"]
-s3_bucket_prefix     = "carelog-v2"
-db_instance_class    = "db.t3.micro"
-db_name              = "carelog_dev"
-db_username          = "carelog_dev_admin"
-enable_healthlake    = false
-enable_waf           = false
-enable_bastion       = true
-
-# SES email (optional — omit to use Cognito default with 50/day limit)
-# ses_email_arn  = "arn:aws:ses:ap-south-1:YOUR_ACCOUNT_ID:identity/your-email@domain.com"
-# ses_from_email = "CareLog <your-email@domain.com>"
+ses_email_arn  = "arn:aws:ses:ap-south-1:YOUR_ACCOUNT_ID:identity/your-email@domain.com"
+ses_from_email = "CareLog <your-email@domain.com>"
 ```
+
+> **Note:** The SES identity must already be verified (see §1.4). If you skip this, Cognito will still work with its default email — you can add SES later.
 
 ### 3.3 Install Lambda Dependencies (before Terraform)
 
@@ -352,6 +341,8 @@ Then rebuild and distribute:
 
 ```bash
 cd android
+export FIREBASE_ANDROID_APP_ID="1:191872106923:android:63245761468592e0d612ee"
+export FIREBASE_TOKEN="<your-firebase-ci-token>"   # from: firebase login:ci
 ./gradlew assembleDebug
 bundle exec fastlane distribute_debug
 ```
@@ -773,13 +764,19 @@ Or if using Android Studio, it typically installs at `~/Library/Android/sdk`.
 # Login to Firebase (opens browser)
 firebase login
 
-# Generate a CI token for automated distribution
+# Generate a CI token for automated distribution (opens browser)
 firebase login:ci
 # Save the printed token — you'll use it as FIREBASE_TOKEN
 ```
 
 **Firebase project:** `carelog-7de0c`
 **Android App ID:** `1:191872106923:android:63245761468592e0d612ee`
+
+> **Important:** The Fastlane `distribute_debug` lane requires two environment variables:
+> - `FIREBASE_ANDROID_APP_ID` — the Android App ID above (the Fastfile defaults to a placeholder if unset)
+> - `FIREBASE_TOKEN` — the CI token from `firebase login:ci`
+>
+> Without both, uploads will fail with "does not have the required permissions".
 
 ### 9.3 Install Fastlane Dependencies
 
@@ -802,8 +799,11 @@ Three distribution lanes are available:
 
 **Distribute a debug build to internal testers:**
 
+Both `FIREBASE_ANDROID_APP_ID` and `FIREBASE_TOKEN` must be set. Without these, Fastlane uses placeholder values and cached credentials which will fail with permission errors.
+
 ```bash
 cd android
+export FIREBASE_ANDROID_APP_ID="1:191872106923:android:63245761468592e0d612ee"
 export FIREBASE_TOKEN="<your-firebase-ci-token>"
 bundle exec fastlane distribute_debug
 ```
@@ -819,6 +819,7 @@ This will:
 
 ```bash
 cd android
+export FIREBASE_ANDROID_APP_ID="1:191872106923:android:63245761468592e0d612ee"
 export FIREBASE_TOKEN="<your-firebase-ci-token>"
 export KEYSTORE_PATH="/path/to/release.keystore"
 export KEYSTORE_PASSWORD="<password>"
