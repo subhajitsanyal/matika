@@ -53,7 +53,7 @@ resource "aws_cognito_user_pool" "main" {
     email_sending_account  = var.ses_email_arn != "" ? "DEVELOPER" : "COGNITO_DEFAULT"
     source_arn             = var.ses_email_arn != "" ? var.ses_email_arn : null
     from_email_address     = var.ses_from_email != "" ? var.ses_from_email : null
-    reply_to_email_address = var.ses_from_email != "" ? regex("<?([^>]+@[^>]+)>?$", var.ses_from_email)[0] : null
+    reply_to_email_address = var.ses_from_email != "" ? regex("<([^>]+)>", var.ses_from_email)[0] : null
   }
 
   # User Pool Add-ons
