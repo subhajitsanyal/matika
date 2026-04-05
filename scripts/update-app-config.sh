@@ -57,6 +57,15 @@ pool['Region'] = '$REGION'
 oauth = auth.get('Auth', {}).get('Default', {}).get('OAuth', {})
 if oauth:
     oauth['WebDomain'] = '$COGNITO_WEB_DOMAIN'
+    oauth['AppClientId'] = '$COGNITO_APP_CLIENT_ID'
+s3 = config.get('storage', {}).get('plugins', {}).get('awsS3StoragePlugin', {}).get('defaultRegion', {})
+if 'bucket' in config.get('storage', {}).get('plugins', {}).get('awsS3StoragePlugin', {}).get('bucket', ''):
+    pass
+# Update S3 bucket if present
+s3plugin = config.get('storage', {}).get('plugins', {}).get('awsS3StoragePlugin', {})
+if s3plugin:
+    s3plugin['bucket'] = '$S3_BUCKET_NAME'
+    s3plugin['region'] = '$REGION'
 with open('$ANDROID_AMPLIFY', 'w') as f:
     json.dump(config, f, indent=2)
 "
@@ -78,6 +87,11 @@ pool['Region'] = '$REGION'
 oauth = auth.get('Auth', {}).get('Default', {}).get('OAuth', {})
 if oauth:
     oauth['WebDomain'] = '$COGNITO_WEB_DOMAIN'
+    oauth['AppClientId'] = '$COGNITO_APP_CLIENT_ID'
+s3plugin = config.get('storage', {}).get('plugins', {}).get('awsS3StoragePlugin', {})
+if s3plugin:
+    s3plugin['bucket'] = '$S3_BUCKET_NAME'
+    s3plugin['region'] = '$REGION'
 with open('$IOS_AMPLIFY', 'w') as f:
     json.dump(config, f, indent=2)
 "
