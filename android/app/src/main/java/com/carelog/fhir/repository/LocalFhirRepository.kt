@@ -8,6 +8,7 @@ import com.carelog.fhir.local.entities.LocalDocumentReference
 import com.carelog.fhir.local.entities.LocalObservation
 import com.carelog.fhir.local.entities.SyncStatus
 import com.carelog.fhir.models.*
+import com.carelog.sync.SyncManager
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import java.util.UUID
@@ -24,7 +25,8 @@ import javax.inject.Singleton
 @Singleton
 class LocalFhirRepository @Inject constructor(
     private val observationDao: ObservationDao,
-    private val documentReferenceDao: DocumentReferenceDao
+    private val documentReferenceDao: DocumentReferenceDao,
+    private val syncManager: SyncManager
 ) {
 
     // ==================== Observation Operations ====================
@@ -37,6 +39,7 @@ class LocalFhirRepository @Inject constructor(
         val localId = UUID.randomUUID().toString()
         val localObservation = observation.toLocalEntity(localId)
         observationDao.insert(localObservation)
+        syncManager.triggerSync()
         return localId
     }
 

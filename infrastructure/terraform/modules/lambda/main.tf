@@ -488,7 +488,7 @@ resource "aws_lambda_function" "patient_summary" {
 
 resource "aws_lambda_function" "get_observations" {
   function_name    = "${local.function_prefix}-get-observations"
-  role             = aws_iam_role.lambda_s3.arn
+  role             = aws_iam_role.lambda_rds_cognito.arn
   handler          = "index.handler"
   runtime          = "nodejs20.x"
   timeout          = 30
