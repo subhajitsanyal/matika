@@ -139,6 +139,8 @@ class AuthRepository @Inject constructor(
     suspend fun signIn(email: String, password: String): Result<CareLogUser> {
         return try {
             _authState.value = AuthState.Loading
+            // Sign out any existing session first to avoid "already signed in" errors
+            try { signOutFromCognito() } catch (_: Exception) {}
             val result = signInWithCognito(email, password)
 
             if (result.isSignedIn) {
