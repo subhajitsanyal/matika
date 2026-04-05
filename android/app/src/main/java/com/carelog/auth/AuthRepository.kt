@@ -61,11 +61,11 @@ enum class PersonaType {
                 "doctor" -> DOCTOR
                 else -> {
                     if (value != null) {
-                        android.util.Log.w("PersonaType", "Unknown persona type: $value, defaulting to PATIENT")
+                        android.util.Log.w("PersonaType", "Unknown persona type: $value, defaulting to RELATIVE")
                     } else {
-                        android.util.Log.w("PersonaType", "Persona type is null, defaulting to PATIENT")
+                        android.util.Log.w("PersonaType", "Persona type is null, defaulting to RELATIVE")
                     }
-                    PATIENT
+                    RELATIVE
                 }
             }
         }
@@ -120,6 +120,7 @@ class AuthRepository @Inject constructor(
         try {
             val session = fetchAuthSession()
             if (session.isSignedIn) {
+                flushPendingPersona()
                 val user = fetchCurrentUser()
                 _currentUser.value = user
                 _authState.value = AuthState.Authenticated(user)
