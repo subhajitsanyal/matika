@@ -259,7 +259,7 @@ A single `terraform apply` deploys everything:
 | VPC | Public/private subnets, NAT gateways, security groups |
 | Cognito | User Pool with 4 groups (patients, attendants, relatives, doctors), OAuth clients, post-confirmation Lambda trigger |
 | API Gateway | REST API with Cognito authorizer, Lambda proxy integrations |
-| Lambda | 8 functions deployed via Terraform + 2 MOCK-stubbed routes (see §5). Additional Lambdas like `patient-summary`, `get-observations`, `care-team`, and `process-pending-invites` exist in code but must be deployed manually — see §5.4 |
+| Lambda | 10 functions deployed via Terraform + 2 MOCK-stubbed routes (see §5) |
 | RDS | PostgreSQL 15 in private subnet, encrypted, password in Secrets Manager |
 | S3 | Documents + observations bucket (KMS encrypted, lifecycle rules) + access logs bucket |
 | SQS | Document processing queue + alerts queue (both with DLQs) |
@@ -484,11 +484,15 @@ These are set automatically by Terraform when the Lambda module deploys:
 
 ### 5.4 Lambda Functions Reference
 
-#### Deployed via Terraform (8 functions — packaged and deployed automatically by `terraform apply`)
+#### Deployed via Terraform (10 functions — packaged and deployed automatically by `terraform apply`)
+
+All Lambda code changes are deployed automatically by running `terraform apply` — Terraform zips each Lambda directory (including `node_modules/`) and uploads it. No manual deployment needed.
 
 | Lambda | Route | Description |
 |--------|-------|-------------|
 | `create-patient` | `POST /patients` | Creates patient in RDS + Cognito; ensures relative's user record exists; sets `custom:linked_patient_id` on relative's Cognito account server-side |
+| `patient-summary` | `GET /patients/{patientId}/summary` | Returns patient info, latest vitals from S3, unread alert count, last activity time (used by relative dashboard) |
+| `get-observations` | `GET /patients/{patientId}/observations` | Returns FHIR observations from S3 filtered by vital type and date range (used by trends view) |
 | `invite-attendant` | `POST /invites/attendant` | Creates attendant Cognito account + RDS records immediately, emails credentials + app download link via SES. Handles SES sandbox by triggering verification first if recipient not verified. |
 | `invite-doctor` | `POST /invites/doctor` | Sends doctor invite email via SES |
 | `accept-invite` | `GET,POST /invites/accept` | GET serves HTML registration page; POST creates Cognito account for doctor invitees (no auth — user not yet registered) |
@@ -497,18 +501,12 @@ These are set automatically by Terraform when the Lambda module deploys:
 | `bulk-sync` | `POST /observations/bulk-sync` | Batch stores FHIR resources in S3 |
 | `presigned-url` | `POST /documents/presigned-url` | Generates S3 presigned upload/download URLs |
 
-#### Manually Deployed (code complete, API routes added manually — NOT yet in Terraform modules)
-
-These Lambdas have working code and are needed by the app, but are not part of `terraform apply`. After Terraform deploys the base infrastructure, deploy these manually using the AWS CLI or add them to the Terraform modules.
+#### Not Yet in Terraform (code complete, must be deployed manually or added to Terraform)
 
 | Lambda | Route | Description |
 |--------|-------|-------------|
-| `patient-summary` | `GET /patients/{patientId}/summary` | Returns patient info, latest vitals from S3, unread alert count, last activity time (used by relative dashboard) |
-| `get-observations` | `GET /patients/{patientId}/observations` | Returns FHIR observations from S3 filtered by vital type and date range (used by trends view) |
 | `care-team` | `GET /patients/{patientId}/team` | Returns care team members (attendants, doctors, relatives) + pending invites |
 | `process-pending-invites` | EventBridge (every 2 min) | Checks pending invites for newly SES-verified emails and sends credentials emails automatically |
-
-> **Note:** These need to be added to `infrastructure/terraform/modules/lambda/main.tf` and `infrastructure/terraform/modules/api_gateway/main.tf` for fully automated deployment.
 
 #### MOCK-Stubbed Routes (API Gateway routes exist but return mock responses — Lambda code exists but not yet wired in Terraform)
 
