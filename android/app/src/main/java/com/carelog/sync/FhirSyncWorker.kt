@@ -3,6 +3,7 @@ package com.carelog.sync
 import android.content.Context
 import androidx.hilt.work.HiltWorker
 import androidx.work.*
+import android.util.Log
 import com.carelog.fhir.client.FhirClient
 import com.carelog.fhir.client.ObservationType
 import com.carelog.fhir.local.entities.LocalObservation
@@ -40,11 +41,13 @@ class FhirSyncWorker @AssistedInject constructor(
         try {
             // Check network connectivity
             if (!networkMonitor.isConnected()) {
+                Log.w(TAG, "No network connectivity, retrying later")
                 return@withContext Result.retry()
             }
 
             // Process pending observations
             val pendingObservations = localFhirRepository.getPendingSyncObservations()
+            Log.d(TAG, "Found ${pendingObservations.size} pending observations to sync")
             var allSucceeded = true
 
             for (observation in pendingObservations) {
@@ -55,8 +58,10 @@ class FhirSyncWorker @AssistedInject constructor(
                     // Create on server (always create for now - no update method in client)
                     val serverId = fhirClient.createObservation(fhirObservation)
                     localFhirRepository.markObservationSynced(observation.localId, serverId)
+                    Log.d(TAG, "Synced observation ${observation.localId} → serverId=$serverId")
                 } catch (e: Exception) {
                     // Mark as failed and continue with others
+                    Log.e(TAG, "Failed to sync observation ${observation.localId}: ${e.message}", e)
                     localFhirRepository.markObservationSyncFailed(observation.localId, e.message ?: "Unknown error")
                     allSucceeded = false
                 }
@@ -64,6 +69,7 @@ class FhirSyncWorker @AssistedInject constructor(
 
             // Process pending documents
             val pendingDocuments = localFhirRepository.getPendingFhirSync()
+            Log.d(TAG, "Found ${pendingDocuments.size} pending documents to sync")
 
             for (document in pendingDocuments) {
                 try {
@@ -73,19 +79,23 @@ class FhirSyncWorker @AssistedInject constructor(
                     // Create on server
                     val serverId = fhirClient.createDocumentReference(fhirDocument)
                     localFhirRepository.markDocumentFhirSynced(document.localId, serverId)
+                    Log.d(TAG, "Synced document ${document.localId} → serverId=$serverId")
                 } catch (e: Exception) {
+                    Log.e(TAG, "Failed to sync document ${document.localId}: ${e.message}", e)
                     localFhirRepository.markDocumentFhirSyncFailed(document.localId, e.message ?: "Unknown error")
                     allSucceeded = false
                 }
             }
 
             if (allSucceeded) {
+                Log.d(TAG, "Sync completed successfully")
                 Result.success()
             } else {
-                // Some items failed - retry with backoff
+                Log.w(TAG, "Some items failed to sync, will retry")
                 Result.retry()
             }
         } catch (e: Exception) {
+            Log.e(TAG, "Sync worker crashed: ${e.message}", e)
             Result.retry()
         }
     }
@@ -143,6 +153,7 @@ class FhirSyncWorker @AssistedInject constructor(
     }
 
     companion object {
+        private const val TAG = "FhirSyncWorker"
         private const val WORK_NAME = "fhir_sync"
 
         /**
