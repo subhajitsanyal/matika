@@ -68,6 +68,22 @@ resource "aws_iam_role_policy" "rds_cognito_inline" {
           "cognito-idp:AdminUpdateUserAttributes"
         ]
         Resource = [var.cognito_user_pool_arn]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:ListBucket"
+        ]
+        Resource = [
+          var.documents_bucket_arn,
+          "${var.documents_bucket_arn}/*"
+        ]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = [var.s3_kms_key_arn]
       }
     ]
   })
@@ -217,6 +233,18 @@ data "archive_file" "invite_doctor" {
   type        = "zip"
   source_dir  = "${var.lambdas_source_path}/invite-doctor"
   output_path = "${path.module}/archives/invite-doctor.zip"
+}
+
+data "archive_file" "patient_summary" {
+  type        = "zip"
+  source_dir  = "${var.lambdas_source_path}/patient-summary"
+  output_path = "${path.module}/archives/patient-summary.zip"
+}
+
+data "archive_file" "get_observations" {
+  type        = "zip"
+  source_dir  = "${var.lambdas_source_path}/get-observations"
+  output_path = "${path.module}/archives/get-observations.zip"
 }
 
 data "archive_file" "sync_observation" {
@@ -413,6 +441,50 @@ resource "aws_lambda_function" "presigned_url" {
   }
 }
 
+resource "aws_lambda_function" "patient_summary" {
+  function_name    = "${local.function_prefix}-patient-summary"
+  role             = aws_iam_role.lambda_rds_cognito.arn
+  handler          = "index.handler"
+  runtime          = "nodejs20.x"
+  timeout          = 30
+  memory_size      = 256
+  filename         = data.archive_file.patient_summary.output_path
+  source_code_hash = data.archive_file.patient_summary.output_base64sha256
+
+  vpc_config {
+    subnet_ids         = var.private_subnet_ids
+    security_group_ids = [var.lambda_security_group_id]
+  }
+
+  environment {
+    variables = merge(local.rds_env, {
+      OBSERVATIONS_BUCKET = var.documents_bucket_name
+    })
+  }
+}
+
+resource "aws_lambda_function" "get_observations" {
+  function_name    = "${local.function_prefix}-get-observations"
+  role             = aws_iam_role.lambda_s3.arn
+  handler          = "index.handler"
+  runtime          = "nodejs20.x"
+  timeout          = 30
+  memory_size      = 256
+  filename         = data.archive_file.get_observations.output_path
+  source_code_hash = data.archive_file.get_observations.output_base64sha256
+
+  vpc_config {
+    subnet_ids         = var.private_subnet_ids
+    security_group_ids = [var.lambda_security_group_id]
+  }
+
+  environment {
+    variables = {
+      OBSERVATIONS_BUCKET = var.documents_bucket_name
+    }
+  }
+}
+
 # ============================================================
 # CLOUDWATCH LOG GROUPS
 # ============================================================
@@ -454,6 +526,16 @@ resource "aws_cloudwatch_log_group" "bulk_sync" {
 
 resource "aws_cloudwatch_log_group" "presigned_url" {
   name              = "/aws/lambda/${aws_lambda_function.presigned_url.function_name}"
+  retention_in_days = 365
+}
+
+resource "aws_cloudwatch_log_group" "patient_summary" {
+  name              = "/aws/lambda/${aws_lambda_function.patient_summary.function_name}"
+  retention_in_days = 365
+}
+
+resource "aws_cloudwatch_log_group" "get_observations" {
+  name              = "/aws/lambda/${aws_lambda_function.get_observations.function_name}"
   retention_in_days = 365
 }
 
@@ -513,6 +595,22 @@ resource "aws_lambda_permission" "presigned_url" {
   statement_id  = "AllowAPIGateway"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.presigned_url.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${var.api_execution_arn}/*"
+}
+
+resource "aws_lambda_permission" "patient_summary" {
+  statement_id  = "AllowAPIGateway"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.patient_summary.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${var.api_execution_arn}/*"
+}
+
+resource "aws_lambda_permission" "get_observations" {
+  statement_id  = "AllowAPIGateway"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.get_observations.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${var.api_execution_arn}/*"
 }

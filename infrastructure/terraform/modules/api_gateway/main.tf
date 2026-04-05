@@ -70,6 +70,20 @@ resource "aws_api_gateway_resource" "patient_team_member" {
   path_part   = "{memberId}"
 }
 
+# /patients/{patientId}/summary
+resource "aws_api_gateway_resource" "patient_summary" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  parent_id   = aws_api_gateway_resource.patient.id
+  path_part   = "summary"
+}
+
+# /patients/{patientId}/observations
+resource "aws_api_gateway_resource" "patient_observations" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  parent_id   = aws_api_gateway_resource.patient.id
+  path_part   = "observations"
+}
+
 # /observations
 resource "aws_api_gateway_resource" "observations" {
   rest_api_id = aws_api_gateway_rest_api.main.id
@@ -424,6 +438,42 @@ resource "aws_api_gateway_integration" "accept_invite_post" {
   uri                     = var.accept_invite_invoke_arn
 }
 
+# GET /patients/{patientId}/summary → patient-summary Lambda
+resource "aws_api_gateway_method" "patient_summary_get" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.patient_summary.id
+  http_method   = "GET"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+}
+
+resource "aws_api_gateway_integration" "patient_summary_get" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.patient_summary.id
+  http_method             = aws_api_gateway_method.patient_summary_get.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = var.patient_summary_invoke_arn
+}
+
+# GET /patients/{patientId}/observations → get-observations Lambda
+resource "aws_api_gateway_method" "patient_observations_get" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.patient_observations.id
+  http_method   = "GET"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+}
+
+resource "aws_api_gateway_integration" "patient_observations_get" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.patient_observations.id
+  http_method             = aws_api_gateway_method.patient_observations_get.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = var.get_observations_invoke_arn
+}
+
 # ============================================================
 # GATEWAY RESPONSES (CORS)
 # ============================================================
@@ -551,6 +601,10 @@ resource "aws_api_gateway_deployment" "main" {
       aws_api_gateway_method.invite_attendant_post.id,
       aws_api_gateway_method.invite_doctor_post.id,
       aws_api_gateway_method.accept_invite_post.id,
+      aws_api_gateway_method.patient_summary_get.id,
+      aws_api_gateway_integration.patient_summary_get.id,
+      aws_api_gateway_method.patient_observations_get.id,
+      aws_api_gateway_integration.patient_observations_get.id,
     ]))
   }
 

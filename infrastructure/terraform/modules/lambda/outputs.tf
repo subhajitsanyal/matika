@@ -29,3 +29,11 @@ output "bulk_sync_invoke_arn" {
 output "presigned_url_invoke_arn" {
   value = aws_lambda_function.presigned_url.invoke_arn
 }
+
+output "patient_summary_invoke_arn" {
+  value = aws_lambda_function.patient_summary.invoke_arn
+}
+
+output "get_observations_invoke_arn" {
+  value = aws_lambda_function.get_observations.invoke_arn
+}

@@ -94,6 +94,8 @@ module "api_gateway" {
   invite_attendant_invoke_arn  = module.lambda.invite_attendant_invoke_arn
   invite_doctor_invoke_arn     = module.lambda.invite_doctor_invoke_arn
   accept_invite_invoke_arn     = module.lambda.accept_invite_invoke_arn
+  patient_summary_invoke_arn   = module.lambda.patient_summary_invoke_arn
+  get_observations_invoke_arn  = module.lambda.get_observations_invoke_arn
 }
 
 # HealthLake Module

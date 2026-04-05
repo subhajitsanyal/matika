@@ -69,3 +69,13 @@ variable "accept_invite_invoke_arn" {
   type    = string
   default = ""
 }
+
+variable "patient_summary_invoke_arn" {
+  type    = string
+  default = ""
+}
+
+variable "get_observations_invoke_arn" {
+  type    = string
+  default = ""
+}
