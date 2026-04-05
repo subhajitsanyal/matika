@@ -24,8 +24,8 @@ android {
         applicationId = "com.carelog"
         minSdk = 28 // Android 9 (API 28) as per PRD
         targetSdk = 34
-        versionCode = 5
-        versionName = "1.3.1"
+        versionCode = 6
+        versionName = "1.4.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
