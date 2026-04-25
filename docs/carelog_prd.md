@@ -1,8 +1,8 @@
 # CareLog — Product Requirements Document
 
-**Version:** 0.3
+**Version:** 1.0
 **Date:** April 2026
-**Status:** In Review
+**Status:** Approved for Pilot
 **Classification:** Confidential
 
 ---
@@ -10,577 +10,949 @@
 ## Table of Contents
 
 1. [Executive Summary](#1-executive-summary)
-2. [Goals & Non-Goals](#2-goals--non-goals)
-3. [Personas](#3-personas)
-4. [User Flows](#4-user-flows)
-5. [Feature Specifications](#5-feature-specifications)
-6. [UX Design Principles](#6-ux-design-principles)
-7. [Technical Architecture](#7-technical-architecture)
-8. [Compliance & Security](#8-compliance--security)
-9. [Non-Functional Requirements](#9-non-functional-requirements)
-10. [Open Questions & Decisions Deferred](#10-open-questions--decisions-deferred)
-11. [Suggested v1 Milestones](#11-suggested-v1-milestones)
-12. [Implementation Plan](#12-implementation-plan)
-13. [Appendix](#13-appendix)
+2. [Problem Statement](#2-problem-statement)
+3. [Goals & Success Metrics](#3-goals--success-metrics)
+4. [User Personas](#4-user-personas)
+5. [Core Requirements](#5-core-requirements)
+6. [Core Features](#6-core-features)
+7. [Core Components](#7-core-components)
+8. [App/User Flows](#8-appuser-flows)
+9. [Tech Stack](#9-tech-stack)
+10. [Data Model](#10-data-model)
+11. [Implementation Plan](#11-implementation-plan)
+12. [Security & Compliance](#12-security--compliance)
+13. [Risks & Mitigations](#13-risks--mitigations)
+14. [Open Questions](#14-open-questions)
 
 ---
 
 ## 1. Executive Summary
 
-CareLog is a mobile health monitoring application targeting elderly patients, their caregivers, and attending physicians. The app enables structured, regular logging of clinical vitals and unstructured health data (photos, voice notes, prescriptions), with offline-first local storage and automatic background sync to an AWS-hosted FHIR-compliant backend when WiFi is available.
-
-The app is built on top of the Stanford Spezi framework — SpeziKt for Android and the Spezi iOS SDK — which provides native FHIR support, modular health data components, and accessibility-first design primitives. All structured clinical data is managed as FHIR R4 resources. Unstructured raw data (scanned prescriptions, wound photos, test result files) is stored in Amazon S3 and queued for future processing via Amazon SQS.
-
-A web portal for physicians provides clinical review, annotation, and care plan management. An LLM-powered health chat assistant is scoped as a placeholder in v1, to be fully implemented in a subsequent release.
+CareLog is a conversational, voice-first health monitoring platform for elderly patients, their caregivers, and attending physicians. Instead of requiring patients to navigate forms and input fields, CareLog uses natural language conversation — in English, Hindi, or Bengali — to extract, validate, and record structured health data. The caregiver configures what to monitor and how often; the patient simply talks; the doctor reviews structured, longitudinal data via a web portal. AI models (STT, TTS, LLM reasoning, vision) run locally on a Mac Mini M4 on the patient's LAN for low-latency inference, while all persistent data flows to an AWS cloud backend. The initial release is a pilot deployment for friends and family.
 
 ---
 
-## 2. Goals & Non-Goals
+## 2. Problem Statement
 
-### 2.1 Goals
+### The Problem
 
-- Enable elderly, non-tech-savvy patients to log daily health vitals with minimal friction.
-- Provide caregivers (relatives) with real-time visibility, configurable alerts, and threshold management.
-- Give attending physicians a clinical-grade web portal to review patient data, add care plan notes, and set threshold overrides.
-- Support offline-first logging with automatic background sync over WiFi.
-- Manage all structured clinical data as FHIR R4 resources via Spezi and AWS HealthLake.
-- Ensure compliance with HIPAA (US) and India's DPDP Act from the outset.
-- Deliver verbal acknowledgements via pre-recorded human voice clips for every save event.
+Elderly patients do not think in terms of forms, fields, or structured inputs. They think and communicate in stories — how they feel, what they experienced, what they remember measuring. Traditional health logging systems force them into rigid workflows that are:
 
-### 2.2 Non-Goals (v1)
+- **Cognitively demanding** — navigating UI hierarchies, selecting correct fields, entering precise values
+- **Error-prone** — mistyped values, skipped fields, incorrect units
+- **Frequently abandoned** — friction leads to inconsistent logging, which degrades clinical utility
 
-- LLM chat assistant implementation (placeholder UI only in v1).
-- Processing of uploaded raw files post-upload — deferred to a future release.
-- SMS or email alerting (push notifications only in v1).
-- Multi-language support (English only in v1).
-- Direct EHR integration with hospital systems.
-- Telemedicine or video consultation features.
+### Who It Affects
 
----
+- **Patients** (elderly, often non-tech-savvy) who need to log vitals regularly but struggle with structured interfaces
+- **Caregivers** (family members) who need visibility into the patient's health and control over what is monitored
+- **Doctors** who need structured, longitudinal data to make clinical decisions but don't have time to parse raw notes
 
-## 3. Personas
+### Why Existing Solutions Fall Short
 
-CareLog serves four distinct personas with separate access levels, interfaces, and capabilities. The patient is the mandatory central entity; all other personas are optional but additive.
-
-| Persona | Mandatory? | Interface | Primary Role |
-|---|---|---|---|
-| Patient | **Yes** | Mobile App | Primary health data logger; the focus of all monitoring. |
-| Attendant | No | Mobile App (patient's device) | Logs vitals and observations on patient's behalf; has own identity/credentials. |
-| Relative | No | Mobile App (own device) | Account creator; configures alerts, thresholds, and schedules; primary caregiver. |
-| Doctor | No (≥1 recommended) | Web Portal | Reviews patient data; sets clinical thresholds; annotates care plans. |
-
-### 3.1 Persona Capability Matrix
-
-| Capability | Patient | Attendant | Relative | Doctor |
-|---|---|---|---|---|
-| Log vitals (self) | ✅ Yes | On behalf | — | — |
-| Add observations/notes | ✅ Yes | ✅ Yes | — | ✅ Yes (web) |
-| Upload files & media | ✅ Yes | ✅ Yes | — | — |
-| View historical logs & trends | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes (web) |
-| Configure reminders & thresholds | — | ✅ Yes | ✅ Yes | ✅ Yes (overrides all) |
-| Receive push alert notifications | — | — | ✅ Yes | — |
-| Manage care plan | — | — | — | ✅ Yes (web) |
-| Onboard attendant/doctor | — | — | ✅ Yes | — |
-
----
-
-## 4. User Flows
-
-### 4.1 Onboarding Flow
-
-The relative initiates account setup for both themselves and the patient in a single flow on the relative's device.
-
-1. Relative downloads the CareLog app on their own device.
-2. Relative creates their own account (email/phone + password via AWS Cognito).
-3. Relative enters patient details (name, age, gender, medical conditions).
-4. App creates a linked patient account and generates a unique Patient ID.
-5. Relative optionally adds an attendant by entering their name and email address.
-6. System creates the attendant's account automatically and emails them their login credentials and a link to download the CareLog app.
-   - **SES sandbox flow (dev):** If the attendant's email is not yet verified in SES, a verification email is sent first. Once verified, a scheduled Lambda (every 2 minutes) detects the verification and sends the credentials email automatically.
-7. Doctor onboarding is deferred — relative can initiate this later from Settings.
-
-### 4.2 Doctor Onboarding Flow
-
-1. Relative navigates to **Settings > Care Team > Add Doctor**.
-2. Relative enters doctor's email address.
-3. System sends the doctor an invite email with a link to the CareLog web portal.
-4. Doctor registers on the web portal via AWS Cognito.
-5. Doctor is linked to the patient and gains access to the patient's FHIR data.
-
-### 4.3 Daily Logging Flow (Patient)
-
-1. Patient opens CareLog. Home/dashboard is displayed.
-2. If a reminder window has lapsed without a log, a prominent prompt is shown.
-3. Patient taps the relevant vital (e.g., Blood Pressure).
-4. App presents a full-screen, single-action input: large numeric entry or peripheral device input.
-5. Patient confirms the value and taps **Save**.
-6. App plays a pre-recorded human voice acknowledgement (e.g., *"Blood pressure saved successfully."*).
-7. Log is stored locally as a FHIR Observation resource.
-8. If WiFi is available, log is synced to AWS HealthLake in the background.
-
-### 4.4 Attendant Logging Flow
-
-1. Attendant opens CareLog on the patient's device and selects **Attendant Login**.
-2. Attendant enters their own credentials.
-3. App switches to Attendant view — same large-button UX, logs attributed to the attendant.
-4. Attendant can log vitals, upload files/media, add observations, and view history.
-5. All actions are recorded with the attendant's identity in the FHIR audit trail.
-
----
-
-## 5. Feature Specifications
-
-### 5.1 Structured Clinical Vitals Logging
-
-All structured vitals are stored as FHIR R4 Observation resources. Each observation captures: value, unit, timestamp, LOINC code, recording persona identity, and sync status.
-
-| Vital | FHIR Resource | LOINC Code | Input Method |
-|---|---|---|---|
-| Body Weight | Observation | 29463-7 | Numeric keypad |
-| Glucometer Reading | Observation | 2339-0 | Numeric keypad |
-| Temperature | Observation | 8310-5 | Numeric keypad |
-| Blood Pressure (Systolic) | Observation | 8480-6 | Numeric keypad or BP peripheral |
-| Blood Pressure (Diastolic) | Observation | 8462-4 | Numeric keypad or BP peripheral |
-| Pulse / Heart Rate | Observation | 8867-4 | Numeric keypad or peripheral |
-| SpO2 | Observation | 2708-6 | Numeric keypad or pulse oximeter |
-
-### 5.2 Unstructured Data Upload
-
-Unstructured data is uploaded to Amazon S3 and managed separately from FHIR structured data. The app generates a FHIR DocumentReference resource pointing to the S3 object key for traceability.
-
-**Supported media types:**
-- Prescription scans — camera capture or file upload (PDF/image)
-- Lab / test result files — PDF or image upload
-- Wound, urine, stool, vomit photographs — camera capture
-- Voice notes — in-app audio recording
-- Video notes — in-app video recording
-
-**Upload behaviour:**
-- Files are stored locally first if WiFi is unavailable.
-- Background upload to S3 via AWS API Gateway when WiFi is detected.
-- An SQS message is enqueued upon successful upload (for future processing pipelines).
-- A pre-recorded voice acknowledgement plays on upload success or failure.
-
-### 5.3 Verbal Acknowledgement System
-
-Every save or upload event triggers a pre-recorded human voice audio clip. This is a critical accessibility feature for non-tech-savvy elderly patients.
-
-- **Success clips:** one per vital type (e.g., *"Your blood pressure has been saved successfully."*)
-- **Failure clips:** generic upload failure and no-network warnings
-- Clips are bundled with the app — no network required to play
-- English only in v1; clip library to be extended for additional languages in future releases
-- Audio plays even when the device is in silent mode (using media audio stream)
-
-### 5.4 Reminder & Alert System
-
-#### 5.4.1 Reminder Logic
-
-- The relative configures a time window per vital type (e.g., *"Blood pressure must be logged every 12 hours"*).
-- If no log is made within the window, a push notification is sent to the patient's device.
-- A secondary notification is sent to the relative's device if the window is exceeded by a configurable grace period.
-
-#### 5.4.2 Threshold & Alarm Logic
-
-- The relative manually sets min/max thresholds for each vital.
-- If a doctor is onboarded, the doctor's thresholds override the relative's for clinical vitals.
-- When a logged value falls outside the active threshold, a push notification is sent to the relative's device.
-- **Threshold hierarchy:** Doctor (highest authority) > Relative (default if no doctor threshold set)
-
-### 5.5 LLM Chat Assistant (Placeholder)
-
-A placeholder entry point for an LLM-powered health chat assistant is included on the patient's and relative's home/dashboard screen. In v1, tapping the entry point displays a *"Coming soon"* screen. The assistant will be context-aware of the patient's FHIR data and will support both text and voice interaction in a future release.
-
----
-
-## 6. UX Design Principles
-
-### 6.1 Patient-Facing App
-
-- **One action per screen** — never show more than one primary action at a time.
-- **Large touch targets** — minimum 48×48dp tap area; ideally 72dp+ for primary actions.
-- **High contrast** — WCAG AA minimum (4.5:1 contrast ratio); targeting AAA (7:1) for primary elements.
-- **Minimal text** — icons with single-word labels; avoid paragraphs of instruction.
-- **Voice feedback** — pre-recorded acknowledgements for every meaningful action.
-- **Persistent home/dashboard** — always accessible via a single tap from any screen.
-- **No hidden navigation** — bottom tab bar with 3–4 tabs maximum.
-
-### 6.2 Relative-Facing App
-
-- **Dashboard overview** — at-a-glance summary of patient's last logged vitals with timestamps.
-- **Alert inbox** — chronological list of threshold violations and reminder breaches.
-- **Settings panel** — configure thresholds, reminder windows, care team, and notification preferences.
-- **Trends view** — time-series charts per vital, configurable date range.
-
-### 6.3 Doctor Web Portal
-
-- Patient list with last-activity timestamps.
-- Per-patient FHIR data viewer with timeline and charting.
-- Care plan editor — add/update care plan notes and clinical thresholds.
-- Annotation tool — add clinical notes to individual FHIR Observations.
-
----
-
-## 7. Technical Architecture
-
-### 7.1 Mobile App Framework
-
-| Platform | Framework | Repository |
-|---|---|---|
-| Android | SpeziKt (Stanford Spezi Kotlin) | https://github.com/StanfordSpezi/SpeziKt |
-| iOS | Spezi iOS SDK | https://github.com/StanfordSpezi/ |
-
-- **FHIR version:** R4
-- **Local FHIR store:** Spezi's built-in local FHIR storage module for offline-first persistence
-- **Background sync:** triggered by WiFi connectivity change events
-
-### 7.2 Backend Architecture
-
-| Component | AWS Service | Purpose |
-|---|---|---|
-| API Entry Point | Amazon API Gateway | Single entry point for all client requests; auth via Cognito authorizer |
-| Structured FHIR Data | Amazon S3 | FHIR R4 Observations stored as JSON files in S3 under `observations/{patientId}/{YYYY}/{MM}/{DD}/` (KMS encrypted). HealthLake integration deferred to future release. |
-| Raw Unstructured Files | Amazon S3 | Storage for photos, voice notes, videos, scans, PDFs (KMS encrypted, lifecycle tiering to Glacier) |
-| App Metadata & Config | Amazon RDS (PostgreSQL 15) | Users, persona links, thresholds, reminder configs, audit metadata (private subnet, SSL enforced) |
-| Async Processing Queue | Amazon SQS | Document processing queue + alerts queue (both with DLQs); S3 upload triggers |
-| Identity & Auth | Amazon Cognito | All persona authentication; 4 groups with custom attributes (`persona_type`, `linked_patient_id`) |
-| Push Notifications | Amazon SNS / Firebase FCM | Push alerts to relative's device for threshold violations and reminder breaches |
-| Serverless Compute | AWS Lambda (Node.js 20) | 10+ deployed functions for CRUD, sync, invites, notifications, patient summary (packaged and deployed by Terraform + manual) |
-| Scheduled Tasks | Amazon EventBridge | Scheduled rules for processing pending invites (SES verification polling) |
-| Infrastructure | Terraform | VPC, Cognito, API Gateway, RDS, S3, SQS, SNS, Bastion, Lambda — all deployed as IaC in a single `terraform apply` |
-| RDS Access | EC2 Bastion + SSM | Port-forwarding via AWS Systems Manager Session Manager (no exposed DB endpoints) |
-| Database Migrations | Flyway | Versioned SQL migrations in `backend/database/migrations/` |
-
-**Deployment note:** Terraform deploys everything in one step — infrastructure and Lambda functions. Run `npm install` in each Lambda directory before `terraform apply`. All Lambda `@aws-sdk/*` dependencies must be `^3.978.0` or later (Node.js 20 required).
-
-### 7.3 Data Architecture
-
-#### 7.3.1 Structured Data (FHIR)
-
-- All clinical vitals stored as FHIR R4 Observation JSON files in S3 at `observations/{patientId}/{YYYY}/{MM}/{DD}/{observationId}.json`.
-- Each Observation references: Patient resource, author identity, LOINC code, value, timestamp.
-- S3 object metadata includes: patient-id, user-id, loinc-code, vital-type.
-- All objects encrypted with KMS (customer-managed key, enforced by bucket policy).
-- Unstructured file uploads produce a FHIR DocumentReference pointing to the S3 object key.
-- Care plan entries stored as FHIR CarePlan resources.
-- Doctor annotations stored as FHIR Annotation elements within Observations or CarePlan.
-- **Future:** Migrate to AWS HealthLake when FHIR query capabilities are needed.
-
-#### 7.3.2 Unstructured Data (S3)
-
-- **S3 key format:** `{patient_id}/{year}/{month}/{day}/{timestamp}_{type}_{filename}`
-- All objects encrypted at rest using SSE-KMS.
-- Presigned URLs used for upload from mobile app — never expose S3 credentials.
-- Upon successful upload, SQS message enqueued with: `patient_id`, `s3_key`, `file_type`, `uploader_persona`, `timestamp`.
-
-#### 7.3.3 Offline Sync Strategy
-
-- All data written to local Spezi FHIR store immediately on save.
-- A sync queue tracks unsynced resources (FHIR Observations + S3 pending uploads).
-- On WiFi connect event: sync queue is flushed in FIFO order.
-- **Conflict resolution:** server-wins for FHIR Observations (last-write-wins with timestamp); for S3 objects, always upload if not yet present.
-
-### 7.4 Identity & Access Control
-
-| Persona | Access |
+| Existing Approach | Limitation |
 |---|---|
-| Auth Provider | AWS Cognito — single user pool with 4 groups (`patients`, `attendants`, `relatives`, `doctors`) |
-| Patient | Read/write own Observations; read-only own history |
-| Attendant | Read/write Observations attributed to patient; own identity in audit log |
-| Relative | Full read access to patient data; write access to thresholds, reminders, care team config; **only persona that can self-register** |
-| Doctor | Full read access via web portal; write access to care plan and clinical thresholds |
-| Token Strategy | JWT access tokens (1hr) + refresh tokens (30 days mobile, 7 days web); stored in secure device keystore |
-| Custom Attributes | `custom:persona_type`, `custom:linked_patient_id`, `custom:onboarded_by` — used for persona routing and patient linking |
+| Manual health diaries | Unstructured, illegible, no alerts, no trend analysis |
+| Form-based health apps | High friction for elderly users; require literacy with mobile UIs |
+| Wearable-only monitoring | Limited to what the device can measure; no subjective symptoms, no context |
+| Telehealth platforms | Require scheduled appointments; not designed for daily monitoring |
 
-**Persona lifecycle:**
-1. Only caregivers (relatives) can self-register
-2. Caregivers create patients → `create-patient` Lambda (also ensures caregiver's own RDS user record exists and sets `custom:linked_patient_id` on their Cognito account server-side)
-3. Caregivers invite attendants → `invite-attendant` Lambda creates the attendant's Cognito account immediately with a generated password, creates RDS user record + persona_link, and emails the credentials. No separate acceptance step required.
-4. Caregivers invite doctors → `invite-doctor` Lambda sends SES invite email; doctors accept via `accept-invite` Lambda which creates their Cognito account
-5. Caregivers can remove team members or cascade-delete patients via `remove-team-member` / `delete-patient`
-6. **Relative dashboard** fetches patient data via `patient-summary` Lambda (`GET /patients/{patientId}/summary`) which returns patient info, latest vitals from S3, unread alert count, and last activity time
+CareLog inverts the paradigm: instead of making users adapt to structured systems, the system adapts to how users naturally communicate.
 
 ---
 
-## 8. Compliance & Security
+## 3. Goals & Success Metrics
 
-### 8.1 HIPAA (United States)
+### Goals
 
-- Business Associate Agreement (BAA) required with AWS.
-- All PHI encrypted in transit (TLS 1.2+) and at rest (AES-256 / SSE-KMS).
-- Audit logging: all access and modification events logged to AWS CloudTrail and stored in immutable S3.
-- Access controls: minimum necessary access enforced via Cognito groups and IAM roles.
-- Data retention and deletion policies to be defined per HIPAA requirements.
-- Breach notification procedures to be documented in operational runbook.
+- Enable elderly patients to log health vitals through natural voice conversation with minimal friction
+- Allow caregivers to design and evolve monitoring protocols conversationally
+- Deliver structured, FHIR-compliant clinical data to doctors via a web portal
+- Achieve end-to-end response latency (speech in → voice response out) at P95 < 2 seconds
+- Support English, Hindi, and Bengali from launch
+- Comply with HIPAA and India's DPDP Act
 
-### 8.2 India DPDP Act
+### Success Metrics (Pilot Phase)
 
-- Explicit, informed consent collected from the patient (or relative on behalf) at onboarding.
-- Consent records stored in RDS with timestamp and version of consent text shown.
-- **Data localisation:** patient data for Indian users stored in `ap-south-1` (Mumbai) region — this is the primary deployment region.
-- Data principal rights: patient/relative can request data export or deletion via in-app request flow.
-- Purpose limitation: data collected only for health monitoring; no secondary use without re-consent.
-
-### 8.4 Infrastructure Security (Implemented)
-
-- **RDS:** Private subnet only, SSL enforced (`rds.force_ssl = 1`), KMS encryption at rest, access via bastion SSM port-forwarding only
-- **S3:** Public access blocked, bucket policy enforces TLS, SSE-KMS encryption, lifecycle tiering (90d → Intelligent-Tiering, 365d → Glacier)
-- **Secrets:** RDS password auto-generated (32 chars), stored in AWS Secrets Manager, `flyway.conf` gitignored
-- **CloudTrail:** Multi-region audit trail, 7-year immutable retention (Object Lock), alarms for unauthorized API calls and root account usage
-- **KMS:** Auto-rotation enabled on all customer-managed keys (RDS, S3, SQS, HealthLake)
-- **Bastion:** SSM Session Manager only (no SSH keys, no inbound rules), IMDSv2 enforced
-
-### 8.3 General Security Requirements
-
-- App requires device passcode/biometric to be enabled.
-- Certificate pinning on all API calls from the mobile app.
-- No PHI stored in device logs, analytics, or crash reports.
-- Penetration testing required before v1 release.
-- Vulnerability disclosure policy to be published.
+| Metric | Target |
+|---|---|
+| Session completion rate | > 80% of initiated sessions result in all required parameters logged |
+| Data accuracy | > 95% of extracted values match patient-intended values (post-confirmation) |
+| Daily adherence | > 70% of days with complete parameter logs within configured deadlines |
+| Response latency (P95) | < 2 seconds end-to-end |
+| Patient satisfaction | Qualitative — patients find it easier than manual logging |
 
 ---
 
-## 9. Non-Functional Requirements
+## 4. User Personas
+
+CareLog serves three distinct personas. The caregiver is the administrative hub; the patient is the primary data source; the doctor is the clinical consumer.
+
+| Persona | Interface | Primary Role | Key Needs | Pain Points |
+|---|---|---|---|---|
+| **Patient** | Android mobile app (voice-first) | Logs health data through conversation | Low-friction interaction; native language support; gentle reminders | Forgets values; intimidated by technology; finds forms confusing |
+| **Caregiver** | Android mobile app (voice-first) | Configures monitoring protocols; onboards patient and doctor; receives alerts | Visibility into patient's health; control over what is tracked; anomaly alerts | Cannot always be physically present; needs confidence that logging is happening |
+| **Doctor** | Web portal | Reviews structured longitudinal data; sets clinical thresholds; recommends parameters | Structured trends and charts; ability to override thresholds; no interaction overhead | Doesn't have time for unstructured data; needs clinically actionable summaries |
+
+### Relationships
+
+- One caregiver per patient (1:1)
+- One or more doctors per patient
+- Caregiver onboards both the patient and the doctor
+- Doctor can view and modify monitoring protocols (parameters, thresholds) but cannot onboard users
+
+---
+
+## 5. Core Requirements
+
+### Functional Requirements
+
+| ID | Requirement | Priority | Notes |
+|---|---|---|---|
+| FR-01 | Conversational voice-first health data logging for patients | **Must** | Primary interaction modality |
+| FR-02 | Conversational voice-first protocol configuration for caregivers | **Must** | Parameters, frequency, deadlines |
+| FR-03 | Multi-language support: English, Hindi, Bengali | **Must** | STT, TTS, and LLM must handle all three |
+| FR-04 | Photo-based device reading (glucometer, BP monitor, etc.) | **Must** | Vision model extracts value; patient confirms |
+| FR-05 | FHIR R4 Observation generation directly from conversation | **Must** | No intermediate unstructured storage |
+| FR-06 | Raw interaction logging (audio + transcripts) to cloud | **Must** | For audit, compliance, and analytics |
+| FR-07 | Caregiver-configured per-parameter frequency and daily deadline | **Must** | Hourly reminders after deadline |
+| FR-08 | Push notifications to caregiver for anomalies and missed measurements | **Must** | Via Firebase Cloud Messaging |
+| FR-09 | Doctor web portal with structured longitudinal patient view | **Must** | Trends, charts, FHIR data |
+| FR-10 | Doctor can modify monitoring parameters and thresholds | **Must** | Reflected in patient's next session |
+| FR-11 | Caregiver onboards patient and doctor via invite links (SMS + email) | **Must** | Login credentials included |
+| FR-12 | Model endpoint health check from mobile app | **Must** | Periodic check that Mac Mini models are up |
+| FR-13 | System-recommended parameter additions (from offline analytics) | **Should** | Presented conversationally to caregiver |
+| FR-14 | Doctor-recommended parameter additions (via web portal) | **Should** | Logged in backend, surfaced to caregiver |
+| FR-15 | Cross-session continuity (new parameters introduced gently) | **Should** | Patient asked if they were informed |
+| FR-16 | Edge case handling: implausible values, unreported symptoms, emergencies | **Should** | See Section 6.5 |
+| FR-17 | Text input as fallback for voice | **Should** | For noisy environments or preference |
+| FR-18 | Direct Bluetooth device integration | **Won't** | Future roadmap |
+| FR-19 | iOS mobile app | **Won't** | Android only at launch |
+| FR-20 | Offline mode | **Won't** | Online-only; requires Mac Mini connectivity |
+| FR-21 | In-app messaging between caregiver and doctor | **Won't** | Deferred |
+| FR-22 | Doctor onboarding patients directly | **Won't** | Caregiver is the sole onboarding hub |
+
+### Non-Functional Requirements
 
 | Category | Requirement | Target |
 |---|---|---|
-| Performance | Vital log screen load time | < 1 second |
-| Performance | Background sync initiation after WiFi connect | < 5 seconds |
-| Performance | Voice acknowledgement playback latency | < 500ms after save |
-| Reliability | Local storage availability (offline) | 100% — no dependency on network for logging |
-| Reliability | API Gateway uptime | 99.9% SLA |
-| Scalability | Concurrent patients per deployment | 10,000+ (v1 target) |
-| Accessibility | WCAG compliance level | AA minimum; AAA for core patient screens |
-| Platforms | Android version support | Android 9 (API 28)+ |
-| Platforms | iOS version support | iOS 15+ |
+| Latency | End-to-end conversational response (speech → voice reply) | P95 < 2 seconds |
+| Availability | Cloud backend uptime | 99.9% |
+| Availability | Mac Mini model endpoint uptime | Best-effort (household device) |
+| Security | Data encryption in transit | TLS 1.2+ |
+| Security | Data encryption at rest | AES-256 / SSE-KMS |
+| Compliance | HIPAA | Required |
+| Compliance | India DPDP Act | Required |
+| Accessibility | Touch targets | Minimum 48x48dp; 72dp+ for primary actions |
+| Accessibility | Contrast | WCAG AA minimum (4.5:1) |
+| Languages | Supported at launch | English, Hindi, Bengali |
+| Platform | Android minimum version | Android 9 (API 28)+ |
 
 ---
 
-## 10. Open Questions & Decisions Deferred
+## 6. Core Features
 
-| Open Question | Notes |
+### 6.1 Conversational Health Logging (Patient)
+
+The patient interacts with CareLog through a voice-first conversational interface. The system uses a dynamic conversational protocol anchored to the caregiver-configured parameter set.
+
+**How it works:**
+- System begins with an open-ended prompt (e.g., "How are you feeling today?")
+- Patient responds freely in their native language (English, Hindi, or Bengali)
+- System extracts any health data mentioned (values, symptoms, measurements)
+- System confirms extracted values with the patient
+- System identifies missing required parameters and asks one follow-up question at a time
+- Conversation continues until all required parameters are captured or the patient ends the session
+- All confirmed values are written as FHIR R4 Observation resources
+
+**Acceptance Criteria:**
+- [ ] Patient can initiate a voice conversation session from the app home screen
+- [ ] System correctly extracts numeric health values from natural speech in all 3 languages
+- [ ] System confirms each extracted value before recording it
+- [ ] System asks about uncaptured required parameters one at a time
+- [ ] Session produces valid FHIR R4 Observation resources for each captured parameter
+- [ ] Raw audio and transcripts are logged to the cloud backend
+- [ ] Audio and transcripts are deleted from the Mac Mini after upload
+
+### 6.2 Photo-Based Device Reading
+
+When a patient cannot recall a measurement value, the system suggests taking a photo of the device display.
+
+**How it works:**
+- System detects that a measurement was taken but the value is unknown
+- System prompts the patient to photograph the device screen
+- Vision model on Mac Mini extracts the numeric value from the image
+- System reads the extracted value back to the patient for confirmation
+- On confirmation, the value is recorded as a FHIR Observation
+
+**Acceptance Criteria:**
+- [ ] System correctly prompts for a photo when a value is missing
+- [ ] Vision model extracts numeric values from common device displays (glucometer, BP monitor, thermometer, pulse oximeter, weighing scale)
+- [ ] Extracted value is read back to patient for verbal confirmation before recording
+- [ ] If extraction fails or is ambiguous, system asks the patient to re-take the photo or provide the value verbally
+
+### 6.3 Conversational Protocol Configuration (Caregiver)
+
+The caregiver defines and evolves the monitoring protocol through conversation, not forms.
+
+**How it works:**
+- During initial setup, the system asks the caregiver about the patient: name, age, gender, conditions, medical history, doctors involved
+- The caregiver speaks naturally; the system extracts and structures the data
+- The system solicits the set of health parameters to track (e.g., BP, blood sugar, weight, temperature, SpO2)
+- For each parameter, the caregiver sets a logging frequency (e.g., "at least once daily", "at least once every 3 days")
+- The caregiver sets a daily deadline — a time after which the patient starts receiving hourly reminders
+- Parameters can be added or removed at any time through conversation
+- The system maintains a set of dev-configured **topics** (e.g., dietary restrictions, medication changes) and weaves questions about incomplete or outdated topics into conversations organically
+
+**Acceptance Criteria:**
+- [ ] Caregiver can set up a patient profile entirely through voice conversation
+- [ ] Caregiver can add/remove health parameters conversationally
+- [ ] Caregiver can set per-parameter frequency (at least once every N days)
+- [ ] Caregiver can set a daily logging deadline for the patient
+- [ ] Changes to the protocol are reflected in the patient's next session
+- [ ] System-maintained topics grow the patient profile over time without explicit "update" workflows
+
+### 6.4 Reminder and Alert System
+
+**Reminders (to patient):**
+- Caregiver configures a max time of day (daily deadline) for logging
+- If the patient has not completed logging by the deadline, hourly push notifications begin
+- Reminders continue until the patient completes a session
+
+**Alerts (to caregiver):**
+- Anomalous readings (outside threshold) trigger a push notification to the caregiver
+- Missed measurements (parameter not logged within configured frequency window) trigger a push notification to the caregiver
+- Alerts are delivered via Firebase Cloud Messaging
+
+**Acceptance Criteria:**
+- [ ] Patient receives hourly push reminders starting from the configured daily deadline if logging is incomplete
+- [ ] Caregiver receives push notification within 60 seconds of an anomalous reading being recorded
+- [ ] Caregiver receives push notification when a parameter's configured frequency window expires without a log
+- [ ] Caregiver can view logs on-demand in the app (no automatic summary notifications)
+
+### 6.5 Edge Case Handling
+
+The conversational system must handle the following edge cases gracefully:
+
+| Edge Case | System Behavior |
 |---|---|
-| Bluetooth peripheral integration | Will the app integrate directly with BLE blood pressure cuffs, glucometers, or pulse oximeters via Spezi's peripheral modules? Scope TBD. |
-| Raw file processing pipeline | Post-upload processing of scanned prescriptions and test results is out of scope for v1. SQS placeholder is in place. |
-| LLM chat assistant implementation | Placeholder UI in v1. Model selection, RAG over patient FHIR data, and voice interaction deferred to v2. |
-| Multi-language support | English only in v1. Localization for Hindi and regional languages to be scoped for v2. |
-| Doctor threshold conflict UI | If a doctor overrides a relative's threshold, should the relative receive a notification? UX flow not yet defined. |
-| Patient data export format | FHIR Bundle export vs. human-readable PDF summary for DPDP Act data portability compliance. |
-| App store distribution | Internal enterprise distribution vs. public App Store / Play Store — affects MDM requirements. |
+| **Implausible value** (e.g., BP 300/200) | System flags the value as unusual, reads it back, and asks the patient to re-check and confirm or correct |
+| **New unreported symptom** | System acknowledges the symptom, records it as a FHIR Observation (coded if possible, free-text if not), and notes it for the caregiver/doctor |
+| **Emergency/urgent concern** | System advises the patient to contact their caregiver or emergency services; logs the interaction and sends an immediate alert to the caregiver |
+| **Patient confused or unresponsive** | System pauses, offers to try again later, and notifies the caregiver that the session was incomplete |
+| **Value mentioned but not recalled** | System suggests taking a photo of the device display (see 6.2) |
+
+**Acceptance Criteria:**
+- [ ] System detects and challenges physiologically implausible values before recording
+- [ ] Unreported symptoms are captured and surfaced to caregiver/doctor
+- [ ] Emergency keywords trigger caregiver alert and appropriate patient guidance
+- [ ] Incomplete sessions are logged and caregiver is notified
+
+### 6.6 System-Guided Parameter Recommendations
+
+Two sources feed parameter recommendations:
+
+1. **Offline analytics system** — mines patient data and daily logs to suggest new parameters (e.g., "Patient is diabetic and only logging one glucose value per day — recommend splitting into fasting and post-meal readings")
+2. **Doctor recommendations** — logged through the web portal
+
+Recommendations are presented conversationally to the caregiver. The caregiver can accept or reject them. If accepted, the parameter set is updated and the system gently introduces the new parameter in the patient's next session.
+
+**Acceptance Criteria:**
+- [ ] Recommendations from the analytics system are presented to the caregiver during their next conversation
+- [ ] Doctor recommendations logged in the web portal are surfaced to the caregiver
+- [ ] Caregiver can accept or reject recommendations conversationally
+- [ ] Accepted parameters are introduced gently in the patient's next session (patient is asked if they were informed)
+
+### 6.7 Doctor Web Portal
+
+A web-based interface for doctors to review structured patient data without interacting with the conversational system.
+
+**Capabilities:**
+- View patient list with last-activity timestamps
+- Per-patient longitudinal view: vitals trends, charts, FHIR Observations timeline
+- Modify monitoring protocol: add/remove parameters, set/override clinical thresholds
+- Recommend new parameters (surfaced to caregiver)
+
+**Not in v0 (deferred):**
+- Messaging between doctor and caregiver
+- Doctor-initiated patient onboarding
+
+**Acceptance Criteria:**
+- [ ] Doctor can log in to the web portal and view their linked patients
+- [ ] Doctor can view time-series charts of patient vitals with configurable date ranges
+- [ ] Doctor can add/remove parameters and set thresholds; changes are reflected in the patient's next session
+- [ ] Doctor can add parameter recommendations that are surfaced to the caregiver
+
+### 6.8 Model Endpoint Health Check
+
+The mobile app periodically verifies that the Mac Mini model endpoints are reachable and healthy.
+
+**Acceptance Criteria:**
+- [ ] App checks model endpoint health on launch and at configurable intervals
+- [ ] If any endpoint is unreachable, the app displays a clear status message to the user
+- [ ] App does not allow a conversational session to start if required model endpoints are down
 
 ---
 
-## 11. Suggested v1 Milestones
+## 7. Core Components
 
-| Milestone | Name | Key Deliverables |
+### 7.1 System Architecture
+
+```mermaid
+graph TB
+    subgraph "Patient/Caregiver Device"
+        APP[Android App<br/>Voice-first UI]
+    end
+
+    subgraph "Local LAN - Mac Mini M4"
+        STT[STT Model<br/>Speech-to-Text]
+        LLM[LLM Reasoning<br/>Qwen / Gemma 3n]
+        TTS[TTS Model<br/>Text-to-Speech]
+        VIS[Vision Model<br/>Device Display Reader]
+    end
+
+    subgraph "AWS Cloud (ap-south-1)"
+        APIGW[API Gateway]
+        COG[Cognito<br/>Auth]
+        LAMBDA[Lambda Functions<br/>Node.js 20]
+        RDS[(RDS PostgreSQL 15<br/>Users, Config, Audit)]
+        S3_FHIR[(S3 - FHIR<br/>Observations JSON)]
+        S3_RAW[(S3 - Raw<br/>Audio, Transcripts)]
+        SQS[SQS<br/>Async Processing]
+        SNS[SNS / FCM<br/>Push Notifications]
+        ANALYTICS[Offline Analytics<br/>Parameter Recommendations]
+    end
+
+    subgraph "Doctor"
+        WEB[Web Portal<br/>React/TypeScript]
+    end
+
+    APP -- "Voice/Photo (direct LAN)" --> STT
+    APP -- "Voice/Photo (direct LAN)" --> VIS
+    STT -- "Transcript" --> LLM
+    VIS -- "Extracted value" --> LLM
+    LLM -- "Response text" --> TTS
+    TTS -- "Audio response" --> APP
+
+    APP -- "FHIR Observations, Logs" --> APIGW
+    APIGW --> COG
+    APIGW --> LAMBDA
+    LAMBDA --> RDS
+    LAMBDA --> S3_FHIR
+    LAMBDA --> S3_RAW
+    LAMBDA --> SQS
+    LAMBDA --> SNS
+    SNS --> APP
+
+    WEB --> APIGW
+    ANALYTICS --> RDS
+```
+
+### 7.2 Component Responsibilities
+
+| Component | Responsibility |
+|---|---|
+| **Android App** | Voice-first UI for patient and caregiver; direct communication with Mac Mini for model calls; FHIR resource construction; interaction logging to cloud; push notification receipt |
+| **Mac Mini M4 (STT)** | Converts patient/caregiver speech to text in English, Hindi, Bengali. Ephemeral processing — no data retained. |
+| **Mac Mini M4 (LLM)** | Drives conversational logic: parameter extraction, follow-up question generation, protocol state management, FHIR resource structuring. Candidates: Qwen, Gemma 3n. Ephemeral processing. |
+| **Mac Mini M4 (TTS)** | Converts LLM response text to natural speech in the patient's language. Ephemeral processing. |
+| **Mac Mini M4 (Vision)** | Extracts numeric values from photos of medical device displays. Ephemeral processing. |
+| **API Gateway** | Single entry point for all cloud API calls; Cognito authorizer for authentication |
+| **Cognito** | Identity and access management; 3 user groups: `patients`, `caregivers`, `doctors`; custom attributes for persona routing |
+| **Lambda Functions** | Business logic: patient CRUD, FHIR storage, invite flows, alert evaluation, threshold management, interaction logging |
+| **RDS (PostgreSQL 15)** | Users, persona links, parameter configs, frequency/threshold settings, consent records, audit metadata |
+| **S3 (FHIR)** | FHIR R4 Observation JSON files at `observations/{patientId}/{YYYY}/{MM}/{DD}/{id}.json` (KMS encrypted) |
+| **S3 (Raw)** | Raw audio recordings and transcripts at `interactions/{patientId}/{YYYY}/{MM}/{DD}/{sessionId}/` (KMS encrypted) |
+| **SQS** | Async processing queue for alerts, recommendations pipeline, and deferred tasks |
+| **SNS / FCM** | Push notifications to caregiver for anomalies and missed measurements |
+| **Offline Analytics** | Separate system with read access to patient data; generates parameter recommendations |
+| **Web Portal** | React/TypeScript app for doctors; Cognito auth; reads FHIR data via API Gateway |
+
+### 7.3 Conversational Engine Architecture
+
+The conversational engine runs on the Mac Mini M4 and orchestrates the interaction flow:
+
+```mermaid
+sequenceDiagram
+    participant P as Patient (Android App)
+    participant STT as STT Model
+    participant LLM as LLM (Qwen/Gemma 3n)
+    participant TTS as TTS Model
+    participant VIS as Vision Model
+    participant API as AWS Cloud API
+
+    P->>STT: Audio stream (voice)
+    STT->>LLM: Transcript text
+    Note over LLM: Maintains session state:<br/>- Required parameters<br/>- Captured values<br/>- Conversation history
+    LLM->>LLM: Extract health data from transcript
+    LLM->>LLM: Identify missing parameters
+    LLM->>LLM: Generate empathetic follow-up
+    LLM->>TTS: Response text
+    TTS->>P: Audio response
+
+    Note over P: Patient takes photo of device
+    P->>VIS: Device display photo
+    VIS->>LLM: Extracted numeric value
+    LLM->>TTS: "I see 130 over 85. Is that correct?"
+    TTS->>P: Audio confirmation request
+
+    Note over LLM: On session complete
+    LLM->>P: FHIR Observations (structured)
+    P->>API: Store FHIR Observations
+    P->>API: Store raw audio + transcripts
+    P-->>P: Delete local audio/transcripts
+```
+
+---
+
+## 8. App/User Flows
+
+### 8.1 Caregiver Registration and Patient Onboarding
+
+1. Caregiver downloads the CareLog Android app
+2. Caregiver creates their own account (email/phone + password via AWS Cognito)
+3. System initiates a conversational onboarding flow:
+   - "Tell me about the patient you'd like to set up monitoring for"
+   - Caregiver speaks naturally about the patient (name, age, gender, conditions, medical history)
+   - System extracts and confirms structured data from the conversation
+4. System creates the patient account with extracted details
+5. System asks the caregiver about monitoring parameters:
+   - "What health measurements would you like to track?"
+   - Caregiver mentions parameters (e.g., "blood pressure, sugar, weight, temperature, SpO2")
+   - For each parameter, system asks about frequency ("How often should blood pressure be logged?")
+   - System asks about the daily deadline ("What time should logging be completed by?")
+6. App download link and login credentials are sent to the patient via SMS and email
+7. Patient profile and monitoring protocol are saved to the cloud backend
+
+### 8.2 Doctor Onboarding
+
+1. Caregiver navigates to care team settings
+2. Caregiver enters doctor's details (name, email, phone)
+3. System sends the doctor an invite link via SMS and email with login credentials
+4. Doctor registers on the web portal using the provided credentials
+5. Doctor is linked to the patient and gains access to the patient's FHIR data
+
+### 8.3 Patient Daily Logging Session
+
+1. Patient opens the CareLog app (or responds to a reminder notification)
+2. App checks Mac Mini model endpoint health
+   - If endpoints are down: display status message, do not start session
+   - If endpoints are healthy: proceed
+3. Patient taps "Start Conversation" or uses a voice trigger
+4. System greets the patient and asks an open-ended question: "How are you feeling today?"
+5. Patient responds freely in their preferred language (English, Hindi, or Bengali)
+6. System extracts any health data from the response:
+   - If a value is mentioned: "I heard your blood pressure is 130 over 85. Is that right?"
+   - If a measurement is mentioned without a value: "You mentioned you checked your sugar. Do you remember the reading, or would you like to take a photo of the meter?"
+   - If a new symptom is mentioned: system acknowledges and records it
+7. System identifies remaining required parameters and asks about them one at a time
+8. For each captured value:
+   - System confirms the value with the patient
+   - On confirmation, a FHIR R4 Observation is constructed
+9. If the patient requests a photo capture:
+   - App opens the camera
+   - Patient photographs the device display
+   - Vision model extracts the value
+   - System reads the value back for confirmation
+10. When all required parameters are captured (or patient ends the session):
+    - FHIR Observations are pushed to the cloud backend
+    - Raw audio and transcripts are pushed to the cloud backend
+    - Audio and transcripts are deleted from the Mac Mini
+    - If any parameters are missing, the session is marked incomplete and the caregiver is notified
+
+### 8.4 Caregiver Protocol Update
+
+1. Caregiver opens the app and initiates a conversation
+2. System checks for pending items:
+   - Parameter recommendations from the offline analytics system
+   - Doctor-recommended parameter additions
+   - Incomplete or outdated topics in the patient profile
+3. System presents recommendations conversationally: "Based on your father's recent readings, the system suggests tracking fasting glucose separately from post-meal glucose. Would you like to add that?"
+4. Caregiver accepts or rejects each recommendation verbally
+5. Caregiver can also proactively add/remove parameters or change frequencies
+6. Updated protocol is saved to the cloud backend
+7. Patient's next session reflects the changes (with gentle introduction)
+
+### 8.5 Reminder and Alert Flow
+
+1. System checks daily at the configured deadline whether the patient has completed logging
+2. If incomplete: patient receives a push notification ("Time to log your health readings")
+3. If still incomplete after 1 hour: another push notification
+4. Reminders repeat hourly until the patient completes a session
+5. When a logged value falls outside the threshold:
+   - Caregiver receives a push notification immediately (e.g., "Dad's blood pressure is 165/100 — above the 140/90 threshold")
+6. When a parameter's frequency window expires without a log:
+   - Caregiver receives a push notification (e.g., "Dad hasn't logged his weight in 4 days — configured for every 3 days")
+
+### 8.6 Doctor Review Flow
+
+1. Doctor logs in to the web portal
+2. Doctor sees their patient list with last-activity timestamps
+3. Doctor selects a patient to view:
+   - Time-series vitals charts (configurable date range)
+   - FHIR Observation timeline
+   - Current monitoring protocol (parameters, frequencies, thresholds)
+4. Doctor can modify the protocol:
+   - Add or remove parameters
+   - Set or override thresholds
+   - Add a parameter recommendation (surfaced to caregiver)
+5. Changes are saved to the backend and reflected in the patient's next session
+
+---
+
+## 9. Tech Stack
+
+### 9.1 Mobile App (Patient + Caregiver)
+
+| Layer | Technology | Justification |
 |---|---|---|
-| M0 | Foundation | Spezi project setup (Android + iOS), AWS Cognito auth, local FHIR store, basic patient profile creation |
-| M1 | Core Logging | All 6 vital logging screens, pre-recorded voice acknowledgements, offline local storage, FHIR Observation mapping |
-| M2 | Sync & Upload | Background WiFi sync to HealthLake, S3 upload for unstructured files, SQS integration, sync status indicators |
-| M3 | Relative App | Relative mobile app: dashboard, trends view, threshold configuration, reminder window config, push notifications |
-| M4 | Attendant & Multi-persona | Attendant login flow on patient device, persona-attributed audit trail, attendant capability enforcement |
-| M5 | Doctor Web Portal | Read-only data viewer, care plan editor, clinical threshold override, doctor onboarding via invite |
-| M6 | Compliance & Hardening | HIPAA audit logging, DPDP consent flow, encryption audit, penetration testing, app store submission |
+| Platform | Android (API 28+) | Primary target demographic; single-platform simplicity for pilot |
+| Language | Kotlin | Modern Android standard; Jetpack Compose support |
+| UI Framework | Jetpack Compose | Declarative UI; accessibility-first primitives; large touch targets |
+| DI | Hilt | Standard Android dependency injection |
+| State Management | ViewModel + StateFlow | Lifecycle-aware, reactive state |
+| Networking (Cloud) | Retrofit2 + OkHttp | Mature HTTP client; interceptors for Cognito auth headers |
+| Networking (Mac Mini) | Retrofit2 / gRPC | Direct LAN calls to model endpoints |
+| Auth | AWS Amplify (Cognito) | Managed auth flows; token refresh |
+| FHIR | HAPI FHIR (Android) | FHIR R4 resource construction and validation |
+| Push Notifications | Firebase Cloud Messaging | Standard Android push infrastructure |
 
----
+### 9.2 Local Model Serving (Mac Mini M4)
 
-## 12. Implementation Plan
-
-### 12.1 Team & Roles
-
-| Role | Headcount | Primary Responsibilities |
+| Layer | Technology | Justification |
 |---|---|---|
-| Mobile Engineer (Android) | 1 | SpeziKt integration, Android app screens, offline sync, BLE peripherals |
-| Mobile Engineer (iOS) | 1 | Spezi iOS integration, iOS app screens, offline sync, BLE peripherals |
-| Backend Engineer | 1 | AWS infrastructure, API Gateway, HealthLake, S3, SQS, Cognito, RDS |
-| Frontend Engineer | 1 | Doctor web portal (React), dashboard charts, care plan editor |
-| UX/Product Designer | 1 | Patient-facing UX (accessibility-first), relative app, design system |
-| QA Engineer | 1 | Test plans, FHIR validation, compliance testing, regression suite |
+| Hardware | Mac Mini M4 | Sufficient for running multiple small/medium models; cost-effective; household deployment |
+| Model Serving | Ollama / llama.cpp / MLX | Native Apple Silicon support; low-latency inference |
+| LLM Candidates | Qwen, Gemma 3n | Strong multilingual support (Hindi, Bengali, English); efficient on Apple Silicon |
+| STT | Whisper (or equivalent) | Multilingual speech recognition; can run locally on M4 |
+| TTS | Piper / Coqui (or equivalent) | Low-latency, natural-sounding multilingual TTS |
+| Vision | LLaVA / Qwen-VL (or equivalent) | Extracts text/numbers from device display photos |
+| API Layer | REST / gRPC endpoint | Serves model inference to the Android app over LAN |
+
+### 9.3 Cloud Backend (AWS — ap-south-1)
+
+| Layer | Technology | Justification |
+|---|---|---|
+| API Entry Point | Amazon API Gateway | Single entry point; Cognito authorizer |
+| Compute | AWS Lambda (Node.js 20) | Serverless; scales to zero for pilot; per-invocation billing |
+| Auth | Amazon Cognito | 3 user groups; custom attributes; JWT tokens |
+| Relational DB | Amazon RDS (PostgreSQL 15) | Users, configs, thresholds, consent, audit metadata |
+| FHIR Storage | Amazon S3 (KMS encrypted) | FHIR R4 Observation JSON files; cost-effective for pilot scale |
+| Raw Storage | Amazon S3 (KMS encrypted) | Audio recordings, transcripts, device photos |
+| Async Queue | Amazon SQS | Alert evaluation, recommendation pipeline |
+| Push Notifications | Amazon SNS + Firebase FCM | Caregiver alerts |
+| Scheduling | Amazon EventBridge | Reminder deadline checks, periodic tasks |
+| Infrastructure | Terraform | Full IaC; single `terraform apply` deployment |
+| DB Access | EC2 Bastion + SSM | No exposed DB endpoints; port-forwarding via Session Manager |
+| DB Migrations | Flyway | Versioned SQL migrations |
+| Secrets | AWS Secrets Manager | DB credentials, API keys |
+
+### 9.4 Web Portal (Doctor)
+
+| Layer | Technology | Justification |
+|---|---|---|
+| Framework | React + TypeScript | Existing web portal codebase; Vite build |
+| Build | Vite | Fast builds; HMR for development |
+| Charting | Chart.js or Recharts | Time-series vitals visualization |
+| Auth | AWS Amplify (Cognito) | Consistent auth with mobile app |
+| API | Fetch + Amplify auth headers | REST calls to API Gateway |
+| Path Aliases | `@/*` → `src/*` | Configured in tsconfig.json and vite.config.ts |
 
 ---
 
-### 12.2 Milestone Detail
+## 10. Data Model
 
-#### M0 — Foundation (Weeks 1–3)
+### 10.1 Core Entities
 
-**Goal:** Establish the project skeleton, CI/CD, and auth layer. No user-facing features yet.
+```mermaid
+erDiagram
+    USER ||--o{ PERSONA_LINK : has
+    PATIENT ||--o{ PARAMETER_CONFIG : has
+    PATIENT ||--o{ OBSERVATION : logs
+    PATIENT ||--o{ INTERACTION_SESSION : has
+    PATIENT ||--o{ RECOMMENDATION : receives
+    CAREGIVER ||--o{ PATIENT : manages
+    DOCTOR ||--o{ PATIENT : treats
 
-- Set up SpeziKt (Android) and Spezi iOS SDK project repos with modular structure.
-- Configure AWS environment: Cognito user pool with groups (patient, attendant, relative, doctor), API Gateway, VPC.
-- Implement all four Cognito user flows: patient creation by relative, attendant invite, relative self-registration, doctor invite.
-- Set up AWS HealthLake FHIR R4 instance and validate FHIR Patient resource create/read.
-- Configure RDS (PostgreSQL) schema: users, persona_links, thresholds, reminder_configs.
-- Establish CI/CD pipelines (GitHub Actions or Bitrise) for Android, iOS, and backend.
-- Define and document FHIR resource mapping for all 6 vitals.
+    USER {
+        uuid id PK
+        string email
+        string phone
+        string name
+        string cognito_sub
+        enum persona_type "patient|caregiver|doctor"
+        timestamp created_at
+    }
 
-> **Exit criteria:** A logged-in patient can be created by a relative; Cognito tokens are issued; FHIR Patient resource is created in HealthLake.
+    PERSONA_LINK {
+        uuid id PK
+        uuid user_id FK
+        uuid patient_id FK
+        enum role "caregiver|doctor"
+        timestamp created_at
+    }
+
+    PATIENT {
+        uuid id PK
+        uuid user_id FK
+        string name
+        int age
+        enum gender
+        jsonb conditions "medical conditions array"
+        jsonb medical_history
+        uuid caregiver_id FK
+        timestamp created_at
+    }
+
+    PARAMETER_CONFIG {
+        uuid id PK
+        uuid patient_id FK
+        string parameter_name "bp|glucose|weight|temp|spo2|etc"
+        string loinc_code
+        int frequency_days "at least once every N days"
+        time daily_deadline "time after which reminders start"
+        float threshold_min
+        float threshold_max
+        uuid threshold_set_by FK "caregiver or doctor"
+        boolean active
+        timestamp updated_at
+    }
+
+    OBSERVATION {
+        uuid id PK
+        uuid patient_id FK
+        string parameter_name
+        string loinc_code
+        float value
+        string unit
+        uuid session_id FK
+        string fhir_resource_id
+        string s3_key "path to FHIR JSON in S3"
+        timestamp recorded_at
+    }
+
+    INTERACTION_SESSION {
+        uuid id PK
+        uuid patient_id FK
+        uuid user_id FK "patient or caregiver"
+        enum session_type "patient_logging|caregiver_config"
+        string language "en|hi|bn"
+        string audio_s3_key
+        string transcript_s3_key
+        enum status "complete|incomplete"
+        jsonb extracted_parameters "summary of what was captured"
+        timestamp started_at
+        timestamp ended_at
+    }
+
+    RECOMMENDATION {
+        uuid id PK
+        uuid patient_id FK
+        enum source "analytics|doctor"
+        uuid source_doctor_id FK "null if analytics"
+        string parameter_name
+        string rationale
+        enum status "pending|accepted|rejected"
+        timestamp created_at
+        timestamp resolved_at
+    }
+
+    TOPIC {
+        uuid id PK
+        string name "dietary_restrictions|medications|hospitalizations|etc"
+        string description
+        boolean active
+    }
+
+    PATIENT_TOPIC {
+        uuid id PK
+        uuid patient_id FK
+        uuid topic_id FK
+        jsonb collected_data
+        enum status "incomplete|complete|outdated"
+        timestamp last_updated
+    }
+```
+
+### 10.2 Storage Strategy
+
+| Data Type | Storage | Format | Encryption |
+|---|---|---|---|
+| User accounts, configs, thresholds, audit | RDS PostgreSQL 15 | Relational | SSL in transit, KMS at rest |
+| FHIR R4 Observations | S3 | JSON files at `observations/{patientId}/{YYYY}/{MM}/{DD}/{id}.json` | SSE-KMS |
+| Raw audio recordings | S3 | Audio files at `interactions/{patientId}/{YYYY}/{MM}/{DD}/{sessionId}/audio/` | SSE-KMS |
+| Transcripts | S3 | Text/JSON at `interactions/{patientId}/{YYYY}/{MM}/{DD}/{sessionId}/transcript.json` | SSE-KMS |
+| Device display photos | S3 | Images at `interactions/{patientId}/{YYYY}/{MM}/{DD}/{sessionId}/photos/` | SSE-KMS |
+| FHIR CarePlan (doctor) | S3 | JSON files at `careplans/{patientId}/{id}.json` | SSE-KMS |
+
+### 10.3 FHIR Resource Mapping
+
+| Health Parameter | FHIR Resource | LOINC Code | Unit |
+|---|---|---|---|
+| Blood Pressure (Systolic) | Observation | 8480-6 | mmHg |
+| Blood Pressure (Diastolic) | Observation | 8462-4 | mmHg |
+| Blood Glucose | Observation | 2339-0 | mg/dL |
+| Blood Glucose (Fasting) | Observation | 1558-6 | mg/dL |
+| Blood Glucose (Post-prandial) | Observation | 1521-4 | mg/dL |
+| Body Weight | Observation | 29463-7 | kg |
+| Body Temperature | Observation | 8310-5 | degC |
+| SpO2 | Observation | 2708-6 | % |
+| Heart Rate / Pulse | Observation | 8867-4 | /min |
 
 ---
 
-#### M1 — Core Logging (Weeks 4–7)
+## 11. Implementation Plan
 
-**Goal:** Patient can log all 6 vitals on their device with full offline support and voice acknowledgements.
+### 11.1 Phase Overview
 
-- Build patient home/dashboard screen: large-button grid of 6 vitals + media upload + LLM placeholder.
-- Implement all 6 vital logging screens (full-screen, single-action, accessibility-first UX).
-- Integrate pre-recorded voice acknowledgement clips for all success/failure states.
-- Implement local Spezi FHIR store: write Observation on save, read for history view.
-- Build per-vital history list view with timestamp and recorded value.
-- Implement sync queue data structure: tracks unsynced FHIR Observations locally.
-- Unit tests: FHIR Observation mapping, voice clip triggering, local store read/write.
+| Phase | Name | Focus | Duration |
+|---|---|---|---|
+| P0 | Foundation | Project skeleton, auth, Mac Mini model serving, basic LAN connectivity | Weeks 1-3 |
+| P1 | Conversational Core | STT + LLM + TTS pipeline, patient conversation flow, FHIR extraction | Weeks 4-8 |
+| P2 | Caregiver Experience | Caregiver onboarding, protocol configuration, reminders, alerts | Weeks 9-12 |
+| P3 | Doctor Portal | Web portal enhancements for new data model, thresholds, recommendations | Weeks 13-15 |
+| P4 | Integration & Polish | End-to-end flows, edge cases, multilingual testing, health checks | Weeks 16-18 |
+| P5 | Compliance & Pilot | Security hardening, compliance audit, pilot deployment | Weeks 19-22 |
 
-> **Exit criteria:** Patient logs a blood pressure reading offline; it is stored locally as a valid FHIR Observation; voice acknowledgement plays; history view shows the entry.
+### 11.2 Phase Detail
 
----
+#### P0 — Foundation (Weeks 1-3)
 
-#### M2 — Sync & Unstructured Upload (Weeks 8–11)
+**Goal:** Establish the project skeleton, model serving infrastructure, and connectivity between mobile app and Mac Mini.
 
-**Goal:** Structured vitals sync to HealthLake over WiFi; unstructured files upload to S3.
+**Deliverables:**
+- Mac Mini M4 setup: install model serving framework (Ollama / MLX), deploy initial STT, LLM, TTS, and Vision models
+- Model API endpoints exposed on LAN (REST or gRPC)
+- Android app skeleton: Kotlin + Jetpack Compose, Hilt DI, Cognito auth integration
+- Health check endpoint on Mac Mini; health check polling in Android app
+- Cloud backend: verify existing Cognito, API Gateway, RDS, S3 infrastructure supports new data model
+- Database migration: add `parameter_config`, `interaction_session`, `recommendation`, `topic`, `patient_topic` tables
 
-- Implement WiFi connectivity listener: trigger sync queue flush on connect.
-- Build FHIR sync service: POST/PUT Observations to HealthLake via API Gateway; handle conflicts (server-wins, timestamp comparison).
-- Implement S3 presigned URL upload flow: request URL from API Gateway, upload file directly to S3 from device.
-- Build SQS producer: enqueue message on successful S3 upload with metadata payload.
-- Implement unstructured data capture screens: prescription scan, wound photo, voice note recorder, video note recorder.
-- Generate FHIR DocumentReference for each S3 upload and sync to HealthLake.
-- Add sync status indicator on dashboard (synced / pending / error).
-- Integration tests: end-to-end vital log → sync → HealthLake query.
+**Dependencies:** Mac Mini M4 hardware available; model weights downloaded
 
-> **Exit criteria:** Vitals logged offline sync to HealthLake when WiFi connects; a wound photo uploads to S3 and a DocumentReference appears in HealthLake; SQS message is enqueued.
-
----
-
-#### M3 — Relative App (Weeks 10–13)
-
-**Goal:** Relative has a fully functional companion app on their own device. *(Overlaps M2 in backend.)*
-
-- Build relative app: separate view mode detected from Cognito group on login.
-- Implement dashboard: last-logged value per vital with timestamp, colour-coded status (within/outside threshold).
-- Build trends view: time-series chart per vital with configurable date range (7d / 30d / 90d).
-- Implement threshold configuration screen: per-vital min/max input; doctor overrides shown as read-only.
-- Build reminder window configuration: per-vital time window input.
-- Integrate push notifications (SNS/FCM): threshold breach alerts and reminder lapse alerts.
-- Implement care team management: add/remove attendant, invite doctor.
-- QA: push notification delivery testing across Android and iOS.
-
-> **Exit criteria:** Relative receives a push notification within 60 seconds of a threshold-breaching vital being synced; trends chart renders correctly for 30-day range.
+**Exit Criteria:** Android app authenticates via Cognito, pings Mac Mini health endpoint successfully, and displays connection status.
 
 ---
 
-#### M4 — Attendant & Multi-Persona (Weeks 12–14)
+#### P1 — Conversational Core (Weeks 4-8)
 
-**Goal:** Attendant can log on the patient's device under their own identity with full audit attribution.
+**Goal:** Patient can complete a full voice-based health logging session that produces FHIR Observations.
 
-- Implement *Switch to Attendant* flow on patient device: secondary login screen with attendant credentials.
-- Build attendant home view (same UX as patient but with attendant identity context indicator).
-- Ensure all FHIR Observations logged by attendant carry attendant's Cognito sub as performer reference.
-- Implement attendant-specific observations/notes screen: free-text and voice note entry.
-- Implement attendant threshold/reminder configuration screens (mirrors relative capability).
-- Build audit log viewer for relative: chronological list of who logged what and when.
-- Security test: verify attendant cannot access relative-only settings or escalate privileges.
+**Deliverables:**
+- STT integration: audio stream from Android app → Mac Mini STT → transcript
+- LLM conversation engine: session state management, parameter extraction, follow-up generation, FHIR Observation construction
+- TTS integration: LLM response text → Mac Mini TTS → audio playback in app
+- Vision integration: photo capture in app → Mac Mini vision model → extracted value → confirmation flow
+- Conversation UI: voice recording indicator, waveform visualization, photo capture, session summary
+- FHIR Observation construction using HAPI FHIR library
+- Interaction logging: raw audio + transcript upload to S3 via API Gateway
+- Cleanup: delete audio/transcript from Mac Mini after successful upload
+- Support for English (primary), with Hindi and Bengali STT/TTS model integration
+- LLM prompt engineering for multilingual parameter extraction and empathetic conversation
 
-> **Exit criteria:** Attendant logs a glucometer reading; the FHIR Observation's `performer` field contains the attendant's identity, not the patient's; relative can see the attribution in the audit log.
+**Dependencies:** P0 complete; STT/TTS models with Hindi and Bengali support identified and tested
 
----
-
-#### M5 — Doctor Web Portal (Weeks 13–17)
-
-**Goal:** Doctor has a clinical-grade web portal to review, annotate, and manage care plans.
-
-- Scaffold React web app with Cognito auth (doctor group only).
-- Implement patient list view: search by name/ID, last activity timestamp, unread alert count.
-- Build per-patient data viewer: tabbed view of vitals timeline, unstructured files list, care plan.
-- Implement vital time-series charts with threshold overlay lines.
-- Build care plan editor: rich text note entry stored as FHIR CarePlan resource.
-- Implement clinical threshold override: per-vital min/max form saved to RDS with doctor identity; pushed to HealthLake as FHIR Goal resource.
-- Implement annotation tool: add a note to any individual FHIR Observation.
-- Build doctor onboarding acceptance flow: receive invite email, register, link to patient.
-- QA: verify doctor threshold overrides are reflected on mobile apps within one sync cycle.
-
-> **Exit criteria:** Doctor sets a systolic BP upper threshold of 140; relative's app shows the threshold as doctor-set and read-only; a value of 145 triggers a push notification to the relative.
+**Exit Criteria:** Patient speaks in Hindi, system extracts a BP reading, confirms it verbally, produces a valid FHIR Observation in S3, and logs the raw interaction. P95 latency < 2 seconds.
 
 ---
 
-#### M6 — Compliance, Hardening & Launch (Weeks 16–20)
+#### P2 — Caregiver Experience (Weeks 9-12)
 
-**Goal:** The app meets HIPAA and DPDP Act requirements and is ready for production deployment.
+**Goal:** Caregiver can onboard a patient, configure monitoring protocol, and receive alerts — all conversationally.
 
-- Implement DPDP consent flow at onboarding: versioned consent text, explicit accept, stored consent record in RDS.
-- Implement data export flow: generate FHIR Bundle export for patient on request.
-- Implement account deletion flow: cascade delete from RDS, HealthLake, and S3 (with HIPAA-compliant retention overrides).
-- Enable AWS CloudTrail for all API Gateway and HealthLake access events.
-- Enable S3 SSE-KMS encryption and HealthLake encryption at rest.
-- Implement certificate pinning on mobile API clients.
-- Remove all PHI from device logs and crash reporting.
-- Conduct internal security review and remediate findings.
-- Engage external penetration testing firm; remediate critical/high findings.
-- Execute BAA with AWS.
-- App store submission (Google Play + Apple App Store) and review cycle.
+**Deliverables:**
+- Caregiver conversational onboarding: patient profile creation through voice conversation
+- Parameter configuration conversation: add/remove parameters, set frequencies, set daily deadline
+- Invite flow: patient receives app download link + credentials via SMS and email
+- Doctor invite flow: doctor receives web portal invite via SMS and email
+- Reminder engine: EventBridge rule checks daily deadlines; hourly push notifications to patient via FCM
+- Alert engine: threshold evaluation on new Observations; push notification to caregiver
+- Missed measurement detection: frequency window expiry check; push notification to caregiver
+- Caregiver on-demand log viewing screen
+- Topic system: dev-configured topics woven into caregiver conversations
 
-> **Exit criteria:** Penetration test report with no critical/high open findings; DPDP consent record created at onboarding; HIPAA audit log query returns all PHI access events; app approved on both stores.
+**Dependencies:** P1 complete; FCM configured for Android app
+
+**Exit Criteria:** Caregiver sets up a patient and monitoring protocol via conversation; patient receives credentials; after patient logs a value above threshold, caregiver receives a push notification within 60 seconds.
 
 ---
 
-### 12.3 Indicative Timeline
+#### P3 — Doctor Portal (Weeks 13-15)
+
+**Goal:** Doctor can review patient data, modify protocols, and recommend parameters via the web portal.
+
+**Deliverables:**
+- Update web portal patient view with new data model (conversational sessions, interaction logs)
+- Vitals time-series charts with threshold overlay lines
+- Protocol management UI: add/remove parameters, set/override thresholds
+- Parameter recommendation submission (stored in `recommendation` table, surfaced to caregiver)
+- Doctor onboarding acceptance flow (register via invite link)
+
+**Dependencies:** P2 complete; existing web portal codebase
+
+**Exit Criteria:** Doctor sets a BP threshold override; caregiver is presented with the change in their next conversation; a breaching value triggers a caregiver alert.
+
+---
+
+#### P4 — Integration & Polish (Weeks 16-18)
+
+**Goal:** End-to-end flows work reliably across all three personas; edge cases are handled; multilingual support is validated.
+
+**Deliverables:**
+- End-to-end testing: caregiver onboards patient → patient logs daily → doctor reviews
+- Edge case implementation: implausible values, emergency detection, confused patient, new symptoms
+- Cross-session continuity: new parameters introduced gently to patient
+- Multilingual validation: full conversation flows in English, Hindi, and Bengali
+- Recommendation flow: analytics-sourced and doctor-sourced recommendations → caregiver conversation → patient session update
+- Model endpoint health check: graceful degradation when Mac Mini is unreachable
+- Performance optimization: P95 < 2 seconds across all language pairs
+- UI polish: accessibility audit, touch targets, contrast, voice interaction feedback
+
+**Dependencies:** P3 complete; offline analytics system producing recommendations
+
+**Exit Criteria:** All user flows pass end-to-end in all 3 languages; edge cases handled gracefully; P95 latency < 2 seconds.
+
+---
+
+#### P5 — Compliance & Pilot (Weeks 19-22)
+
+**Goal:** Security hardened, compliance verified, deployed to pilot users.
+
+**Deliverables:**
+- DPDP consent flow at onboarding: versioned consent text, explicit accept, stored consent record
+- Data export flow: FHIR Bundle export for patient on request
+- Account deletion flow: cascade delete across RDS, S3
+- Verify all data stored in ap-south-1 (DPDP data localisation)
+- HIPAA: BAA with AWS, audit logging via CloudTrail, PHI encryption verified
+- Mac Mini security: verify no persistent patient data; network security (LAN only, no internet exposure)
+- Certificate pinning on all API calls
+- No PHI in device logs or crash reports
+- Penetration testing (if scope warrants for pilot)
+- Pilot deployment: set up Mac Minis for pilot households; onboard pilot users
+- Pilot feedback collection and iteration
+
+**Dependencies:** P4 complete; BAA process initiated early
+
+**Exit Criteria:** Pilot users (friends and family) are actively using the system; no critical security findings; compliance requirements met.
+
+---
+
+### 11.3 Timeline
 
 ```
-Milestone                   │ Wk 1-3 │ Wk 4-7 │ Wk 8-11 │ Wk 12-15 │ Wk 16-20
-────────────────────────────┼────────┼────────┼─────────┼──────────┼──────────
-M0  Foundation              │ ████   │        │         │          │
-M1  Core Logging            │        │ ████   │         │          │
-M2  Sync & Upload           │        │        │ ████    │          │
-M3  Relative App            │        │   ██   │ ██      │          │
-M4  Attendant               │        │        │    ██   │ ██       │
-M5  Doctor Portal           │        │        │    ██   │ ████     │
-M6  Compliance & Launch     │        │        │         │    ██    │ ████
+Phase                          │ Wk 1-3 │ Wk 4-8 │ Wk 9-12 │ Wk 13-15 │ Wk 16-18 │ Wk 19-22
+───────────────────────────────┼────────┼────────┼─────────┼──────────┼──────────┼─────────
+P0  Foundation                 │ ████   │        │         │          │          │
+P1  Conversational Core        │        │ █████  │         │          │          │
+P2  Caregiver Experience       │        │        │ ████    │          │          │
+P3  Doctor Portal              │        │        │         │ ███      │          │
+P4  Integration & Polish       │        │        │         │          │ ███      │
+P5  Compliance & Pilot         │        │        │         │          │          │ ████
 ```
 
-> M2 and M3 overlap intentionally — backend sync infrastructure (M2) is built in parallel with the relative app frontend (M3). M4 and M5 similarly overlap with the tail of M2/M3.
-
 ---
 
-### 12.4 Key Dependencies & Risks
+## 12. Security & Compliance
 
-| Risk / Dependency | Severity | Mitigation |
-|---|---|---|
-| AWS HealthLake provisioning time | 🟡 Medium | Request HealthLake instance in Week 1; provisioning can take several days. Use a HAPI FHIR server locally as a fallback during M0–M1. |
-| SpeziKt maturity on Android | 🟡 Medium | SpeziKt is less mature than Spezi iOS. Audit available modules in M0; build thin wrappers for missing functionality. |
-| Pre-recorded voice clip production | 🟢 Low | Clips must be recorded before M1 ends. Engage voice talent in M0 in parallel with engineering setup. |
-| App Store review for medical apps | 🔴 High | Apple and Google have elevated scrutiny for health apps. Engage App Store review guidelines in M0; budget 2–4 weeks for review in M6. |
-| HIPAA BAA with AWS | 🔴 High | BAA must be executed before any real PHI is stored. Initiate legal/procurement process in M0. Use synthetic test data until BAA is signed. |
-| Penetration testing lead time | 🟡 Medium | External pen test firms have 4–6 week booking lead times. Engage firm no later than end of M4 for M6 slot. |
-| DPDP Act data localisation | 🟡 Medium | Indian users' data must reside in AWS `ap-south-1`. Region-aware routing must be designed in M0 and validated in M6. |
+### 12.1 HIPAA
 
----
-
-## 13. Appendix
-
-### 13.1 Key References
-
-- [Stanford SpeziKt (Android)](https://github.com/StanfordSpezi/SpeziKt)
-- [Stanford Spezi (iOS)](https://github.com/StanfordSpezi/)
-- [HL7 FHIR R4 Specification](https://hl7.org/fhir/R4/)
-- [AWS HealthLake](https://aws.amazon.com/healthlake/)
-- [LOINC Code System](https://loinc.org/)
-- HIPAA Security Rule: 45 CFR Part 164
-- [India DPDP Act 2023](https://www.meity.gov.in/)
-
-### 13.2 Glossary
-
-| Term | Definition |
+| Requirement | Implementation |
 |---|---|
-| FHIR | Fast Healthcare Interoperability Resources — HL7 standard for health data exchange |
-| Spezi | Stanford open-source digital health framework with native FHIR support |
-| HealthLake | AWS managed FHIR R4-compliant data store |
-| LOINC | Logical Observation Identifiers Names and Codes — standard vocabulary for clinical observations |
-| PHI | Protected Health Information — any individually identifiable health information |
-| DPDP | Digital Personal Data Protection Act 2023 (India) |
-| SQS | Amazon Simple Queue Service — managed message queuing service |
-| Cognito | AWS identity and access management service for web and mobile apps |
-| WCAG | Web Content Accessibility Guidelines |
-| BAA | Business Associate Agreement — required HIPAA contract with cloud providers handling PHI |
-| BLE | Bluetooth Low Energy — used for peripheral device integration |
-| RAG | Retrieval-Augmented Generation — LLM pattern for querying over patient FHIR data |
+| BAA with AWS | Execute before any real PHI is stored; use synthetic data until signed |
+| PHI encryption in transit | TLS 1.2+ on all connections (app ↔ cloud, app ↔ Mac Mini) |
+| PHI encryption at rest | AES-256 / SSE-KMS for S3 and RDS |
+| Audit logging | CloudTrail for all API access; interaction sessions logged with full audit trail |
+| Access controls | Cognito groups enforce minimum necessary access; IAM roles scoped per Lambda |
+| Data retention | Defined per HIPAA requirements; configurable retention policies on S3 |
+| Breach notification | Operational runbook to be documented |
+
+### 12.2 India DPDP Act
+
+| Requirement | Implementation |
+|---|---|
+| Explicit consent | Collected from caregiver (on behalf of patient) at onboarding; versioned consent text; stored in RDS |
+| Data localisation | All patient data stored in AWS ap-south-1 (Mumbai) |
+| Data principal rights | Patient/caregiver can request data export (FHIR Bundle) or deletion |
+| Purpose limitation | Data collected only for health monitoring; no secondary use without re-consent |
+
+### 12.3 Mac Mini Security
+
+| Concern | Mitigation |
+|---|---|
+| Patient data at rest | No persistent data — audio/transcripts pushed to cloud and deleted from Mac Mini |
+| Network exposure | Mac Mini serves models on LAN only; no internet-facing endpoints |
+| Physical access | Household device; relies on physical security of the home |
+| Model weights | Pre-downloaded; no patient data in model weights |
+
+### 12.4 Application Security
+
+| Measure | Details |
+|---|---|
+| Certificate pinning | On all API calls from mobile app to cloud |
+| No PHI in logs | Device logs, analytics, and crash reports stripped of PHI |
+| Device passcode | App requires device passcode/biometric to be enabled |
+| Token management | JWT access tokens (1hr) + refresh tokens (30 days); stored in Android Keystore |
+| Cognito groups | `patients`, `caregivers`, `doctors` — enforce role-based access |
+
+### 12.5 Infrastructure Security (Existing)
+
+- **RDS:** Private subnet, SSL enforced, KMS encryption at rest, bastion SSM access only
+- **S3:** Public access blocked, bucket policy enforces TLS, SSE-KMS, lifecycle tiering
+- **Secrets:** RDS password in AWS Secrets Manager (32 chars, auto-generated)
+- **CloudTrail:** Multi-region audit trail, 7-year immutable retention
+- **KMS:** Auto-rotation enabled on all customer-managed keys
+- **Bastion:** SSM Session Manager only (no SSH keys, no inbound rules), IMDSv2 enforced
 
 ---
 
-*CareLog PRD v0.3 — DRAFT — April 2026 — CONFIDENTIAL*
+## 13. Risks & Mitigations
+
+### Technical Risks
+
+| Risk | Severity | Likelihood | Mitigation |
+|---|---|---|---|
+| P95 < 2s latency not achievable with local models | High | Medium | Profile each model component; optimize STT/TTS model selection for speed; pipeline STT→LLM→TTS instead of sequential blocking; consider quantized models |
+| Hindi/Bengali STT accuracy insufficient | High | Medium | Evaluate multiple STT models (Whisper variants, IndicWhisper); collect test utterances in target accents; fine-tune if needed |
+| Vision model fails on diverse device displays | Medium | Medium | Build a test dataset of common glucometers, BP monitors, thermometers; fall back to manual/voice entry gracefully |
+| Mac Mini hardware failure | High | Low | Household device; recommend UPS; app clearly communicates when models are unavailable; no data loss (all data in cloud) |
+| LLM extracts incorrect values from speech | High | Medium | Always confirm extracted values with the patient before recording; double-check implausible values; log all interactions for audit |
+| Multiple models competing for Mac Mini resources | Medium | Medium | Profile memory and compute usage per model; schedule inference to avoid contention; consider model-specific optimization (quantization, batching) |
+
+### Business Risks
+
+| Risk | Severity | Likelihood | Mitigation |
+|---|---|---|---|
+| Elderly patients uncomfortable talking to a machine | High | Medium | Empathetic conversation design; caregiver introduces the system; gradual onboarding; support text fallback |
+| Caregiver adoption friction | Medium | Low | Voice-first setup reduces friction; minimal mandatory fields; can evolve protocol over time |
+| Pilot scope creep | Medium | Medium | Strict prioritization (MoSCoW); pilot is friends and family only; defer Won't items |
+
+### Operational Risks
+
+| Risk | Severity | Likelihood | Mitigation |
+|---|---|---|---|
+| Mac Mini requires technical setup per household | Medium | High | Provide setup guide; pre-configure before deployment; model health check in app |
+| Model updates require physical access to Mac Mini | Medium | Medium | Remote management via SSH/screen sharing over LAN; script model updates |
+| Internet outage prevents cloud logging | Medium | Medium | App queues FHIR Observations and interaction logs locally until connectivity resumes (limited buffer; not full offline mode) |
+
+---
+
+## 14. Open Questions
+
+| # | Question | Context | Decision Needed By |
+|---|---|---|---|
+| 1 | Which specific STT model best handles Hindi and Bengali with elderly speech patterns? | Accuracy is critical for trust; elderly speakers may have unclear pronunciation | P1 start |
+| 2 | Which specific TTS model sounds most natural in Hindi and Bengali? | Naturalness affects patient comfort and trust | P1 start |
+| 3 | Should the LLM conversation run as a single model or a pipeline of specialized models? | Single model is simpler; pipeline may be more accurate for extraction vs. conversation | P1 start |
+| 4 | How should the offline analytics system interface with the main backend? | Needs read access to patient data; writes recommendations | P3 start |
+| 5 | What is the Mac Mini network configuration for typical households? | Static IP? mDNS? App needs reliable discovery of Mac Mini on LAN | P0 start |
+| 6 | Should the app buffer interactions locally during brief internet outages? | Currently specified as online-only, but brief outages are common | P1 start |
+| 7 | What is the consent model for voice recording? | Recording patient's voice has privacy implications beyond text data | P0 start |
+| 8 | How are model weights distributed and updated across pilot households? | Manual USB? Network download? Pre-configured Mac Minis? | P5 start |
+| 9 | Should the doctor portal show raw transcripts, or only structured FHIR data? | Transcripts provide context but may contain noise | P3 start |
+| 10 | What happens when the patient speaks a language different from the configured one mid-session? | Multilingual patients may code-switch between Hindi and English | P1 start |
+| 11 | Direct Bluetooth device integration — which devices and protocols? | Deferred to future; need to scope when the time comes | Post-pilot |
+| 12 | iOS app — timeline and approach? | Deferred to post-pilot; will inform tech stack decisions | Post-pilot |
+
+---
+
+*CareLog PRD v1.0 — April 2026 — Pilot Release — CONFIDENTIAL*

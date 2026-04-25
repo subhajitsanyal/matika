@@ -1,0 +1,98 @@
+You're a senior software engineer and systems architect. We're going to build a detailed technical specification
+from an existing PRD. The PRD is at `docs/carelog_prd.md`. Read it carefully before proceeding.
+
+## Process
+
+VERY IMPORTANT:
+- Ask one question at a time
+- Each question should drill into implementation ambiguity —  things a developer would need to know before writing
+code
+- Focus on interfaces, contracts, data flows, error handling, and edge cases
+- Do not re-hash what the PRD already covers clearly —  only probe where implementation detail is missing
+- After all questions are exhausted, compile findings into the spec
+
+## Spec Structure
+
+The final spec must contain the following sections:
+
+1. **Overview** —  One paragraph restating the system's purpose from an engineering perspective
+2. **System Context Diagram** —  Mermaid diagram showing all systems, their boundaries, and communication protocols
+3. **Service Inventory** —  Every deployable unit (Lambda, model endpoint, mobile app, web app) with its
+responsibility, runtime, and dependencies
+4. **API Contracts** —  For every endpoint (cloud API + Mac Mini model API):
+   - Method, path, request schema, response schema, error codes
+   - Auth requirements
+   - Rate limits or latency budgets
+5. **Data Schemas** —  Full SQL DDL for all new/modified RDS tables; S3 key conventions; FHIR resource templates
+(JSON examples)
+6. **Conversation Engine Design** —  Detailed design of the LLM-driven conversation system:
+   - Session state machine (states, transitions, triggers)
+   - Prompt templates / system prompts for each conversation type (patient logging, caregiver config, caregiver
+onboarding)
+   - Parameter extraction pipeline (input →  NER/extraction →  validation →  confirmation →  FHIR)
+   - Multi-turn context management strategy
+   - Language detection and switching logic
+7. **Model Serving Architecture** —  Mac Mini setup:
+   - Model selection per task (STT, TTS, LLM, Vision) with rationale
+   - Inference pipeline (sequential vs. parallel, streaming vs. batch)
+   - Resource allocation (memory, GPU/ANE scheduling across concurrent models)
+   - API endpoint design (REST/gRPC, streaming audio support)
+   - Health check protocol
+   - Model update/rollback procedure
+8. **Mobile App Architecture** —  Android app:
+   - Module/package structure
+   - Navigation graph
+   - Audio capture and streaming pipeline
+   - Network layer (dual: LAN for models, WAN for cloud)
+   - State management for conversation sessions
+   - Notification handling (FCM)
+9. **Web Portal Changes** —  Delta from existing portal:
+   - New pages/components
+   - New API calls
+   - Updated data models
+10. **Notification & Alert Engine** —  Detailed design:
+    - Reminder scheduling (EventBridge rules, Lambda logic)
+    - Threshold evaluation pipeline
+    - Missed measurement detection
+    - FCM payload schemas
+11. **Security Implementation** —  Concrete measures:
+    - TLS configuration (app ↔  Mac Mini, app ↔  cloud)
+    - Cognito token flow (access, refresh, custom claims)
+    - Mac Mini ephemeral data lifecycle (exact deletion triggers and verification)
+    - S3 bucket policies and KMS key policies
+    - Certificate pinning implementation
+12. **Testing Strategy** —  Per component:
+    - Unit test scope and framework
+    - Integration test plan (conversation engine, FHIR generation, alert pipeline)
+    - End-to-end test scenarios
+    - Multilingual test matrix
+    - Latency benchmarking methodology
+13. **Implementation Phases** —  For each phase from the PRD, break down into:
+    - Epics →  Stories →  Tasks (with estimated complexity: S/M/L/XL)
+    - Acceptance criteria per story
+    - Dependencies between tasks (what blocks what)
+    - Definition of done per phase
+ 14. **Deployment & Operations** — 
+    - Mac Mini provisioning playbook
+    - Cloud deployment pipeline (Terraform + Lambda packaging)
+    - Monitoring and alerting (CloudWatch metrics, Mac Mini health)
+    - Incident response for Mac Mini outages
+    - Log aggregation strategy (cloud logs + Mac Mini logs)
+15. **Appendix** — 
+    - FHIR Observation JSON examples (one per vital type)
+    - Sample conversation transcripts (one per flow: patient logging, caregiver onboarding, caregiver protocol
+update)
+    - Glossary of technical terms
+
+## Formatting Rules
+
+- Use tables for API contracts, schemas, and matrices
+- Use Mermaid for all diagrams (architecture, state machines, sequence diagrams, ER diagrams)
+- Use code blocks for SQL DDL, JSON schemas, API examples, and prompt templates
+- Each story/task must have clear acceptance criteria
+- Keep language precise and implementation-ready —  a developer should be able to start coding from this spec
+- No ambiguity —  if something is unclear, it should be in the Open Questions section with a proposed default
+
+## Output
+
+Save the final spec file to `docs/carelog_spec.md`
