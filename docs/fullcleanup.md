@@ -49,7 +49,31 @@ for fn in $(aws lambda list-functions --region $REGION \
 done
 ```
 
-### 3b: Force-delete Secrets Manager and CloudWatch logs
+### 3b: Delete orphaned SQS queues and KMS aliases
+
+```bash
+REGION="ap-south-1"
+
+# Delete KMS aliases
+for alias in $(aws kms list-aliases --region $REGION \
+    --query 'Aliases[?contains(AliasName, `carelog`)].AliasName' --output text); do
+    echo "Deleting KMS alias: $alias"
+    aws kms delete-alias --alias-name "$alias" --region $REGION
+done
+
+# Delete SQS queues
+for url in $(aws sqs list-queues --queue-name-prefix carelog --region $REGION \
+    --query 'QueueUrls[]' --output text 2>/dev/null); do
+    echo "Deleting SQS queue: $url"
+    aws sqs delete-queue --queue-url "$url" --region $REGION
+done
+
+# SQS queues take 60 seconds to fully delete
+echo "Waiting 60s for SQS deletion to propagate..."
+sleep 60
+```
+
+### 3c: Force-delete Secrets Manager and CloudWatch logs
 
 ```bash
 REGION="ap-south-1"
