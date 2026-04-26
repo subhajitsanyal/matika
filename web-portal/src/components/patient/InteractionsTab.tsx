@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { format, parseISO } from 'date-fns';
 import { getInteractionSessions } from '../../services/api';
 import type { InteractionSession } from '../../types';
@@ -30,11 +30,7 @@ export default function InteractionsTab({ patientId }: InteractionsTabProps) {
   const [hasMore, setHasMore] = useState(true);
   const [selectedSession, setSelectedSession] = useState<InteractionSession | null>(null);
 
-  useEffect(() => {
-    loadSessions(true);
-  }, [patientId]);
-
-  async function loadSessions(initial: boolean) {
+  const loadSessions = useCallback(async (initial: boolean, currentLength = 0) => {
     try {
       if (initial) {
         setIsLoading(true);
@@ -42,7 +38,7 @@ export default function InteractionsTab({ patientId }: InteractionsTabProps) {
         setIsLoadingMore(true);
       }
 
-      const offset = initial ? 0 : sessions.length;
+      const offset = initial ? 0 : currentLength;
       const data = await getInteractionSessions(patientId, {
         limit: PAGE_SIZE,
         offset,
@@ -60,7 +56,11 @@ export default function InteractionsTab({ patientId }: InteractionsTabProps) {
       setIsLoading(false);
       setIsLoadingMore(false);
     }
-  }
+  }, [patientId]);
+
+  useEffect(() => {
+    loadSessions(true);
+  }, [loadSessions]);
 
   function formatDuration(ms: number): string {
     const seconds = Math.floor(ms / 1000);
@@ -186,7 +186,7 @@ export default function InteractionsTab({ patientId }: InteractionsTabProps) {
           {hasMore && (
             <div className="mt-4 text-center">
               <button
-                onClick={() => loadSessions(false)}
+                onClick={() => loadSessions(false, sessions.length)}
                 disabled={isLoadingMore}
                 className="btn-secondary"
               >

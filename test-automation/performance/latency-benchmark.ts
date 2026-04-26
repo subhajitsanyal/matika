@@ -158,9 +158,9 @@ async function runBenchmark(): Promise<void> {
         sessionId = sessionRes.session_id;
         turnNumber = 2;
         // Store session ID for subsequent turns
-        (request as Record<string, unknown>)._currentSessionId = sessionRes.session_id;
+        (request as unknown as Record<string, unknown>)._currentSessionId = sessionRes.session_id;
       } else {
-        sessionId = (request as Record<string, unknown>)._currentSessionId as string;
+        sessionId = (request as unknown as Record<string, unknown>)._currentSessionId as string;
         turnNumber++;
       }
 
@@ -228,7 +228,7 @@ async function runBenchmark(): Promise<void> {
 
     // End final session
     try {
-      const sid = (request as Record<string, unknown>)._currentSessionId as string;
+      const sid = (request as unknown as Record<string, unknown>)._currentSessionId as string;
       if (sid) await macMini.endSession(sid, 'user_stopped');
     } catch { /* ok */ }
   }

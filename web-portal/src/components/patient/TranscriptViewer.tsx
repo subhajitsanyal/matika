@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { format, parseISO } from 'date-fns';
 import { getInteractionTranscript } from '../../services/api';
 import type { TranscriptEntry, InteractionSession } from '../../types';
@@ -32,11 +32,7 @@ export default function TranscriptViewer({ patientId, session, onClose }: Transc
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  useEffect(() => {
-    loadTranscript();
-  }, [patientId, session.id]);
-
-  async function loadTranscript() {
+  const loadTranscript = useCallback(async () => {
     try {
       setIsLoading(true);
       const data = await getInteractionTranscript(patientId, session.id);
@@ -46,7 +42,11 @@ export default function TranscriptViewer({ patientId, session, onClose }: Transc
     } finally {
       setIsLoading(false);
     }
-  }
+  }, [patientId, session.id]);
+
+  useEffect(() => {
+    loadTranscript();
+  }, [loadTranscript]);
 
   const extractedKeys = Object.keys(session.extracted_summary);
 

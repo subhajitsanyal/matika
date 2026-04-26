@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { format, parseISO } from 'date-fns';
 import { getDocuments, getDocumentDownloadUrl, DocumentReference } from '../../services/api';
 import { FILE_TYPES, FILE_TYPE_LABELS } from '../../config/constants';
@@ -14,11 +14,7 @@ export default function FilesTab({ patientId }: FilesTabProps) {
   const [selectedType, setSelectedType] = useState<string>('all');
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadDocuments();
-  }, [patientId, selectedType]);
-
-  async function loadDocuments() {
+  const loadDocuments = useCallback(async () => {
     try {
       setIsLoading(true);
       const fileType = selectedType === 'all' ? undefined : selectedType;
@@ -29,7 +25,11 @@ export default function FilesTab({ patientId }: FilesTabProps) {
     } finally {
       setIsLoading(false);
     }
-  }
+  }, [patientId, selectedType]);
+
+  useEffect(() => {
+    loadDocuments();
+  }, [loadDocuments]);
 
   async function handleDownload(doc: DocumentReference) {
     try {

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -31,11 +31,7 @@ export default function VitalsTab({ patientId }: VitalsTabProps) {
   const [dateRange, setDateRange] = useState<string>(DATE_RANGES.MONTH);
   const [selectedObservation, setSelectedObservation] = useState<Observation | null>(null);
 
-  useEffect(() => {
-    loadData();
-  }, [patientId, selectedVital, dateRange]);
-
-  async function loadData() {
+  const loadData = useCallback(async () => {
     try {
       setIsLoading(true);
       const days = parseInt(dateRange.replace('d', ''));
@@ -57,7 +53,11 @@ export default function VitalsTab({ patientId }: VitalsTabProps) {
     } finally {
       setIsLoading(false);
     }
-  }
+  }, [patientId, selectedVital, dateRange]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   const currentThreshold = useMemo(() => {
     return thresholds.find((t) => t.vitalType === selectedVital);

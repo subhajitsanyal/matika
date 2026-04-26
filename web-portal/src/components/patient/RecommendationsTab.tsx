@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { format, parseISO } from 'date-fns';
 import { getRecommendations, createRecommendation } from '../../services/api';
 import type { Recommendation } from '../../types';
@@ -28,11 +28,7 @@ export default function RecommendationsTab({ patientId }: RecommendationsTabProp
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [showForm, setShowForm] = useState(false);
 
-  useEffect(() => {
-    loadRecommendations();
-  }, [patientId]);
-
-  async function loadRecommendations() {
+  const loadRecommendations = useCallback(async () => {
     try {
       setIsLoading(true);
       const data = await getRecommendations(patientId);
@@ -42,7 +38,11 @@ export default function RecommendationsTab({ patientId }: RecommendationsTabProp
     } finally {
       setIsLoading(false);
     }
-  }
+  }, [patientId]);
+
+  useEffect(() => {
+    loadRecommendations();
+  }, [loadRecommendations]);
 
   async function handleCreate(data: {
     parameter_name: string;

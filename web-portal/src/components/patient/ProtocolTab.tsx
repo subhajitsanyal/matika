@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   getParameterConfigs,
   createParameterConfig,
@@ -22,11 +22,7 @@ export default function ProtocolTab({ patientId }: ProtocolTabProps) {
   const [thresholdConfig, setThresholdConfig] = useState<ParameterConfig | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadConfigs();
-  }, [patientId]);
-
-  async function loadConfigs() {
+  const loadConfigs = useCallback(async () => {
     try {
       setIsLoading(true);
       const data = await getParameterConfigs(patientId);
@@ -36,7 +32,11 @@ export default function ProtocolTab({ patientId }: ProtocolTabProps) {
     } finally {
       setIsLoading(false);
     }
-  }
+  }, [patientId]);
+
+  useEffect(() => {
+    loadConfigs();
+  }, [loadConfigs]);
 
   async function handleCreate(data: Partial<ParameterConfig>) {
     await createParameterConfig(patientId, data);

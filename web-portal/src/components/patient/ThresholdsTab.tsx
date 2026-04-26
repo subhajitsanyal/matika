@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { getThresholds, setThreshold, Threshold } from '../../services/api';
 import { VITAL_CONFIG } from '../../config/constants';
 import LoadingSpinner from '../LoadingSpinner';
@@ -20,11 +20,7 @@ export default function ThresholdsTab({ patientId }: ThresholdsTabProps) {
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    loadThresholds();
-  }, [patientId]);
-
-  async function loadThresholds() {
+  const loadThresholds = useCallback(async () => {
     try {
       setIsLoading(true);
       const data = await getThresholds(patientId);
@@ -34,7 +30,11 @@ export default function ThresholdsTab({ patientId }: ThresholdsTabProps) {
     } finally {
       setIsLoading(false);
     }
-  }
+  }, [patientId]);
+
+  useEffect(() => {
+    loadThresholds();
+  }, [loadThresholds]);
 
   function getThresholdForVital(vitalType: string): Threshold | undefined {
     return thresholds.find((t) => t.vitalType === vitalType);

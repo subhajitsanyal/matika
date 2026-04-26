@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { format, parseISO } from 'date-fns';
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
@@ -19,19 +19,7 @@ export default function CarePlanTab({ patientId }: CarePlanTabProps) {
   const [history, setHistory] = useState<CarePlan[]>([]);
   const [hasChanges, setHasChanges] = useState(false);
 
-  useEffect(() => {
-    loadCarePlan();
-  }, [patientId]);
-
-  useEffect(() => {
-    if (carePlan) {
-      setHasChanges(content !== carePlan.content);
-    } else {
-      setHasChanges(content.length > 0);
-    }
-  }, [content, carePlan]);
-
-  async function loadCarePlan() {
+  const loadCarePlan = useCallback(async () => {
     try {
       setIsLoading(true);
       const data = await getCarePlan(patientId);
@@ -42,7 +30,19 @@ export default function CarePlanTab({ patientId }: CarePlanTabProps) {
     } finally {
       setIsLoading(false);
     }
-  }
+  }, [patientId]);
+
+  useEffect(() => {
+    loadCarePlan();
+  }, [loadCarePlan]);
+
+  useEffect(() => {
+    if (carePlan) {
+      setHasChanges(content !== carePlan.content);
+    } else {
+      setHasChanges(content.length > 0);
+    }
+  }, [content, carePlan]);
 
   async function loadHistory() {
     try {
