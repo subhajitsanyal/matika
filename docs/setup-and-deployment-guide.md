@@ -141,7 +141,7 @@ CareLog v3.0 introduces a **conversational, voice-first** health monitoring syst
 **Key concepts:**
 - **Mac Mini M4** runs AI model services (STT, LLM, TTS, Vision) on the local network, discovered via mDNS (`_carelog._tcp`)
 - **Android app** uses dual networking: LAN for inference (Mac Mini), HTTPS for persistence (AWS)
-- **Cognito groups**: `patients`, `caregivers`, `doctors` (note: `attendants` and `relatives` have been replaced by `caregivers`)
+- **Cognito groups**: `patients`, `caregivers`, `doctors`, plus legacy `attendants` and `relatives` (kept for backward compatibility; post-confirmation Lambda maps all three to `caregivers` group)
 - **3 languages**: English, Hindi, Bengali with code-mixing support
 - **Latency target**: P95 < 2 seconds end-to-end (STT + LLM + TTS)
 
@@ -185,18 +185,29 @@ After provisioning, the Mac Mini will have:
 
 ### 4.2 Provisioning
 
-Before running the provisioning script, update the model download URLs in the script or export them as environment variables:
+#### Option A: Download models first (recommended for dev/testing)
+
+Use the standalone download script to fetch models from Hugging Face before provisioning:
 
 ```bash
-export MODEL_STT_URL="https://your-host/whisper-large-v3.bin"
-export MODEL_LLM_URL="https://your-host/qwen-2.5-7b-q4.gguf"
-export MODEL_VISION_URL="https://your-host/qwen-vl-7b-q4.gguf"
-export MODEL_TTS_EN_URL="https://your-host/piper-en.onnx"
-export MODEL_TTS_HI_URL="https://your-host/piper-hi.onnx"
-export MODEL_TTS_BN_URL="https://your-host/piper-bn.onnx"
+cd mac-mini/scripts
+sudo mkdir -p /opt/carelog/models
+./download-models.sh
 ```
 
-Then run the provisioning script (idempotent — safe to re-run):
+This downloads (~13 GB total):
+- **STT**: Whisper Large V3 from `Systran/faster-whisper-large-v3` (~3 GB)
+- **LLM**: Qwen 2.5 7B Instruct Q4_K_M from `Qwen/Qwen2.5-7B-Instruct-GGUF` (~4.7 GB)
+- **Vision**: Qwen2-VL 7B Q4_K_M from `Qwen/Qwen2-VL-7B-Instruct-GGUF` (~4.7 GB)
+- **TTS**: Piper voices for English and Hindi from `rhasspy/piper-voices` (~120 MB)
+
+> **Note:** Bengali TTS is not yet available in Piper. The service will gracefully return 503 for Bengali TTS requests.
+
+The script supports resume (`curl -C -`), so it's safe to re-run if interrupted.
+
+#### Option B: Full provisioning (production)
+
+Run the provisioning script (idempotent — safe to re-run):
 
 ```bash
 cd mac-mini/deploy
@@ -463,9 +474,9 @@ A single `terraform apply` deploys everything:
 | Resource | Details |
 |----------|---------|
 | VPC | Public/private subnets, NAT gateways, security groups |
-| Cognito | User Pool with 3 groups (`patients`, `caregivers`, `doctors`), OAuth clients, post-confirmation Lambda trigger |
+| Cognito | User Pool with 5 groups (`patients`, `attendants`, `relatives`, `caregivers`, `doctors`), OAuth clients, post-confirmation Lambda trigger |
 | API Gateway | REST API with Cognito authorizer, Lambda proxy integrations (30+ routes) |
-| Lambda | 24+ functions deployed via Terraform |
+| Lambda | 28 functions deployed via Terraform (see section 7.4 for full list) |
 | RDS | PostgreSQL 15 in private subnet, encrypted, password in Secrets Manager |
 | S3 | Documents bucket + FHIR observations bucket + raw interactions bucket (all KMS encrypted, lifecycle rules) + access logs bucket |
 | SQS | Document processing queue + alerts queue (both with DLQs) |
@@ -648,7 +659,11 @@ EOF
 flyway migrate
 ```
 
-The V004 migration (`V004__conversational_system.sql`) creates the following new tables and alterations:
+The V004 migration (`V004__conversational_system.sql`) renames the `persona_type` enum value `relative` to `caregiver`, creates 7 new tables, seeds initial data, and extends existing tables.
+
+> **Known issue (fixed):** V004 uses `WHERE relationship::text = 'relative'` with a text cast because PostgreSQL cannot match against the old enum literal after `ALTER TYPE ... RENAME VALUE`. If you see an error about "invalid input value for enum persona_type: 'relative'", ensure you have the latest version of the migration file.
+
+It creates the following new tables and alterations:
 
 | New Tables | Purpose |
 |------------|---------|
@@ -750,16 +765,20 @@ These are set automatically by Terraform when the Lambda module deploys:
 | `manage-interactions` | `GET /patients/{patientId}/interactions`, `GET .../interactions/{id}/transcript` | Paginated list of conversation sessions with metadata. Transcript retrieval fetches from S3 raw bucket. |
 | `manage-prompts` | `GET /prompts`, `PUT /prompts/{promptType}` | View and update system prompts for conversation types (patient_logging, caregiver_config, caregiver_onboarding). Version bumped on each update. |
 
-#### MOCK-Stubbed Routes
+#### Notification & Alert Lambdas (new in v3.0, deployed via Terraform)
 
-| Lambda | Route | Description |
-|--------|-------|-------------|
-| `delete-patient` | `DELETE /patients/{patientId}` | Cascade-deletes patient, disables Cognito accounts, sends notifications |
+| Lambda | Route / Trigger | Description |
+|--------|----------------|-------------|
+| `notification-sender` | SQS consumer (alerts queue) | Sends FCM push notifications for threshold breaches, missed measurements, and reminders |
+| `alert-crud` | `GET/POST /patients/{patientId}/alerts` | CRUD for patient alerts (threshold breach, missed measurement) |
+| `threshold-crud` | `GET/POST/PUT/DELETE /patients/{patientId}/thresholds` | CRUD for vital thresholds |
+| `device-token` | `POST/DELETE /device-tokens` | Register/unregister FCM device tokens |
+| `reminder-crud` | `GET/POST/PUT/DELETE /patients/{patientId}/reminders` | CRUD for measurement reminders |
 | `remove-team-member` | `DELETE /patients/{patientId}/team/{memberId}` | Removes team member, disables Cognito account |
 
 #### Scaffolded (code exists but not yet wired in Terraform)
 
-`account-deletion`, `alert-crud`, `audit-log`, `care-plan`, `consent`, `create-document-reference`, `data-export`, `device-token`, `doctor-documents`, `doctor-patients`, `observation-annotation`, `reminder-crud`, `threshold-crud`
+`account-deletion`, `audit-log`, `care-plan`, `consent`, `create-document-reference`, `data-export`, `delete-patient`, `doctor-documents`, `doctor-patients`, `observation-annotation`
 
 ### 7.5 EventBridge Schedules
 
@@ -824,6 +843,14 @@ aws lambda add-permission --function-name carelog-dev-process-pending-invites \
 | GET | `/patients/{patientId}/interactions/{id}/transcript` | manage-interactions | caregivers, doctors |
 | GET | `/prompts` | manage-prompts | any authenticated |
 | PUT | `/prompts/{promptType}` | manage-prompts | doctors |
+| GET | `/patients/{patientId}/alerts` | alert-crud | caregivers, doctors |
+| POST | `/patients/{patientId}/alerts/{id}/read` | alert-crud | caregivers |
+| GET,POST | `/patients/{patientId}/thresholds` | threshold-crud | caregivers, doctors |
+| PUT,DELETE | `/patients/{patientId}/thresholds/{id}` | threshold-crud | caregivers, doctors |
+| POST,DELETE | `/device-tokens` | device-token | any authenticated |
+| GET,POST | `/patients/{patientId}/reminders` | reminder-crud | caregivers |
+| PUT,DELETE | `/patients/{patientId}/reminders/{id}` | reminder-crud | caregivers |
+| DELETE | `/patients/{patientId}/team/{memberId}` | remove-team-member | caregivers |
 | PUT | `/patients/{patientId}/language` | (handler) | caregivers |
 | POST | `/patients/{patientId}/topics/{topicId}` | (handler) | caregivers |
 
@@ -992,6 +1019,13 @@ The Mac Mini URL is discovered automatically via mDNS. Manual override is availa
 
 In Android Studio: **Tools -> Device Manager -> Create Device -> Pixel 6 -> API 34**
 
+> **Emulator DNS fix:** The emulator may not resolve AWS API Gateway hostnames. Add DNS config to the AVD:
+> ```bash
+> echo "hw.dns.1 = 8.8.8.8" >> ~/.android/avd/YOUR_AVD.avd/config.ini
+> echo "hw.dns.2 = 8.8.4.4" >> ~/.android/avd/YOUR_AVD.avd/config.ini
+> ```
+> Or launch with: `emulator -avd YOUR_AVD -dns-server 8.8.8.8`
+
 ### 10.5 Run
 
 ```bash
@@ -999,7 +1033,7 @@ cd android
 
 # Emulator
 emulator -list-avds
-emulator -avd Pixel_6_API_34 &
+emulator -avd Pixel_6_API_34 -dns-server 8.8.8.8 &
 
 # Build + install
 ./gradlew installDebug
@@ -1392,7 +1426,7 @@ aws logs tail /aws/lambda/carelog-dev-FUNCTION-NAME --follow --region ap-south-1
 aws logs tail /aws/lambda/carelog-dev-FUNCTION-NAME --since 5m --region ap-south-1
 ```
 
-Deployed function names: `post-confirmation`, `create-patient`, `patient-summary`, `accept-invite`, `invite-attendant`, `invite-doctor`, `process-pending-invites`, `sync-observation`, `bulk-sync`, `presigned-url`, `care-team`, `fetch-session-config`, `construct-fhir-batch`, `store-interaction`, `evaluate-thresholds-batch`, `check-daily-deadline`, `check-missed-measurements`, `notification-sender`, `manage-recommendations`, `manage-parameter-configs`, `manage-interactions`, `manage-prompts`.
+Deployed function names (28 total): `post-confirmation`, `create-patient`, `patient-summary`, `accept-invite`, `invite-attendant`, `invite-doctor`, `process-pending-invites`, `sync-observation`, `bulk-sync`, `presigned-url`, `care-team`, `fetch-session-config`, `construct-fhir-batch`, `store-interaction`, `evaluate-thresholds-batch`, `check-daily-deadline`, `check-missed-measurements`, `notification-sender`, `manage-recommendations`, `manage-parameter-configs`, `manage-interactions`, `manage-prompts`, `alert-crud`, `threshold-crud`, `device-token`, `reminder-crud`, `remove-team-member`, `get-observations`.
 
 ---
 
@@ -1462,6 +1496,38 @@ If the Android app doesn't find the Mac Mini:
 | TTS silent | Language mismatch | Verify TTS model exists for patient's language (piper-en/hi/bn.onnx) |
 | Values not saved | FHIR batch Lambda error | Check `construct-fhir-batch` Lambda logs |
 | Alerts not sent | Threshold eval / SQS issue | Check `evaluate-thresholds-batch` logs, SQS DLQ depth |
+
+### API returns 403 "Access denied" for valid users
+
+The Lambda `checkAccess()` functions use `WHERE p.id = $1::uuid` to verify patient access. If you see 403s:
+
+1. **Check that `custom:linked_patient_id`** in Cognito contains the patient's **UUID** (from `patients.id`), not the string patient ID (from `patients.patient_id`).
+2. **Check `persona_links`** — the user must have an active link to the patient with `is_active = true`.
+3. **Check Lambda logs** for the exact query failure:
+   ```bash
+   aws logs tail /aws/lambda/carelog-dev-patient-summary --since 5m --region ap-south-1
+   ```
+
+### Bastion SG rule missing after `terraform apply`
+
+If `terraform apply` replaces the bastion instance, the RDS security group rule allowing bastion access may be lost (state drift). Re-apply it:
+
+```bash
+cd infrastructure/terraform/environments/dev
+terraform apply -target="module.carelog.module.bastion[0].aws_security_group_rule.bastion_to_rds" -auto-approve
+```
+
+Or manually:
+```bash
+BASTION_ID=$(terraform output -raw bastion_instance_id)
+BASTION_SG=$(aws ec2 describe-instances --instance-ids $BASTION_ID \
+  --query 'Reservations[0].Instances[0].SecurityGroups[0].GroupId' --output text --region ap-south-1)
+RDS_SG=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=*carelog*rds*" \
+  --query 'SecurityGroups[0].GroupId' --output text --region ap-south-1)
+aws ec2 authorize-security-group-ingress \
+  --group-id $RDS_SG --protocol tcp --port 5432 \
+  --source-group $BASTION_SG --region ap-south-1
+```
 
 ### Android
 
@@ -1725,6 +1791,21 @@ sudo ./pilot-setup.sh --hostname "household-kumar" --wifi-ssid "KumarHome" --wif
 # 3. Verify from the Android app on the same network
 #    The app should auto-discover the Mac Mini via mDNS
 ```
+
+---
+
+## Changelog
+
+| Date | Changes |
+|------|---------|
+| 2026-04-25 | Added model download script (`mac-mini/scripts/download-models.sh`) with Hugging Face URLs |
+| 2026-04-25 | Updated Cognito groups: 5 groups (patients, attendants, relatives, caregivers, doctors) |
+| 2026-04-25 | Added 6 Lambdas to Terraform: notification-sender, alert-crud, threshold-crud, device-token, reminder-crud, remove-team-member (28 total) |
+| 2026-04-25 | Fixed V004 migration `::text` cast for enum rename compatibility |
+| 2026-04-25 | Fixed Lambda `checkAccess` queries: `p.patient_id` (string) -> `p.id` (UUID) in 7 Lambdas |
+| 2026-04-25 | Added emulator DNS fix documentation |
+| 2026-04-25 | Added bastion SG troubleshooting for post-`terraform apply` drift |
+| 2026-04-25 | Added API 403 troubleshooting section |
 
 ---
 
