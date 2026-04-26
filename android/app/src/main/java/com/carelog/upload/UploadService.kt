@@ -144,7 +144,7 @@ class UploadService @Inject constructor(
                 return@withContext null
             }
 
-            val responseBody = response.body?.string() ?: return@withContext null
+            val responseBody = response.body.string()
             val json = JSONObject(responseBody)
 
             PresignedUrlResponse(

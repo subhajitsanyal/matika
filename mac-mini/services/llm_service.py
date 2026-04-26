@@ -551,8 +551,11 @@ def _fuzzy_match(text: str, keyword: str, threshold: float = 0.80) -> bool:
     kw_len = len(keyword)
     text = text.lower()
     # Slide a window across text
-    for start in range(max(1, len(text) - kw_len - 3)):
+    for start in range(len(text)):
         end = min(len(text), start + kw_len + 3)
+        # Skip windows that are too short to meaningfully match
+        if end - start < max(kw_len - 2, 3):
+            continue
         window = text[start:end]
         ratio = SequenceMatcher(None, keyword, window).ratio()
         if ratio >= threshold:
@@ -574,7 +577,7 @@ def detect_emergency(text: str, language: str) -> bool:
             if keyword in text_lower:
                 return True
             # Fuzzy match for misspellings/transliterations (only for multi-word keywords)
-            if len(keyword) > 4 and _fuzzy_match(text_lower, keyword, threshold=0.82):
+            if len(keyword) > 4 and _fuzzy_match(text_lower, keyword, threshold=0.75):
                 return True
     return False
 
@@ -913,7 +916,16 @@ def _rule_based_response(session: SessionState, text: str) -> dict[str, Any]:
             "requires_photo": False,
         }
 
-    # 5. No values extracted — ask for next missing parameter or topic
+    # 5. No values extracted — increment failure counter and ask for next parameter
+    session.consecutive_failures += 1
+    if session.consecutive_failures >= 2:
+        return {
+            "response_text": _fallback_text_response(name, language),
+            "extracted_values": [],
+            "action": Action.fallback_text.value,
+            "requires_photo": False,
+        }
+
     if session.remaining_parameters:
         next_param = session.remaining_parameters[0]
         return {
@@ -1160,7 +1172,41 @@ def _handle_confirmation(
             }
 
     elif _is_denial(text, language):
-        # Patient denied — clear pending, ask again
+        # Check if the denial also contains a new value (correction pattern)
+        # e.g. "no it's 125 over 80" — denial + new value = correction
+        correction_values = _try_extract_values(session, text)
+        if correction_values:
+            # Treat as correction: replace pending with new values
+            session.pending_confirmation.clear()
+            session.invalidate_prompt_cache()
+
+            # Check plausibility
+            hard_implausible = [v for v in correction_values if classify_plausibility(v["parameter"], v["value"]) == "hard"]
+            if hard_implausible:
+                return {
+                    "response_text": _hard_implausible_response(hard_implausible, name, language),
+                    "extracted_values": [],
+                    "action": Action.implausible_value.value,
+                    "requires_photo": False,
+                }
+
+            soft_implausible = [v for v in correction_values if classify_plausibility(v["parameter"], v["value"]) == "soft"]
+            if soft_implausible:
+                return {
+                    "response_text": _soft_implausible_response(soft_implausible, correction_values, name, language),
+                    "extracted_values": correction_values,
+                    "action": Action.confirm_value.value,
+                    "requires_photo": False,
+                }
+
+            return {
+                "response_text": _confirm_value_response(correction_values, name, language),
+                "extracted_values": correction_values,
+                "action": Action.confirm_value.value,
+                "requires_photo": False,
+            }
+
+        # Pure denial — clear pending, ask again
         session.pending_confirmation.clear()
         session.consecutive_failures += 1
         session.invalidate_prompt_cache()
@@ -1495,7 +1541,10 @@ def _process_utterance(session: SessionState, text: str) -> UtteranceResponse:
         action = Action.ask_parameter
 
     # Reset consecutive failures on successful extraction or confirmation
-    if action in (Action.confirm_value, Action.ask_parameter, Action.session_summary, Action.ask_topic):
+    # Note: ask_parameter without extracted values means nothing was understood — don't reset
+    if action in (Action.confirm_value, Action.session_summary, Action.ask_topic):
+        session.consecutive_failures = 0
+    elif action == Action.ask_parameter and extracted_values:
         session.consecutive_failures = 0
 
     # Record system response turn

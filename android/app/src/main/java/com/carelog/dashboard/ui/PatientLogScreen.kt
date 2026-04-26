@@ -10,6 +10,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -255,7 +256,7 @@ private fun InteractionCard(
     val typeIcon = when (interaction.type) {
         "daily_checkin" -> Icons.Default.Mic
         "caregiver_config" -> Icons.Default.Settings
-        else -> Icons.Default.Chat
+        else -> Icons.AutoMirrored.Filled.Chat
     }
 
     Card(

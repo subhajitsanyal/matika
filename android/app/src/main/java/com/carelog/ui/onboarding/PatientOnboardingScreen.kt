@@ -142,7 +142,7 @@ fun PatientOnboardingScreen(
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = showGenderDropdown) },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .menuAnchor()
+                        .menuAnchor(MenuAnchorType.PrimaryNotEditable)
                         .testTag("onboarding_gender")
                 )
                 ExposedDropdownMenu(
@@ -177,7 +177,7 @@ fun PatientOnboardingScreen(
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = showBloodTypeDropdown) },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .menuAnchor()
+                        .menuAnchor(MenuAnchorType.PrimaryNotEditable)
                 )
                 ExposedDropdownMenu(
                     expanded = showBloodTypeDropdown,

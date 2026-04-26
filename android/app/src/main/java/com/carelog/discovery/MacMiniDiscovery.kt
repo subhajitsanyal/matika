@@ -130,6 +130,7 @@ class MacMiniDiscovery @Inject constructor(
         _discoveryState.value = DiscoveryState.IDLE
     }
 
+    @Suppress("DEPRECATION")
     private fun resolveService(serviceInfo: NsdServiceInfo) {
         nsdManager.resolveService(serviceInfo, object : NsdManager.ResolveListener {
             override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {

@@ -52,12 +52,12 @@ class PatientRepositoryImpl @Inject constructor() : PatientRepository {
         val response = httpClient.newCall(httpRequest).execute()
 
         if (response.isSuccessful) {
-            val responseBody = response.body?.string() ?: "{}"
+            val responseBody = response.body.string()
             val json = JSONObject(responseBody)
             json.optString("patientId").takeIf { it.isNotEmpty() }
                 ?: throw Exception("Server did not return a patientId")
         } else {
-            val errorBody = response.body?.string() ?: ""
+            val errorBody = response.body.string()
             throw Exception("Failed to create patient: HTTP ${response.code} $errorBody")
         }
     }

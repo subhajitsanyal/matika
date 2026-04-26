@@ -606,7 +606,7 @@ class TestEmergencyDetection:
         assert detect_emergency("I have chest pain", "en") is True
         assert detect_emergency("I can't breathe", "en") is True
         assert detect_emergency("she is unconscious", "en") is True
-        assert detect_emergency("I fell down", "en") is False  # "fell down" not exact match
+        assert detect_emergency("I fell down", "en") is True  # "fell down" is in emergency keywords
         assert detect_emergency("falling", "en") is True
 
     def test_hindi_emergency_keywords(self) -> None:

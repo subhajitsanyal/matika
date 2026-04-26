@@ -78,7 +78,7 @@ class ConsentRepositoryImpl @Inject constructor(
             .build()
 
         val response = httpClient.newCall(request).execute()
-        val responseBody = response.body?.string() ?: ""
+        val responseBody = response.body.string()
 
         if (!response.isSuccessful) {
             throw Exception("API ${response.code}: $responseBody")
@@ -87,8 +87,8 @@ class ConsentRepositoryImpl @Inject constructor(
         val json = JSONObject(responseBody)
         ConsentStatus(
             hasConsent = json.optBoolean("hasConsent", false),
-            consentVersion = json.optString("consentVersion", null),
-            acceptedAt = json.optString("acceptedAt", null),
+            consentVersion = json.optString("consentVersion").takeIf { it.isNotEmpty() },
+            acceptedAt = json.optString("acceptedAt").takeIf { it.isNotEmpty() },
             currentVersion = json.optString("currentVersion", "1.0"),
             needsUpdate = json.optBoolean("needsUpdate", false)
         )
@@ -115,7 +115,7 @@ class ConsentRepositoryImpl @Inject constructor(
         }
 
         if (!response.isSuccessful) {
-            val body = response.body?.string() ?: ""
+            val body = response.body.string()
             throw Exception("Failed to record consent: API ${response.code}: $body")
         }
     }
@@ -140,7 +140,7 @@ class ConsentRepositoryImpl @Inject constructor(
         }
 
         if (!response.isSuccessful) {
-            val body = response.body?.string() ?: ""
+            val body = response.body.string()
             throw Exception("Failed to withdraw consent: API ${response.code}: $body")
         }
     }

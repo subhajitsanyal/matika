@@ -49,7 +49,7 @@ class RelativeApiService @Inject constructor(
             .build()
 
         val response = httpClient.newCall(request).execute()
-        val responseBody = response.body?.string() ?: ""
+        val responseBody = response.body.string()
 
         if (!response.isSuccessful) {
             throw Exception("API ${response.code}: $responseBody")
@@ -83,7 +83,7 @@ class RelativeApiService @Inject constructor(
             .build()
 
         val response = httpClient.newCall(request).execute()
-        val responseBody = response.body?.string() ?: ""
+        val responseBody = response.body.string()
 
         if (!response.isSuccessful) {
             throw Exception("API ${response.code}: $responseBody")
@@ -108,7 +108,7 @@ class RelativeApiService @Inject constructor(
             .build()
 
         val response = httpClient.newCall(request).execute()
-        val responseBody = response.body?.string() ?: ""
+        val responseBody = response.body.string()
 
         if (!response.isSuccessful) {
             throw Exception("API ${response.code}: $responseBody")
@@ -196,7 +196,7 @@ class RelativeApiService @Inject constructor(
             .build()
 
         val response = httpClient.newCall(request).execute()
-        val responseBody = response.body?.string() ?: ""
+        val responseBody = response.body.string()
 
         if (!response.isSuccessful) {
             throw Exception("API ${response.code}: $responseBody")
@@ -295,7 +295,7 @@ class RelativeApiService @Inject constructor(
             .build()
 
         val response = httpClient.newCall(request).execute()
-        val responseBody = response.body?.string() ?: ""
+        val responseBody = response.body.string()
 
         if (!response.isSuccessful) {
             throw Exception("API ${response.code}: $responseBody")
@@ -366,7 +366,7 @@ class RelativeApiService @Inject constructor(
             .build()
 
         val response = httpClient.newCall(request).execute()
-        val responseBody = response.body?.string() ?: ""
+        val responseBody = response.body.string()
         if (!response.isSuccessful) {
             throw Exception("API ${response.code}: $responseBody")
         }
@@ -387,7 +387,7 @@ class RelativeApiService @Inject constructor(
             .build()
 
         val response = httpClient.newCall(request).execute()
-        val responseBody = response.body?.string() ?: ""
+        val responseBody = response.body.string()
 
         if (!response.isSuccessful) {
             throw Exception("API ${response.code}: $responseBody")
@@ -418,7 +418,7 @@ class RelativeApiService @Inject constructor(
             .build()
 
         val response = httpClient.newCall(request).execute()
-        val responseBody = response.body?.string() ?: ""
+        val responseBody = response.body.string()
 
         if (!response.isSuccessful) {
             throw Exception("API ${response.code}: $responseBody")
@@ -455,7 +455,7 @@ class RelativeApiService @Inject constructor(
             .build()
 
         val response = httpClient.newCall(request).execute()
-        val responseBody = response.body?.string() ?: ""
+        val responseBody = response.body.string()
 
         if (!response.isSuccessful) {
             throw Exception("API ${response.code}: $responseBody")
@@ -469,7 +469,7 @@ class RelativeApiService @Inject constructor(
                 id = obj.getString("id"),
                 action = obj.getString("action"),
                 resourceType = obj.optString("resourceType", ""),
-                resourceId = obj.optString("resourceId", null),
+                resourceId = obj.optString("resourceId").takeIf { it.isNotEmpty() },
                 actorId = obj.getString("actorId"),
                 actorName = obj.getString("actorName"),
                 actorRole = obj.getString("actorRole"),
@@ -514,7 +514,7 @@ class RelativeApiService @Inject constructor(
             .build()
 
         val response = httpClient.newCall(request).execute()
-        val responseBody = response.body?.string() ?: ""
+        val responseBody = response.body.string()
         if (!response.isSuccessful) {
             throw Exception("API ${response.code}: $responseBody")
         }

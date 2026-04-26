@@ -169,7 +169,7 @@ fun InviteDoctorScreen(
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = showSpecialtyDropdown) },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .menuAnchor()
+                        .menuAnchor(MenuAnchorType.PrimaryNotEditable)
                 )
                 ExposedDropdownMenu(
                     expanded = showSpecialtyDropdown,

@@ -45,7 +45,7 @@ class InviteRepositoryImpl @Inject constructor() : InviteRepository {
             .build()
 
         val response = httpClient.newCall(httpRequest).execute()
-        val responseBody = response.body?.string() ?: "{}"
+        val responseBody = response.body.string()
 
         if (response.isSuccessful) {
             val json = JSONObject(responseBody)
@@ -78,7 +78,7 @@ class InviteRepositoryImpl @Inject constructor() : InviteRepository {
             .build()
 
         val response = httpClient.newCall(httpRequest).execute()
-        val responseBody = response.body?.string() ?: "{}"
+        val responseBody = response.body.string()
 
         if (response.isSuccessful) {
             val json = JSONObject(responseBody)
