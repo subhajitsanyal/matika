@@ -56,7 +56,7 @@ async function checkAccess(dbClient, cognitoSub, patientId) {
     `SELECT 1 FROM persona_links pl
      JOIN patients p ON pl.patient_id = p.id
      JOIN users u ON pl.linked_user_id = u.id
-     WHERE p.patient_id = $1 AND u.cognito_sub = $2 AND pl.is_active = true`,
+     WHERE p.id = $1::uuid AND u.cognito_sub = $2 AND pl.is_active = true`,
     [patientId, cognitoSub]
   );
   return result.rows.length > 0;
@@ -70,7 +70,7 @@ async function getPatientInfo(dbClient, patientId) {
     `SELECT p.patient_id, u.name, u.cognito_sub, p.date_of_birth, p.gender, p.blood_type
      FROM patients p
      JOIN users u ON p.user_id = u.id
-     WHERE p.patient_id = $1`,
+     WHERE p.id = $1::uuid`,
     [patientId]
   );
   return result.rows[0] || null;
@@ -85,7 +85,7 @@ async function getUnreadAlertCount(dbClient, patientId, cognitoSub) {
      FROM alerts a
      JOIN patients p ON a.patient_id = p.id
      JOIN users u ON a.recipient_user_id = u.id
-     WHERE p.patient_id = $1 AND u.cognito_sub = $2 AND a.is_read = false`,
+     WHERE p.id = $1::uuid AND u.cognito_sub = $2 AND a.is_read = false`,
     [patientId, cognitoSub]
   );
   return result.rows[0]?.count || 0;
@@ -230,7 +230,7 @@ async function getLastActivityTime(dbClient, patientId) {
     `SELECT MAX(osl.local_timestamp) AS last_activity
      FROM observation_sync_log osl
      JOIN patients p ON osl.patient_id = p.id
-     WHERE p.patient_id = $1`,
+     WHERE p.id = $1::uuid`,
     [patientId]
   );
   return result.rows[0]?.last_activity || null;
@@ -272,11 +272,11 @@ exports.handler = async (event) => {
       `SELECT u.cognito_sub FROM users u
        JOIN persona_links pl ON pl.linked_user_id = u.id
        JOIN patients p ON pl.patient_id = p.id
-       WHERE p.patient_id = $1 AND pl.is_active = true
+       WHERE p.id = $1::uuid AND pl.is_active = true
        UNION
        SELECT u.cognito_sub FROM users u
        JOIN patients p ON p.user_id = u.id
-       WHERE p.patient_id = $1`,
+       WHERE p.id = $1::uuid`,
       [patientId]
     );
     const allSubs = subsResult.rows.map((r) => r.cognito_sub);

@@ -128,9 +128,9 @@ exports.handler = async (event) => {
        FROM patients p
        JOIN persona_links pl ON pl.patient_id = p.id
        JOIN users u ON u.id = p.user_id
-       WHERE p.patient_id = $1
+       WHERE p.id = $1::uuid
          AND pl.linked_user_id = (SELECT id FROM users WHERE cognito_sub = $2)
-         AND pl.relationship = 'relative'
+         AND pl.relationship IN ('relative', 'caregiver')
          AND pl.is_primary = true
          AND pl.is_active = true`,
       [patientId, relativeCognitoSub]

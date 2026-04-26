@@ -81,7 +81,7 @@ exports.handler = async (event) => {
       `SELECT 1 FROM persona_links pl
        JOIN patients p ON pl.patient_id = p.id
        JOIN users u ON pl.linked_user_id = u.id
-       WHERE p.patient_id = $1 AND u.cognito_sub = $2 AND pl.is_active = true`,
+       WHERE p.id = $1::uuid AND u.cognito_sub = $2 AND pl.is_active = true`,
       [patientId, cognitoSub]
     );
     if (access.rows.length === 0) return resp(403, { error: "Access denied" });
@@ -91,11 +91,11 @@ exports.handler = async (event) => {
       `SELECT u.cognito_sub FROM users u
        JOIN persona_links pl ON pl.linked_user_id = u.id
        JOIN patients p ON pl.patient_id = p.id
-       WHERE p.patient_id = $1 AND pl.is_active = true
+       WHERE p.id = $1::uuid AND pl.is_active = true
        UNION
        SELECT u.cognito_sub FROM users u
        JOIN patients p ON p.user_id = u.id
-       WHERE p.patient_id = $1`,
+       WHERE p.id = $1::uuid`,
       [patientId]
     );
     const allSubs = subsResult.rows.map((r) => r.cognito_sub);

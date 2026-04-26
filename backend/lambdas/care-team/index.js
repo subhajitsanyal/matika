@@ -64,7 +64,7 @@ exports.handler = async (event) => {
        FROM patients p
        JOIN persona_links pl ON pl.patient_id = p.id
        JOIN users u ON pl.linked_user_id = u.id
-       WHERE p.patient_id = $1 AND u.cognito_sub = $2 AND pl.is_active = true`,
+       WHERE p.id = $1::uuid AND u.cognito_sub = $2 AND pl.is_active = true`,
       [patientId, cognitoSub]
     );
 
