@@ -99,6 +99,34 @@ output "construct_fhir_batch_function_name" {
   value       = aws_lambda_function.construct_fhir_batch.function_name
 }
 
+output "notification_sender_arn" {
+  value = aws_lambda_function.notification_sender.arn
+}
+
+output "notification_sender_function_name" {
+  value = aws_lambda_function.notification_sender.function_name
+}
+
+output "alert_crud_invoke_arn" {
+  value = aws_lambda_function.alert_crud.invoke_arn
+}
+
+output "threshold_crud_invoke_arn" {
+  value = aws_lambda_function.threshold_crud.invoke_arn
+}
+
+output "device_token_invoke_arn" {
+  value = aws_lambda_function.device_token.invoke_arn
+}
+
+output "reminder_crud_invoke_arn" {
+  value = aws_lambda_function.reminder_crud.invoke_arn
+}
+
+output "remove_team_member_invoke_arn" {
+  value = aws_lambda_function.remove_team_member.invoke_arn
+}
+
 output "all_function_names" {
   description = "List of all Lambda function names for monitoring"
   value = [
@@ -124,5 +152,11 @@ output "all_function_names" {
     aws_lambda_function.manage_interactions.function_name,
     aws_lambda_function.manage_prompts.function_name,
     aws_lambda_function.process_pending_invites.function_name,
+    aws_lambda_function.notification_sender.function_name,
+    aws_lambda_function.alert_crud.function_name,
+    aws_lambda_function.threshold_crud.function_name,
+    aws_lambda_function.device_token.function_name,
+    aws_lambda_function.reminder_crud.function_name,
+    aws_lambda_function.remove_team_member.function_name,
   ]
 }

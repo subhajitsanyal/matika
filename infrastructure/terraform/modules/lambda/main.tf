@@ -442,6 +442,42 @@ data "archive_file" "manage_prompts" {
   output_path = "${path.module}/archives/manage-prompts.zip"
 }
 
+data "archive_file" "notification_sender" {
+  type        = "zip"
+  source_dir  = "${var.lambdas_source_path}/notification-sender"
+  output_path = "${path.module}/archives/notification-sender.zip"
+}
+
+data "archive_file" "alert_crud" {
+  type        = "zip"
+  source_dir  = "${var.lambdas_source_path}/alert-crud"
+  output_path = "${path.module}/archives/alert-crud.zip"
+}
+
+data "archive_file" "threshold_crud" {
+  type        = "zip"
+  source_dir  = "${var.lambdas_source_path}/threshold-crud"
+  output_path = "${path.module}/archives/threshold-crud.zip"
+}
+
+data "archive_file" "device_token" {
+  type        = "zip"
+  source_dir  = "${var.lambdas_source_path}/device-token"
+  output_path = "${path.module}/archives/device-token.zip"
+}
+
+data "archive_file" "reminder_crud" {
+  type        = "zip"
+  source_dir  = "${var.lambdas_source_path}/reminder-crud"
+  output_path = "${path.module}/archives/reminder-crud.zip"
+}
+
+data "archive_file" "remove_team_member" {
+  type        = "zip"
+  source_dir  = "${var.lambdas_source_path}/remove-team-member"
+  output_path = "${path.module}/archives/remove-team-member.zip"
+}
+
 # ============================================================
 # LAMBDA FUNCTIONS
 # ============================================================
@@ -919,6 +955,135 @@ resource "aws_lambda_function" "process_pending_invites" {
   }
 }
 
+resource "aws_lambda_function" "notification_sender" {
+  function_name    = "${local.function_prefix}-notification-sender"
+  role             = aws_iam_role.lambda_rds_sqs.arn
+  handler          = "index.handler"
+  runtime          = "nodejs20.x"
+  timeout          = 60
+  memory_size      = 256
+  filename         = data.archive_file.notification_sender.output_path
+  source_code_hash = data.archive_file.notification_sender.output_base64sha256
+
+  vpc_config {
+    subnet_ids         = var.private_subnet_ids
+    security_group_ids = [var.lambda_security_group_id]
+  }
+
+  environment {
+    variables = merge(local.rds_env, {
+      SQS_ALERT_QUEUE_URL = var.alerts_queue_url
+    })
+  }
+}
+
+resource "aws_lambda_function" "alert_crud" {
+  function_name    = "${local.function_prefix}-alert-crud"
+  role             = aws_iam_role.lambda_rds_cognito.arn
+  handler          = "index.handler"
+  runtime          = "nodejs20.x"
+  timeout          = 30
+  memory_size      = 256
+  filename         = data.archive_file.alert_crud.output_path
+  source_code_hash = data.archive_file.alert_crud.output_base64sha256
+
+  vpc_config {
+    subnet_ids         = var.private_subnet_ids
+    security_group_ids = [var.lambda_security_group_id]
+  }
+
+  environment {
+    variables = local.rds_env
+  }
+}
+
+resource "aws_lambda_function" "threshold_crud" {
+  function_name    = "${local.function_prefix}-threshold-crud"
+  role             = aws_iam_role.lambda_rds_cognito.arn
+  handler          = "index.handler"
+  runtime          = "nodejs20.x"
+  timeout          = 30
+  memory_size      = 256
+  filename         = data.archive_file.threshold_crud.output_path
+  source_code_hash = data.archive_file.threshold_crud.output_base64sha256
+
+  vpc_config {
+    subnet_ids         = var.private_subnet_ids
+    security_group_ids = [var.lambda_security_group_id]
+  }
+
+  environment {
+    variables = local.rds_env
+  }
+}
+
+resource "aws_lambda_function" "device_token" {
+  function_name    = "${local.function_prefix}-device-token"
+  role             = aws_iam_role.lambda_rds_cognito.arn
+  handler          = "index.handler"
+  runtime          = "nodejs20.x"
+  timeout          = 30
+  memory_size      = 256
+  filename         = data.archive_file.device_token.output_path
+  source_code_hash = data.archive_file.device_token.output_base64sha256
+
+  vpc_config {
+    subnet_ids         = var.private_subnet_ids
+    security_group_ids = [var.lambda_security_group_id]
+  }
+
+  environment {
+    variables = local.rds_env
+  }
+}
+
+resource "aws_lambda_function" "reminder_crud" {
+  function_name    = "${local.function_prefix}-reminder-crud"
+  role             = aws_iam_role.lambda_rds_cognito.arn
+  handler          = "index.handler"
+  runtime          = "nodejs20.x"
+  timeout          = 30
+  memory_size      = 256
+  filename         = data.archive_file.reminder_crud.output_path
+  source_code_hash = data.archive_file.reminder_crud.output_base64sha256
+
+  vpc_config {
+    subnet_ids         = var.private_subnet_ids
+    security_group_ids = [var.lambda_security_group_id]
+  }
+
+  environment {
+    variables = local.rds_env
+  }
+}
+
+resource "aws_lambda_function" "remove_team_member" {
+  function_name    = "${local.function_prefix}-remove-team-member"
+  role             = aws_iam_role.lambda_rds_cognito.arn
+  handler          = "index.handler"
+  runtime          = "nodejs20.x"
+  timeout          = 30
+  memory_size      = 256
+  filename         = data.archive_file.remove_team_member.output_path
+  source_code_hash = data.archive_file.remove_team_member.output_base64sha256
+
+  vpc_config {
+    subnet_ids         = var.private_subnet_ids
+    security_group_ids = [var.lambda_security_group_id]
+  }
+
+  environment {
+    variables = local.rds_env
+  }
+}
+
+# SQS event source mapping for notification-sender
+resource "aws_lambda_event_source_mapping" "notification_sender_sqs" {
+  event_source_arn = var.alerts_queue_arn
+  function_name    = aws_lambda_function.notification_sender.arn
+  batch_size       = 1
+}
+
 # ============================================================
 # CLOUDWATCH LOG GROUPS
 # ============================================================
@@ -1030,6 +1195,36 @@ resource "aws_cloudwatch_log_group" "manage_interactions" {
 
 resource "aws_cloudwatch_log_group" "manage_prompts" {
   name              = "/aws/lambda/${aws_lambda_function.manage_prompts.function_name}"
+  retention_in_days = 365
+}
+
+resource "aws_cloudwatch_log_group" "notification_sender" {
+  name              = "/aws/lambda/${aws_lambda_function.notification_sender.function_name}"
+  retention_in_days = 365
+}
+
+resource "aws_cloudwatch_log_group" "alert_crud" {
+  name              = "/aws/lambda/${aws_lambda_function.alert_crud.function_name}"
+  retention_in_days = 365
+}
+
+resource "aws_cloudwatch_log_group" "threshold_crud" {
+  name              = "/aws/lambda/${aws_lambda_function.threshold_crud.function_name}"
+  retention_in_days = 365
+}
+
+resource "aws_cloudwatch_log_group" "device_token" {
+  name              = "/aws/lambda/${aws_lambda_function.device_token.function_name}"
+  retention_in_days = 365
+}
+
+resource "aws_cloudwatch_log_group" "reminder_crud" {
+  name              = "/aws/lambda/${aws_lambda_function.reminder_crud.function_name}"
+  retention_in_days = 365
+}
+
+resource "aws_cloudwatch_log_group" "remove_team_member" {
+  name              = "/aws/lambda/${aws_lambda_function.remove_team_member.function_name}"
   retention_in_days = 365
 }
 
@@ -1169,6 +1364,46 @@ resource "aws_lambda_permission" "manage_prompts" {
   statement_id  = "AllowAPIGateway"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.manage_prompts.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${var.api_execution_arn}/*"
+}
+
+resource "aws_lambda_permission" "alert_crud" {
+  statement_id  = "AllowAPIGateway"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.alert_crud.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${var.api_execution_arn}/*"
+}
+
+resource "aws_lambda_permission" "threshold_crud" {
+  statement_id  = "AllowAPIGateway"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.threshold_crud.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${var.api_execution_arn}/*"
+}
+
+resource "aws_lambda_permission" "device_token" {
+  statement_id  = "AllowAPIGateway"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.device_token.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${var.api_execution_arn}/*"
+}
+
+resource "aws_lambda_permission" "reminder_crud" {
+  statement_id  = "AllowAPIGateway"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.reminder_crud.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${var.api_execution_arn}/*"
+}
+
+resource "aws_lambda_permission" "remove_team_member" {
+  statement_id  = "AllowAPIGateway"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.remove_team_member.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${var.api_execution_arn}/*"
 }

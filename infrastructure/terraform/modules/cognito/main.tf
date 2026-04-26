@@ -1,8 +1,10 @@
 # CareLog Cognito Module
 #
-# Creates a Cognito user pool with three user groups:
+# Creates a Cognito user pool with five user groups:
 # - patients: Primary health data loggers
-# - caregivers: Account creators, log vitals, configure alerts and thresholds
+# - attendants: Log vitals and observations on patient's behalf
+# - relatives: Account creators, configure alerts, thresholds, and schedules
+# - caregivers: Combined caregiver role (attendants + relatives)
 # - doctors: Clinical review via web portal
 #
 # HIPAA Compliance:
@@ -184,18 +186,32 @@ resource "aws_cognito_user_group" "patients" {
   precedence   = 1
 }
 
+resource "aws_cognito_user_group" "attendants" {
+  name         = "attendants"
+  user_pool_id = aws_cognito_user_pool.main.id
+  description  = "Log vitals and observations on patient's behalf"
+  precedence   = 2
+}
+
+resource "aws_cognito_user_group" "relatives" {
+  name         = "relatives"
+  user_pool_id = aws_cognito_user_pool.main.id
+  description  = "Account creators, configure alerts, thresholds, and schedules"
+  precedence   = 3
+}
+
 resource "aws_cognito_user_group" "caregivers" {
   name         = "caregivers"
   user_pool_id = aws_cognito_user_pool.main.id
-  description  = "Account creators, log vitals, configure alerts, thresholds, and schedules"
-  precedence   = 2
+  description  = "Combined caregiver role covering attendant and relative responsibilities"
+  precedence   = 4
 }
 
 resource "aws_cognito_user_group" "doctors" {
   name         = "doctors"
   user_pool_id = aws_cognito_user_pool.main.id
   description  = "Clinical review, care plan management, threshold overrides"
-  precedence   = 3
+  precedence   = 5
 }
 
 # App Client for Mobile Apps

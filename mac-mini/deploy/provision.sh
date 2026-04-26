@@ -24,14 +24,16 @@ TMP_DIR="${CARELOG_HOME}/tmp"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LAUNCHD_DIR="${SCRIPT_DIR}/launchd"
 
-# Model download URLs (replace with actual URLs before first run)
-# These are placeholder URLs — update with your hosting location
-MODEL_STT_URL="${MODEL_STT_URL:-https://models.example.com/whisper-large-v3.bin}"
-MODEL_LLM_URL="${MODEL_LLM_URL:-https://models.example.com/qwen-2.5-7b-q4.gguf}"
-MODEL_VISION_URL="${MODEL_VISION_URL:-https://models.example.com/qwen-vl-7b-q4.gguf}"
-MODEL_TTS_EN_URL="${MODEL_TTS_EN_URL:-https://models.example.com/piper-en.onnx}"
-MODEL_TTS_HI_URL="${MODEL_TTS_HI_URL:-https://models.example.com/piper-hi.onnx}"
-MODEL_TTS_BN_URL="${MODEL_TTS_BN_URL:-https://models.example.com/piper-bn.onnx}"
+# Model download URLs (Hugging Face)
+# Override via environment variables if hosting models elsewhere.
+MODEL_STT_URL="${MODEL_STT_URL:-https://huggingface.co/Systran/faster-whisper-large-v3/resolve/main/model.bin}"
+MODEL_LLM_URL="${MODEL_LLM_URL:-https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m.gguf}"
+MODEL_VISION_URL="${MODEL_VISION_URL:-https://huggingface.co/Qwen/Qwen2-VL-7B-Instruct-GGUF/resolve/main/qwen2-vl-7b-instruct-q4_k_m.gguf}"
+MODEL_TTS_EN_URL="${MODEL_TTS_EN_URL:-https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx}"
+MODEL_TTS_HI_URL="${MODEL_TTS_HI_URL:-https://huggingface.co/rhasspy/piper-voices/resolve/main/hi/hi_IN/madhur/medium/hi_IN-madhur-medium.onnx}"
+# NOTE: Piper does not have a Bengali voice yet. This URL will 404.
+# When a Bengali voice becomes available, update this URL.
+MODEL_TTS_BN_URL="${MODEL_TTS_BN_URL:-https://huggingface.co/rhasspy/piper-voices/resolve/main/bn/bn_BD/placeholder/medium/bn_BD-placeholder-medium.onnx}"
 
 # Service ports for health checks
 declare -A SERVICE_PORTS=(
@@ -240,7 +242,7 @@ download_model() {
     fi
 
     log "  Downloading '${name}' from ${url}..."
-    wget --progress=bar:force -O "${dest}.tmp" "${url}"
+    curl -L -C - -# -o "${dest}.tmp" "${url}"
     mv "${dest}.tmp" "${dest}"
     log "  Model '${name}' downloaded."
 }
