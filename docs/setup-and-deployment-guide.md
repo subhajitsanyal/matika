@@ -592,6 +592,61 @@ terraform apply
 
 **S3 Bucket: 409 Conflict** — S3 names are globally unique. If recently deleted, wait 5-10 minutes or change `s3_bucket_prefix`.
 
+**SQS Queue: "QueueAlreadyExists" with different KmsMasterKeyId**
+
+SQS queues survive `terraform destroy` if they were created with a KMS key that has since been deleted. Delete the orphaned queues and KMS alias, then re-apply:
+
+```bash
+REGION="ap-south-1"
+
+# Delete KMS aliases
+for alias in $(aws kms list-aliases --region $REGION \
+    --query 'Aliases[?contains(AliasName, `carelog`)].AliasName' --output text); do
+    aws kms delete-alias --alias-name "$alias" --region $REGION
+done
+
+# Delete SQS queues
+for url in $(aws sqs list-queues --queue-name-prefix carelog --region $REGION \
+    --query 'QueueUrls[]' --output text 2>/dev/null); do
+    aws sqs delete-queue --queue-url "$url" --region $REGION
+done
+
+# SQS queues take 60 seconds to fully delete
+sleep 60
+terraform apply
+```
+
+**EventBridge Rule: "can't be deleted since it has targets"**
+
+EventBridge rules must have their targets removed before deletion. This can happen if `terraform destroy` tries to delete the rule before removing its targets:
+
+```bash
+REGION="ap-south-1"
+for rule in $(aws events list-rules --name-prefix carelog --region $REGION \
+    --query 'Rules[].Name' --output text); do
+    # Remove all targets
+    for target in $(aws events list-targets-by-rule --rule "$rule" --region $REGION \
+        --query 'Targets[].Id' --output text); do
+        aws events remove-targets --rule "$rule" --ids "$target" --region $REGION
+    done
+    # Delete the rule
+    aws events delete-rule --name "$rule" --region $REGION
+done
+terraform destroy  # or terraform apply
+```
+
+**Lambda functions still exist after `terraform destroy`**
+
+Lambdas deployed or updated via `aws lambda update-function-code` (AWS CLI) may survive `terraform destroy` because their state drifted from Terraform. Delete them manually:
+
+```bash
+REGION="ap-south-1"
+for fn in $(aws lambda list-functions --region $REGION \
+    --query 'Functions[?starts_with(FunctionName, `carelog`)].FunctionName' --output text); do
+    aws lambda delete-function --function-name "$fn" --region $REGION
+done
+```
+
 ---
 
 ## 6. Database Setup
