@@ -30,11 +30,26 @@ terraform init
 terraform destroy
 ```
 
-This removes: VPC, Cognito, API Gateway, all 28 Lambdas, RDS, S3 buckets, SQS queues, SNS topics, bastion, EventBridge rules, CloudWatch alarms/dashboard. RDS deletion takes 5-15 minutes.
+This removes: VPC, Cognito, API Gateway, RDS, S3 buckets, SQS queues, SNS topics, bastion, EventBridge rules, CloudWatch alarms/dashboard. RDS deletion takes 5-15 minutes.
+
+> **Note:** Lambdas that were deployed or updated via `aws lambda update-function-code` (AWS CLI) may survive `terraform destroy` because their state drifted from Terraform. Step 3 handles these.
 
 ---
 
 ## Step 3: Clean Up Resources That Survive `terraform destroy`
+
+### 3a: Delete orphaned Lambda functions
+
+```bash
+REGION="ap-south-1"
+for fn in $(aws lambda list-functions --region $REGION \
+    --query 'Functions[?starts_with(FunctionName, `carelog`)].FunctionName' --output text); do
+    echo "Deleting: $fn"
+    aws lambda delete-function --function-name "$fn" --region $REGION
+done
+```
+
+### 3b: Force-delete Secrets Manager and CloudWatch logs
 
 ```bash
 REGION="ap-south-1"
