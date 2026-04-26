@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.testTag
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.carelog.ui.theme.CareLogColors
 import com.carelog.upload.FileType
@@ -183,7 +184,8 @@ fun UploadOptionCard(
             .fillMaxWidth()
             .aspectRatio(1f)
             .clip(RoundedCornerShape(16.dp))
-            .clickable(onClick = onClick),
+            .clickable(onClick = onClick)
+            .testTag("upload_${option.type.name.lowercase()}"),
         colors = CardDefaults.cardColors(
             containerColor = option.color.copy(alpha = 0.12f)
         )

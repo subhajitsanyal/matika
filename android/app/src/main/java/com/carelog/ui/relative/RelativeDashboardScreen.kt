@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -169,13 +170,17 @@ private fun DashboardContent(
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 QuickActionCard(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("caregiver_thresholds"),
                     icon = Icons.Default.Tune,
                     label = "Thresholds",
                     onClick = onNavigateToThresholds
                 )
                 QuickActionCard(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("caregiver_reminders"),
                     icon = Icons.Default.Alarm,
                     label = "Reminders",
                     onClick = onNavigateToReminders
@@ -253,7 +258,8 @@ private fun VitalSummaryCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick),
+            .clickable(onClick = onClick)
+            .testTag("caregiver_vital_${vitalType.name.lowercase()}"),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
         ),

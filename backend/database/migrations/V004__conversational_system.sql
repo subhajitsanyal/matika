@@ -21,8 +21,11 @@ ALTER TYPE persona_type RENAME VALUE 'relative' TO 'caregiver';
 
 -- ============================================================
 -- Rename Cognito group references in persona_links
+-- (RENAME VALUE already changed all existing 'relative' values to 'caregiver'
+--  in the enum, so we use a text cast for the WHERE clause in case any rows
+--  reference the old value in varchar columns)
 -- ============================================================
-UPDATE persona_links SET relationship = 'caregiver' WHERE relationship = 'relative';
+UPDATE persona_links SET relationship = 'caregiver' WHERE relationship::text = 'relative';
 
 -- ============================================================
 -- New: interaction_sessions — raw conversation session metadata

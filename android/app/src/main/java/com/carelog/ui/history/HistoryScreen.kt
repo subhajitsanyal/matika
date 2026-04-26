@@ -15,6 +15,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.carelog.fhir.client.ObservationType
@@ -119,7 +120,9 @@ fun HistoryScreen(
             } else {
                 // History list
                 LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .testTag("history_list"),
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
@@ -243,7 +246,9 @@ fun DateRangeFilter(
 @Composable
 fun HistoryEntryCard(entry: HistoryEntry) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("history_entry_${entry.vitalType.name.lowercase()}"),
         shape = RoundedCornerShape(12.dp)
     ) {
         Row(

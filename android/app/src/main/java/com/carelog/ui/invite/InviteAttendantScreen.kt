@@ -14,6 +14,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 
@@ -120,7 +121,9 @@ fun InviteAttendantScreen(
                 label = { Text("Attendant's Name *") },
                 leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
                 singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("invite_attendant_name"),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next)
             )
 
@@ -217,6 +220,7 @@ fun InviteAttendantScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(56.dp)
+                    .testTag("invite_attendant_send")
             ) {
                 if (uiState is InviteAttendantUiState.Loading) {
                     CircularProgressIndicator(

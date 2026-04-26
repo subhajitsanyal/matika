@@ -16,6 +16,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -242,7 +243,9 @@ private fun ThresholdCard(
                     enabled = !threshold.setByDoctor,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("threshold_${threshold.vitalType.name.lowercase()}_min"),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = CareLogColors.Warning,
                         focusedLabelColor = CareLogColors.Warning
@@ -259,7 +262,9 @@ private fun ThresholdCard(
                     enabled = !threshold.setByDoctor,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("threshold_${threshold.vitalType.name.lowercase()}_max"),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = CareLogColors.Error,
                         focusedLabelColor = CareLogColors.Error

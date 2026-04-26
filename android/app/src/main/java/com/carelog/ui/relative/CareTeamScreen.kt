@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -67,7 +68,8 @@ fun CareTeamScreen(
                 onClick = { showInviteDialog = true },
                 icon = { Icon(Icons.Default.PersonAdd, contentDescription = null) },
                 text = { Text("Invite") },
-                containerColor = CareLogColors.Primary
+                containerColor = CareLogColors.Primary,
+                modifier = Modifier.testTag("care_team_invite")
             )
         }
     ) { padding ->
