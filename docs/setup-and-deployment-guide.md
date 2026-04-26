@@ -647,6 +647,57 @@ for fn in $(aws lambda list-functions --region $REGION \
 done
 ```
 
+**CloudWatch Log Group: "ResourceAlreadyExistsException"**
+
+Log groups for VPC flow logs or API Gateway access logs may survive `terraform destroy`. Import them into state:
+
+```bash
+# VPC flow logs
+terraform import module.carelog.module.vpc.aws_cloudwatch_log_group.vpc_flow_logs /aws/vpc/carelog-dev-flow-logs
+
+# API Gateway access logs
+terraform import 'module.carelog.module.api_gateway.aws_cloudwatch_log_group.api_access_logs' '/aws/api-gateway/carelog-dev'
+
+terraform apply
+```
+
+**RDS DB Subnet Group / Parameter Group: "already exists"**
+
+These lightweight RDS resources can survive destroy. Import them:
+
+```bash
+terraform import 'module.carelog.module.rds.aws_db_subnet_group.main' 'carelog-dev-db-subnet-group'
+terraform import 'module.carelog.module.rds.aws_db_parameter_group.main' 'carelog-dev-pg-params'
+terraform apply
+```
+
+**SQS Event Source Mapping: "does not have permissions to call ReceiveMessage"**
+
+The Lambda IAM role hasn't finished propagating when Terraform tries to create the SQS event source mapping. Simply re-run `terraform apply` — the role will be ready on the second attempt. If it persists, verify the role has the SQS policy:
+
+```bash
+aws iam list-attached-role-policies --role-name carelog-dev-lambda-rds-sqs
+```
+
+**"Resource already managed by Terraform" during import**
+
+If Terraform says the resource is already in state but the cloud resource doesn't match, remove the stale state entry first:
+
+```bash
+terraform state rm module.carelog.module.vpc.aws_cloudwatch_log_group.vpc_flow_logs
+terraform import module.carelog.module.vpc.aws_cloudwatch_log_group.vpc_flow_logs /aws/vpc/carelog-dev-flow-logs
+terraform apply
+```
+
+**General approach for "already exists" errors**
+
+When `terraform apply` fails because a resource already exists in AWS but isn't in Terraform state, the fix is always the same pattern:
+
+1. Find the resource address from the error (e.g., `module.carelog.module.rds.aws_db_subnet_group.main`)
+2. Find the resource ID from the error (e.g., `carelog-dev-db-subnet-group`)
+3. Import: `terraform import '<address>' '<id>'`
+4. Re-apply: `terraform apply`
+
 ---
 
 ## 6. Database Setup
