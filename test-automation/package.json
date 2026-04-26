@@ -1,0 +1,33 @@
+{
+  "name": "carelog-test-automation",
+  "version": "1.0.0",
+  "description": "CareLog QA test automation: E2E, integration, multilingual, performance, and compliance tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:e2e": "vitest run --config vitest.config.ts e2e/",
+    "test:integration": "vitest run --config vitest.config.ts integration/",
+    "test:multilingual": "vitest run --config vitest.config.ts multilingual/",
+    "test:performance": "tsx performance/latency-benchmark.ts",
+    "test:performance:report": "tsx performance/latency-report.ts",
+    "test:compliance": "vitest run --config vitest.config.ts compliance/",
+    "test:compliance:phi-scan": "tsx compliance/phi-log-scan.ts",
+    "test:compliance:data-loc": "tsx compliance/data-localisation-verify.ts",
+    "test:compliance:cleanup": "tsx compliance/mac-mini-cleanup-verify.ts",
+    "test:all": "vitest run --config vitest.config.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "axios": "^1.7.0",
+    "uuid": "^10.0.0",
+    "ws": "^8.17.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/uuid": "^10.0.0",
+    "@types/ws": "^8.5.0",
+    "tsx": "^4.15.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  }
+}

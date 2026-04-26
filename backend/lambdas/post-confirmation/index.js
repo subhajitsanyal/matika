@@ -89,13 +89,13 @@ async function addUserToGroup(userPoolId, username, personaType) {
   const groupName = getGroupName(personaType);
 
   if (!groupName) {
-    console.warn(`Unknown persona type: ${personaType}, defaulting to 'relatives'`);
+    console.warn(`Unknown persona type: ${personaType}, defaulting to 'caregivers'`);
   }
 
   const command = new AdminAddUserToGroupCommand({
     UserPoolId: userPoolId,
     Username: username,
-    GroupName: groupName || "relatives",
+    GroupName: groupName || "caregivers",
   });
 
   await cognitoClient.send(command);
@@ -108,8 +108,10 @@ async function addUserToGroup(userPoolId, username, personaType) {
 function getGroupName(personaType) {
   const mapping = {
     patient: "patients",
-    attendant: "attendants",
-    relative: "relatives",
+    caregiver: "caregivers",
+    // Legacy values map to caregivers
+    attendant: "caregivers",
+    relative: "caregivers",
     doctor: "doctors",
   };
   return mapping[personaType?.toLowerCase()];
@@ -143,7 +145,7 @@ async function createUserRecord(client, userData) {
     userData.email,
     userData.name,
     userData.phoneNumber || null,
-    userData.personaType || "relative",
+    userData.personaType || "caregiver",
   ];
 
   const result = await client.query(query, values);
@@ -204,7 +206,7 @@ exports.handler = async (event) => {
     email: userAttributes.email,
     name: userAttributes.name || userAttributes.email.split("@")[0],
     phoneNumber: userAttributes.phone_number,
-    personaType: userAttributes["custom:persona_type"] || "relative",
+    personaType: userAttributes["custom:persona_type"] || "caregiver",
   };
 
   let dbClient = null;

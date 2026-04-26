@@ -99,7 +99,14 @@ module "api_gateway" {
   accept_invite_invoke_arn     = module.lambda.accept_invite_invoke_arn
   care_team_invoke_arn         = module.lambda.care_team_invoke_arn
   patient_summary_invoke_arn   = module.lambda.patient_summary_invoke_arn
-  get_observations_invoke_arn  = module.lambda.get_observations_invoke_arn
+  get_observations_invoke_arn     = module.lambda.get_observations_invoke_arn
+  fetch_session_config_invoke_arn = module.lambda.fetch_session_config_invoke_arn
+  store_interaction_invoke_arn    = module.lambda.store_interaction_invoke_arn
+  construct_fhir_batch_invoke_arn    = module.lambda.construct_fhir_batch_invoke_arn
+  manage_recommendations_invoke_arn  = module.lambda.manage_recommendations_invoke_arn
+  manage_parameter_configs_invoke_arn = module.lambda.manage_parameter_configs_invoke_arn
+  manage_interactions_invoke_arn     = module.lambda.manage_interactions_invoke_arn
+  manage_prompts_invoke_arn          = module.lambda.manage_prompts_invoke_arn
 }
 
 # HealthLake Module
@@ -159,7 +166,40 @@ module "lambda" {
   api_execution_arn        = module.api_gateway.api_execution_arn
   from_email               = var.ses_from_email != "" ? var.ses_from_email : "noreply@${var.domain_name}"
   domain_name              = var.domain_name
+  alerts_queue_arn         = module.sqs.alerts_queue_arn
+  alerts_queue_url         = module.sqs.alerts_queue_url
+  sqs_kms_key_arn          = module.sqs.kms_key_arn
+  raw_interactions_bucket_name = module.s3.raw_interactions_bucket_name
   lambdas_source_path      = "${path.module}/../../backend/lambdas"
+}
+
+# EventBridge Module (scheduled rules for proactive monitoring)
+module "eventbridge" {
+  source = "./modules/eventbridge"
+
+  environment                           = var.environment
+  check_daily_deadline_lambda_arn        = module.lambda.check_daily_deadline_arn
+  check_daily_deadline_lambda_name       = module.lambda.check_daily_deadline_function_name
+  check_missed_measurements_lambda_arn   = module.lambda.check_missed_measurements_arn
+  check_missed_measurements_lambda_name  = module.lambda.check_missed_measurements_function_name
+}
+
+# Monitoring Module (CloudWatch alarms, SNS, dashboard)
+module "monitoring" {
+  count  = var.alert_email != "" ? 1 : 0
+  source = "./modules/monitoring"
+
+  environment                            = var.environment
+  alert_email                            = var.alert_email
+  lambda_function_names                  = module.lambda.all_function_names
+  construct_fhir_batch_function_name     = module.lambda.construct_fhir_batch_function_name
+  evaluate_thresholds_batch_function_name = module.lambda.evaluate_thresholds_batch_function_name
+  api_gateway_name                       = module.api_gateway.api_name
+  api_gateway_stage                      = module.api_gateway.stage_name
+  rds_instance_id                        = module.rds.db_instance_id
+  sqs_queue_name                         = module.sqs.document_processing_queue_name
+  dlq_queue_name                         = module.sqs.document_processing_dlq_name
+  alerts_dlq_queue_name                  = module.sqs.alerts_dlq_name
 }
 
 # Bastion Module (for SSM port-forwarding to RDS)

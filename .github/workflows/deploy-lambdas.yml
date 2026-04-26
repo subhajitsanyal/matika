@@ -1,0 +1,102 @@
+name: Deploy Lambdas
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+env:
+  NODE_VERSION: '20'
+  AWS_REGION: 'ap-south-1'
+  TF_VERSION: '1.5.7'
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy Lambdas (${{ github.event.inputs.environment }})
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # Install dependencies for each Lambda
+      - name: Install Lambda dependencies
+        run: |
+          LAMBDA_DIR="backend/lambdas"
+          for lambda_path in "${LAMBDA_DIR}"/*/; do
+            if [ -f "${lambda_path}/package.json" ]; then
+              echo "Installing dependencies for $(basename ${lambda_path})..."
+              cd "${lambda_path}"
+              npm ci --production || npm install --production
+              cd -
+            fi
+          done
+
+      # Package Lambdas as zip files
+      - name: Package Lambdas
+        run: |
+          LAMBDA_DIR="backend/lambdas"
+          mkdir -p /tmp/lambda-packages
+          for lambda_path in "${LAMBDA_DIR}"/*/; do
+            lambda_name="$(basename ${lambda_path})"
+            if [ -f "${lambda_path}/package.json" ]; then
+              echo "Packaging ${lambda_name}..."
+              cd "${lambda_path}"
+              zip -r "/tmp/lambda-packages/${lambda_name}.zip" . -x "*.test.*" "*.spec.*" "__tests__/*" "jest.config.*"
+              cd -
+            fi
+          done
+
+      # Terraform plan and apply
+      - name: Terraform Init
+        working-directory: infrastructure/terraform/environments/${{ github.event.inputs.environment }}
+        run: terraform init
+
+      - name: Terraform Plan
+        working-directory: infrastructure/terraform/environments/${{ github.event.inputs.environment }}
+        run: terraform plan -out=tfplan
+        env:
+          TF_VAR_environment: ${{ github.event.inputs.environment }}
+
+      - name: Terraform Apply
+        working-directory: infrastructure/terraform/environments/${{ github.event.inputs.environment }}
+        run: terraform apply -auto-approve tfplan
+        env:
+          TF_VAR_environment: ${{ github.event.inputs.environment }}
+
+      - name: Deployment Summary
+        run: |
+          echo "## Lambda Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment:** ${{ github.event.inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Region:** ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Triggered by:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY

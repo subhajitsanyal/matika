@@ -4,7 +4,7 @@
  * Creates a new patient account:
  * 1. Creates Cognito user for patient
  * 2. Creates patient record in RDS
- * 3. Creates persona_link between relative and patient
+ * 3. Creates persona_link between caregiver and patient
  * 4. Creates FHIR Patient resource in HealthLake
  *
  * HIPAA Compliance:
@@ -203,17 +203,17 @@ function mapGender(gender) {
 /**
  * Create patient records in RDS.
  */
-async function createPatientRecords(dbClient, patientData, relativeCognitoSub, relativeEmail, relativeName) {
+async function createPatientRecords(dbClient, patientData, caregiverCognitoSub, caregiverEmail, caregiverName) {
   // Start transaction
   await dbClient.query("BEGIN");
 
   try {
-    // Ensure relative's user record exists (post-confirmation may have failed)
+    // Ensure caregiver's user record exists (post-confirmation may have failed)
     await dbClient.query(
       `INSERT INTO users (cognito_sub, email, name, persona_type, is_active, created_at, updated_at)
-       VALUES ($1, $2, $3, 'relative', true, NOW(), NOW())
+       VALUES ($1, $2, $3, 'caregiver', true, NOW(), NOW())
        ON CONFLICT (cognito_sub) DO UPDATE SET updated_at = NOW()`,
-      [relativeCognitoSub, relativeEmail, relativeName]
+      [caregiverCognitoSub, caregiverEmail, caregiverName]
     );
 
     // Create user record for patient
@@ -234,8 +234,9 @@ async function createPatientRecords(dbClient, patientData, relativeCognitoSub, r
       `INSERT INTO patients (
         user_id, patient_id, date_of_birth, gender, blood_type,
         medical_conditions, allergies, medications,
-        emergency_contact_name, emergency_contact_phone, fhir_patient_id
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        emergency_contact_name, emergency_contact_phone, fhir_patient_id,
+        language, timezone
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       RETURNING id`,
       [
         userId,
@@ -249,11 +250,13 @@ async function createPatientRecords(dbClient, patientData, relativeCognitoSub, r
         patientData.emergencyContactName || null,
         patientData.emergencyContactPhone || null,
         patientData.fhirPatientId,
+        patientData.language || 'en',
+        patientData.timezone || 'Asia/Kolkata',
       ]
     );
     const patientDbId = patientResult.rows[0].id;
 
-    // Create persona_link between relative and patient
+    // Create persona_link between caregiver and patient
     await dbClient.query(
       `INSERT INTO persona_links (
         patient_id, linked_user_id, relationship, is_primary,
@@ -262,13 +265,13 @@ async function createPatientRecords(dbClient, patientData, relativeCognitoSub, r
       ) VALUES (
         $1,
         (SELECT id FROM users WHERE cognito_sub = $2),
-        'relative',
+        'caregiver',
         true, true, true, true, true,
         (SELECT id FROM users WHERE cognito_sub = $2),
         NOW(),
         true
       )`,
-      [patientDbId, relativeCognitoSub]
+      [patientDbId, caregiverCognitoSub]
     );
 
     // Create audit log
@@ -282,9 +285,9 @@ async function createPatientRecords(dbClient, patientData, relativeCognitoSub, r
          $3
        )`,
       [
-        relativeCognitoSub,
+        caregiverCognitoSub,
         patientData.patientId,
-        JSON.stringify({ createdBy: relativeCognitoSub }),
+        JSON.stringify({ createdBy: caregiverCognitoSub }),
       ]
     );
 
@@ -305,9 +308,9 @@ exports.handler = async (event) => {
   // Parse request
   const body = JSON.parse(event.body);
   const claims = event.requestContext.authorizer.claims;
-  const relativeCognitoSub = claims.sub;
-  const relativeEmail = claims.email || "unknown@carelog.internal";
-  const relativeName = claims.name || claims.email || "Unknown";
+  const caregiverCognitoSub = claims.sub;
+  const caregiverEmail = claims.email || "unknown@carelog.internal";
+  const caregiverName = claims.name || claims.email || "Unknown";
 
   // Validate required fields
   if (!body.name) {
@@ -354,34 +357,36 @@ exports.handler = async (event) => {
         dateOfBirth: body.dateOfBirth,
         gender: body.gender,
         bloodType: body.bloodType,
-        medicalConditions: body.medicalConditions,
-        allergies: body.allergies,
-        medications: body.medications,
-        emergencyContactName: body.emergencyContactName,
-        emergencyContactPhone: body.emergencyContactPhone,
+        medicalConditions: body.medicalConditions || body.conditions || [],
+        allergies: body.allergies || [],
+        medications: body.medications || [],
+        emergencyContactName: body.emergencyContactName || (body.emergency_contact && body.emergency_contact.name) || null,
+        emergencyContactPhone: body.emergencyContactPhone || (body.emergency_contact && body.emergency_contact.phone) || null,
         fhirPatientId,
+        language: body.language || 'en',
+        timezone: body.timezone || 'Asia/Kolkata',
       },
-      relativeCognitoSub,
-      relativeEmail,
-      relativeName
+      caregiverCognitoSub,
+      caregiverEmail,
+      caregiverName
     );
 
-    // Link patient to the relative's Cognito account
+    // Link patient to the caregiver's Cognito account
     // (server-side is more reliable than depending on the app to do it)
-    const relativeUsername = claims["cognito:username"] || claims.email || claims.sub;
+    const caregiverUsername = claims["cognito:username"] || claims.email || claims.sub;
     try {
       await cognitoClient.send(
         new AdminUpdateUserAttributesCommand({
           UserPoolId: process.env.COGNITO_USER_POOL_ID,
-          Username: relativeUsername,
+          Username: caregiverUsername,
           UserAttributes: [
             { Name: "custom:linked_patient_id", Value: patientId },
           ],
         })
       );
-      console.log(`Linked patient ${patientId} to relative ${relativeUsername}`);
+      console.log(`Linked patient ${patientId} to caregiver ${caregiverUsername}`);
     } catch (linkError) {
-      console.error("Failed to link patient to relative in Cognito:", linkError);
+      console.error("Failed to link patient to caregiver in Cognito:", linkError);
       // Don't fail the whole request — patient was created, app can retry linking
     }
 

@@ -100,3 +100,8 @@ output "access_log_group_name" {
   description = "Name of the CloudWatch log group for API access logs"
   value       = aws_cloudwatch_log_group.api_access_logs.name
 }
+
+output "api_name" {
+  description = "Name of the API Gateway REST API"
+  value       = aws_api_gateway_rest_api.main.name
+}

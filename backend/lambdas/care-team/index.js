@@ -2,7 +2,7 @@
  * CareLog Care Team Lambda
  *
  * Returns the care team for a patient:
- * - Attendants, doctors, relatives linked via persona_links
+ * - Caregivers and doctors linked via persona_links
  * - Pending invites from attendant_invites and doctor_invites
  */
 
@@ -109,9 +109,8 @@ exports.handler = async (event) => {
     );
 
     // Group by role
-    const attendants = [];
+    const caregivers = [];
     const doctors = [];
-    const relatives = [];
 
     for (const row of teamResult.rows) {
       const member = {
@@ -124,20 +123,21 @@ exports.handler = async (event) => {
       };
 
       switch (row.role) {
+        case "caregiver":
+        // Legacy roles map to caregiver
         case "attendant":
-          attendants.push(member);
+        case "relative":
+          member.role = "caregiver";
+          caregivers.push(member);
           break;
         case "doctor":
           doctors.push(member);
-          break;
-        case "relative":
-          relatives.push(member);
           break;
       }
     }
 
     // Fetch pending invites
-    const pendingAttendants = await dbClient.query(
+    const pendingCaregivers = await dbClient.query(
       `SELECT id, attendant_email AS email, attendant_name AS name, created_at AS sent_at
        FROM attendant_invites
        WHERE patient_id = $1 AND status = 'pending' AND expires_at > NOW()`,
@@ -152,10 +152,10 @@ exports.handler = async (event) => {
     );
 
     const pendingInvites = [
-      ...pendingAttendants.rows.map((r) => ({
+      ...pendingCaregivers.rows.map((r) => ({
         id: r.id,
         email: r.email,
-        role: "attendant",
+        role: "caregiver",
         sentAt: r.sent_at.toISOString(),
       })),
       ...pendingDoctors.rows.map((r) => ({
@@ -167,9 +167,8 @@ exports.handler = async (event) => {
     ];
 
     return response(200, {
-      attendants,
+      caregivers,
       doctors,
-      relatives,
       pendingInvites,
     });
   } catch (error) {

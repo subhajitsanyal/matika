@@ -8,6 +8,12 @@
     "@aws-sdk/client-secrets-manager": "^3.978.0",
     "pg": "^8.11.0"
   },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  },
+  "scripts": {
+    "test": "jest"
+  },
   "engines": {
     "node": ">=20.0.0"
   }

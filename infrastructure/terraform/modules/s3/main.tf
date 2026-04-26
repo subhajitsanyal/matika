@@ -283,5 +283,208 @@ resource "aws_iam_role_policy" "s3_access" {
   })
 }
 
+# ---------------------------------------------------------------------------
+# Raw Interactions Bucket
+# Stores raw voice/interaction data from Mac Mini with HIPAA-compliant
+# lifecycle: 90d -> Infrequent Access, 365d -> Glacier Deep Archive, 7yr -> expire
+# ---------------------------------------------------------------------------
+
+resource "aws_s3_bucket" "raw_interactions" {
+  bucket = "carelog-raw-${var.environment}-${data.aws_caller_identity.current.account_id}"
+
+  tags = {
+    Name        = "carelog-raw-${var.environment}"
+    Environment = var.environment
+    HIPAA       = "true"
+    Purpose     = "raw-interactions"
+  }
+}
+
+resource "aws_s3_bucket_versioning" "raw_interactions" {
+  bucket = aws_s3_bucket.raw_interactions.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "raw_interactions" {
+  bucket = aws_s3_bucket.raw_interactions.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm     = "aws:kms"
+      kms_master_key_id = aws_kms_key.s3.arn
+    }
+    bucket_key_enabled = true
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "raw_interactions" {
+  bucket = aws_s3_bucket.raw_interactions.id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_logging" "raw_interactions" {
+  bucket = aws_s3_bucket.raw_interactions.id
+
+  target_bucket = aws_s3_bucket.access_logs.id
+  target_prefix = "raw-interactions/"
+}
+
+resource "aws_s3_bucket_policy" "raw_interactions" {
+  bucket = aws_s3_bucket.raw_interactions.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "DenyNonSSLRequests"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "s3:*"
+        Resource = [
+          aws_s3_bucket.raw_interactions.arn,
+          "${aws_s3_bucket.raw_interactions.arn}/*"
+        ]
+        Condition = {
+          Bool = {
+            "aws:SecureTransport" = "false"
+          }
+        }
+      },
+      {
+        Sid       = "EnforceKMSEncryption"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "s3:PutObject"
+        Resource  = "${aws_s3_bucket.raw_interactions.arn}/*"
+        Condition = {
+          StringNotEquals = {
+            "s3:x-amz-server-side-encryption" = "aws:kms"
+          }
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "raw_interactions" {
+  bucket = aws_s3_bucket.raw_interactions.id
+
+  # 90 days -> Infrequent Access
+  rule {
+    id     = "transition-to-ia"
+    status = "Enabled"
+
+    filter {
+      prefix = ""
+    }
+
+    transition {
+      days          = 90
+      storage_class = "STANDARD_IA"
+    }
+  }
+
+  # 365 days -> Glacier Deep Archive
+  rule {
+    id     = "transition-to-glacier-deep-archive"
+    status = "Enabled"
+
+    filter {
+      prefix = ""
+    }
+
+    transition {
+      days          = 365
+      storage_class = "DEEP_ARCHIVE"
+    }
+  }
+
+  # 7 years (2555 days) -> Expire
+  rule {
+    id     = "expire-after-7-years"
+    status = "Enabled"
+
+    filter {
+      prefix = ""
+    }
+
+    expiration {
+      days = 2555
+    }
+  }
+
+  # Delete incomplete multipart uploads
+  rule {
+    id     = "abort-incomplete-multipart-uploads"
+    status = "Enabled"
+
+    filter {
+      prefix = ""
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+
+  # Noncurrent version management
+  rule {
+    id     = "noncurrent-version-management"
+    status = "Enabled"
+
+    filter {
+      prefix = ""
+    }
+
+    noncurrent_version_transition {
+      noncurrent_days = 30
+      storage_class   = "DEEP_ARCHIVE"
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 2555
+    }
+  }
+}
+
+# Grant Lambda access to raw interactions bucket
+resource "aws_iam_role_policy" "raw_interactions_access" {
+  name = "carelog-${var.environment}-raw-interactions-policy"
+  role = aws_iam_role.s3_access.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject",
+          "s3:ListBucket"
+        ]
+        Resource = [
+          aws_s3_bucket.raw_interactions.arn,
+          "${aws_s3_bucket.raw_interactions.arn}/*"
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "kms:Decrypt",
+          "kms:GenerateDataKey"
+        ]
+        Resource = aws_kms_key.s3.arn
+      }
+    ]
+  })
+}
+
 # Data sources
 data "aws_caller_identity" "current" {}

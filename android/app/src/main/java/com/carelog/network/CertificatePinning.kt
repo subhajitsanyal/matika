@@ -80,7 +80,12 @@ class CertificatePinning @Inject constructor() {
 }
 
 /**
- * Hilt module for providing pinned OkHttpClient.
+ * Legacy Hilt module for providing pinned OkHttpClient.
+ *
+ * Superseded by [com.carelog.core.di.DualNetworkModule] which provides
+ * qualified @CloudApi and @MacMiniApi OkHttpClient instances.
+ * Retained for backward compatibility with any code injecting an
+ * unqualified OkHttpClient.
  */
 @dagger.Module
 @dagger.hilt.InstallIn(dagger.hilt.components.SingletonComponent::class)

@@ -1,0 +1,21 @@
+{
+  "name": "carelog-construct-fhir-batch",
+  "version": "1.0.0",
+  "description": "CareLog Construct FHIR Batch Lambda",
+  "main": "index.js",
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.978.0",
+    "@aws-sdk/client-s3": "^3.978.0",
+    "@aws-sdk/client-lambda": "^3.978.0",
+    "pg": "^8.11.0"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  },
+  "scripts": {
+    "test": "jest"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

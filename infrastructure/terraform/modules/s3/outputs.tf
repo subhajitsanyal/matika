@@ -34,3 +34,19 @@ output "s3_access_role_arn" {
   description = "ARN of the IAM role for S3 access"
   value       = aws_iam_role.s3_access.arn
 }
+
+# Raw Interactions Bucket Outputs
+output "raw_interactions_bucket_id" {
+  description = "ID of the raw interactions S3 bucket"
+  value       = aws_s3_bucket.raw_interactions.id
+}
+
+output "raw_interactions_bucket_arn" {
+  description = "ARN of the raw interactions S3 bucket"
+  value       = aws_s3_bucket.raw_interactions.arn
+}
+
+output "raw_interactions_bucket_name" {
+  description = "Name of the raw interactions S3 bucket"
+  value       = aws_s3_bucket.raw_interactions.bucket
+}

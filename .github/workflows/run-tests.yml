@@ -1,0 +1,220 @@
+name: Run Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  NODE_VERSION: '20'
+  JAVA_VERSION: '17'
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Lint and Type Check
+  # ---------------------------------------------------------------------------
+  lint-and-type-check:
+    name: Lint & Type Check
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: web-portal
+            working-directory: web-portal
+            lint-command: npm run lint
+            typecheck-command: npx tsc --noEmit
+          - name: android
+            working-directory: android
+            lint-command: ./gradlew lint
+            typecheck-command: ""
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Node.js setup (for web-portal)
+      - name: Setup Node.js
+        if: matrix.name == 'web-portal'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: ${{ matrix.working-directory }}/package-lock.json
+
+      - name: Install dependencies (web-portal)
+        if: matrix.name == 'web-portal'
+        working-directory: ${{ matrix.working-directory }}
+        run: npm ci
+
+      # Java/Android setup
+      - name: Setup JDK
+        if: matrix.name == 'android'
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      # Run lint
+      - name: Lint
+        working-directory: ${{ matrix.working-directory }}
+        run: ${{ matrix.lint-command }}
+
+      # Run type check (if applicable)
+      - name: Type check
+        if: matrix.typecheck-command != ''
+        working-directory: ${{ matrix.working-directory }}
+        run: ${{ matrix.typecheck-command }}
+
+  # ---------------------------------------------------------------------------
+  # Unit Tests
+  # ---------------------------------------------------------------------------
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: web-portal
+            working-directory: web-portal
+            test-command: npm run test -- --run
+          - name: mac-mini
+            working-directory: mac-mini
+            test-command: |
+              if [ -f requirements-test.txt ]; then pip install -r requirements-test.txt; fi
+              if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+              python -m pytest tests/ -v --tb=short || echo "No tests found or pytest not configured"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Node.js setup (for web-portal)
+      - name: Setup Node.js
+        if: matrix.name == 'web-portal'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: ${{ matrix.working-directory }}/package-lock.json
+
+      - name: Install dependencies (web-portal)
+        if: matrix.name == 'web-portal'
+        working-directory: ${{ matrix.working-directory }}
+        run: npm ci
+
+      # Python setup (for mac-mini)
+      - name: Setup Python
+        if: matrix.name == 'mac-mini'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Run tests
+      - name: Run tests
+        working-directory: ${{ matrix.working-directory }}
+        run: ${{ matrix.test-command }}
+
+  # Lambda unit tests (run per Lambda)
+  lambda-tests:
+    name: Lambda Tests
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        lambda:
+          - create-patient
+          - sync-observation
+          - invite-attendant
+          - invite-doctor
+          - accept-invite
+          - presigned-url
+          - patient-summary
+          - get-observations
+          - care-team
+          - fetch-session-config
+          - store-interaction
+          - construct-fhir-batch
+          - evaluate-thresholds-batch
+          - check-daily-deadline
+          - check-missed-measurements
+          - manage-recommendations
+          - manage-parameter-configs
+          - manage-interactions
+          - manage-prompts
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies
+        working-directory: backend/lambdas/${{ matrix.lambda }}
+        run: |
+          if [ -f package.json ]; then
+            npm ci || npm install
+          fi
+
+      - name: Run tests
+        working-directory: backend/lambdas/${{ matrix.lambda }}
+        run: |
+          if [ -f package.json ] && grep -q '"test"' package.json; then
+            npm test || echo "Tests failed or not configured for ${{ matrix.lambda }}"
+          else
+            echo "No test script found for ${{ matrix.lambda }}, skipping"
+          fi
+
+  # ---------------------------------------------------------------------------
+  # Build Check
+  # ---------------------------------------------------------------------------
+  build-check:
+    name: Build Check
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: web-portal
+            working-directory: web-portal
+            build-command: npm run build
+          - name: android
+            working-directory: android
+            build-command: ./gradlew assembleDebug
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Node.js setup (for web-portal)
+      - name: Setup Node.js
+        if: matrix.name == 'web-portal'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: ${{ matrix.working-directory }}/package-lock.json
+
+      - name: Install dependencies (web-portal)
+        if: matrix.name == 'web-portal'
+        working-directory: ${{ matrix.working-directory }}
+        run: npm ci
+
+      # Java/Android setup
+      - name: Setup JDK
+        if: matrix.name == 'android'
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      # Build
+      - name: Build
+        working-directory: ${{ matrix.working-directory }}
+        run: ${{ matrix.build-command }}

@@ -1,0 +1,346 @@
+package com.carelog.dashboard.ui
+
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.ViewModel
+import com.carelog.discovery.HealthCheckService
+import com.carelog.discovery.ModelHealthStatus
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import javax.inject.Inject
+
+/**
+ * Summary of the last completed conversation session.
+ */
+data class LastSessionSummary(
+    val date: String,
+    val valuesCaptured: Int,
+    val totalParameters: Int,
+    val status: String
+)
+
+/**
+ * Patient home screen with model status banner, last session card,
+ * and "Start Conversation" button.
+ *
+ * Features:
+ * - Pull-to-refresh for health status updates
+ * - Last session summary card with captured values
+ * - Animated status transitions
+ * - Graceful degradation messages
+ * - Full accessibility support
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PatientHomeScreen(
+    onStartConversation: () -> Unit = {},
+    modifier: Modifier = Modifier,
+    viewModel: PatientHomeViewModel = hiltViewModel()
+) {
+    val healthStatus by viewModel.healthStatus.collectAsState()
+    val lastSession by viewModel.lastSessionSummary.collectAsState()
+    val isRefreshing by viewModel.isRefreshing.collectAsState()
+
+    val degradation = computeDegradationState(healthStatus)
+
+    Scaffold { paddingValues ->
+        PullToRefreshBox(
+            isRefreshing = isRefreshing,
+            onRefresh = { viewModel.onRefresh() },
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+        ) {
+            Column(
+                modifier = modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.Top,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // Model status banner at top
+                ModelStatusBanner(healthStatus = healthStatus)
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                // Welcome message
+                Text(
+                    text = "Welcome",
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.semantics { heading() }
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Text(
+                    text = "Tap below to start your daily health check-in",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                // Last session summary card
+                AnimatedVisibility(
+                    visible = lastSession != null,
+                    enter = expandVertically() + fadeIn(),
+                    exit = shrinkVertically() + fadeOut()
+                ) {
+                    lastSession?.let { session ->
+                        LastSessionCard(
+                            summary = session,
+                            modifier = Modifier.padding(bottom = 16.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.weight(1f))
+
+                // Start Conversation button with animated color
+                val buttonColor by animateColorAsState(
+                    targetValue = if (degradation.canConverse) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.surfaceVariant
+                    },
+                    label = "button_color"
+                )
+
+                Button(
+                    onClick = onStartConversation,
+                    enabled = degradation.canConverse,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(72.dp)
+                        .semantics {
+                            contentDescription = if (degradation.canConverse) {
+                                "Start conversation. Begin your daily health check-in."
+                            } else {
+                                "Conversation unavailable. CareLog device services are not ready."
+                            }
+                        },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = buttonColor,
+                        disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Mic,
+                        contentDescription = null,
+                        modifier = Modifier.size(28.dp)
+                    )
+                    Spacer(modifier = Modifier.size(12.dp))
+                    Text(
+                        text = if (degradation.canConverse) {
+                            "Start Conversation"
+                        } else {
+                            "Conversation Unavailable"
+                        },
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                }
+
+                // Hint text when in text-only mode
+                AnimatedVisibility(
+                    visible = degradation.canConverse && !degradation.ttsAvailable,
+                    enter = fadeIn(),
+                    exit = fadeOut()
+                ) {
+                    Text(
+                        text = "Voice playback unavailable \u2014 text responses only",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                }
+
+                // Vision unavailable hint
+                AnimatedVisibility(
+                    visible = degradation.canConverse && !degradation.visionAvailable,
+                    enter = fadeIn(),
+                    exit = fadeOut()
+                ) {
+                    Text(
+                        text = "Photo reading unavailable",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+            }
+        }
+    }
+}
+
+/**
+ * Card showing a summary of the last completed conversation session.
+ *
+ * Displays the date, number of values captured vs total parameters,
+ * and the session completion status.
+ */
+@Composable
+private fun LastSessionCard(
+    summary: LastSessionSummary,
+    modifier: Modifier = Modifier
+) {
+    val isComplete = summary.valuesCaptured == summary.totalParameters
+    val statusColor = if (isComplete) Color(0xFF4CAF50) else Color(0xFFFFC107)
+
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .semantics {
+                contentDescription = "Last session on ${summary.date}. " +
+                    "${summary.valuesCaptured} of ${summary.totalParameters} values captured. " +
+                    "Status: ${summary.status}."
+            },
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            Text(
+                text = "Last Session",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Schedule,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(16.dp)
+                )
+                Text(
+                    text = summary.date,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            HorizontalDivider()
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Filled.CheckCircle,
+                        contentDescription = null,
+                        tint = statusColor,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "${summary.valuesCaptured}/${summary.totalParameters} values captured",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+
+                Text(
+                    text = summary.status,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = statusColor
+                )
+            }
+        }
+    }
+}
+
+@HiltViewModel
+class PatientHomeViewModel @Inject constructor(
+    private val healthCheckService: HealthCheckService
+) : ViewModel() {
+    val healthStatus = healthCheckService.healthStatus
+
+    private val _lastSessionSummary = MutableStateFlow<LastSessionSummary?>(null)
+    val lastSessionSummary: StateFlow<LastSessionSummary?> = _lastSessionSummary.asStateFlow()
+
+    private val _isRefreshing = MutableStateFlow(false)
+    val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
+
+    /**
+     * Refresh health status and last session data.
+     */
+    fun onRefresh() {
+        _isRefreshing.value = true
+        // Health check service auto-polls; just trigger a re-evaluation
+        // In a real implementation this would also fetch the last session from the API
+        _isRefreshing.value = false
+    }
+
+    /**
+     * Update the last session summary after a session completes.
+     */
+    fun updateLastSession(summary: LastSessionSummary) {
+        _lastSessionSummary.value = summary
+    }
+}

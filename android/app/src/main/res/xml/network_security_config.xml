@@ -20,8 +20,23 @@
     <domain-config cleartextTrafficPermitted="false">
         <domain includeSubdomains="true">api.carelog.com</domain>
         <domain includeSubdomains="true">api.dev.carelog.com</domain>
+        <domain includeSubdomains="true">execute-api.ap-south-1.amazonaws.com</domain>
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>
+    </domain-config>
+
+    <!-- Allow cleartext (HTTP) traffic to local network for Mac Mini communication.
+         The Mac Mini runs model services on LAN without TLS. -->
+    <domain-config cleartextTrafficPermitted="true">
+        <!-- Private IPv4 ranges (RFC 1918) -->
+        <domain includeSubdomains="false">10.0.0.0/8</domain>
+        <domain includeSubdomains="false">172.16.0.0/12</domain>
+        <domain includeSubdomains="false">192.168.0.0/16</domain>
+        <!-- mDNS .local hostnames -->
+        <domain includeSubdomains="true">local</domain>
+        <!-- Localhost for development -->
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
     </domain-config>
 </network-security-config>

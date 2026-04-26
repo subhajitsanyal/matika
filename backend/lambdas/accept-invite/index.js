@@ -3,7 +3,7 @@
  *
  * Handles invite acceptance and registration:
  * 1. Validates invite token
- * 2. Creates Cognito user for attendant/doctor
+ * 2. Creates Cognito user for caregiver/doctor
  * 3. Creates user record in RDS
  * 4. Creates persona_link between caregiver and patient
  * 5. Marks invite as accepted
@@ -62,7 +62,7 @@ async function createDbConnection() {
 }
 
 /**
- * Create Cognito user for attendant/doctor.
+ * Create Cognito user for caregiver/doctor.
  */
 async function createCognitoUser(email, password, name, personaType) {
   // Create user
@@ -92,7 +92,8 @@ async function createCognitoUser(email, password, name, personaType) {
   );
 
   // Add to appropriate group
-  const groupName = personaType === "attendant" ? "attendants" : "doctors";
+  // Map legacy 'attendant' invites to 'caregivers' group
+  const groupName = personaType === "doctor" ? "doctors" : "caregivers";
   await cognitoClient.send(
     new AdminAddUserToGroupCommand({
       UserPoolId: process.env.COGNITO_USER_POOL_ID,
@@ -139,7 +140,7 @@ function serveRegistrationPage(token) {
   <div class="card">
     <div class="header">
       <h1>Welcome to CareLog</h1>
-      <p>Create your attendant account</p>
+      <p>Create your caregiver account</p>
     </div>
     <div class="form" id="form-section">
       <div class="error" id="error-msg"></div>
@@ -166,7 +167,7 @@ function serveRegistrationPage(token) {
     </div>
     <div class="success" id="success-section">
       <h3>Account Created!</h3>
-      <p>You can now log in to the CareLog app as an attendant.</p>
+      <p>You can now log in to the CareLog app as a caregiver.</p>
       <p style="margin-top:12px;font-size:13px;color:#666;">Download the CareLog app and sign in with your email and password.</p>
     </div>
   </div>
@@ -275,11 +276,11 @@ exports.handler = async (event) => {
   try {
     dbClient = await createDbConnection();
 
-    // Check attendant invite first
+    // Check caregiver invite first (stored in attendant_invites table for backward compat)
     let invite = null;
     let inviteType = null;
 
-    const attendantInvite = await dbClient.query(
+    const caregiverInvite = await dbClient.query(
       `SELECT ai.*, p.id as patient_db_id, p.patient_id, u.name as patient_name
        FROM attendant_invites ai
        JOIN patients p ON p.id = ai.patient_id
@@ -290,9 +291,9 @@ exports.handler = async (event) => {
       [body.token]
     );
 
-    if (attendantInvite.rows.length > 0) {
-      invite = attendantInvite.rows[0];
-      inviteType = "attendant";
+    if (caregiverInvite.rows.length > 0) {
+      invite = caregiverInvite.rows[0];
+      inviteType = "caregiver";
     } else {
       // Check doctor invite
       const doctorInvite = await dbClient.query(
@@ -350,8 +351,8 @@ exports.handler = async (event) => {
       const userId = userResult.rows[0].id;
 
       // Create persona_link
-      const permissions = inviteType === "attendant"
-        ? { canLogVitals: true, canViewHistory: true, canReceiveAlerts: true }
+      const permissions = inviteType === "caregiver"
+        ? { canLogVitals: true, canConfigureThresholds: true, canViewHistory: true, canReceiveAlerts: true }
         : { canConfigureThresholds: true, canViewHistory: true, canReceiveAlerts: true };
 
       await dbClient.query(
@@ -373,7 +374,7 @@ exports.handler = async (event) => {
       );
 
       // Update invite status
-      const inviteTable = inviteType === "attendant" ? "attendant_invites" : "doctor_invites";
+      const inviteTable = inviteType === "caregiver" ? "attendant_invites" : "doctor_invites";
       await dbClient.query(
         `UPDATE ${inviteTable}
          SET status = 'accepted', accepted_by_user_id = $1, accepted_at = NOW()

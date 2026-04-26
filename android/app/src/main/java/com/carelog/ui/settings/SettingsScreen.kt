@@ -80,8 +80,9 @@ fun SettingsScreen(
             // Account info card — all personas
             AccountInfoCard(user = user)
 
-            // Relative-only sections
-            if (user?.personaType == PersonaType.RELATIVE) {
+            // Caregiver sections (including legacy RELATIVE and ATTENDANT personas)
+            @Suppress("DEPRECATION")
+            if (user?.personaType == PersonaType.CAREGIVER || user?.personaType == PersonaType.RELATIVE) {
                 // Primary Patient card
                 PrimaryPatientCard(
                     linkedPatientId = user?.linkedPatientId,
@@ -135,7 +136,8 @@ fun SettingsScreen(
                 }
             }
 
-            // Attendant-only section
+            // Attendant session section (shown when in attendant mode on a patient device)
+            @Suppress("DEPRECATION")
             if (user?.personaType == PersonaType.ATTENDANT) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -264,11 +266,13 @@ private fun AccountInfoCard(user: CareLogUser?) {
                     AssistChip(
                         onClick = {},
                         label = {
+                            @Suppress("DEPRECATION")
                             Text(
                                 when (persona) {
                                     PersonaType.PATIENT -> "Patient"
+                                    PersonaType.CAREGIVER -> "Caregiver"
                                     PersonaType.RELATIVE -> "Caregiver"
-                                    PersonaType.ATTENDANT -> "Attendant"
+                                    PersonaType.ATTENDANT -> "Caregiver"
                                     PersonaType.DOCTOR -> "Doctor"
                                 }
                             )

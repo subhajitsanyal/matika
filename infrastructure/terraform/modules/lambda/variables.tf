@@ -65,6 +65,28 @@ variable "domain_name" {
   default     = "carelog.com"
 }
 
+# SQS
+variable "alerts_queue_arn" {
+  description = "ARN of the SQS alerts queue"
+  type        = string
+}
+
+variable "alerts_queue_url" {
+  description = "URL of the SQS alerts queue"
+  type        = string
+}
+
+variable "sqs_kms_key_arn" {
+  description = "ARN of the KMS key for SQS encryption"
+  type        = string
+}
+
+# S3 raw interactions bucket
+variable "raw_interactions_bucket_name" {
+  description = "Name of S3 bucket for raw interaction storage"
+  type        = string
+}
+
 # Lambda source path
 variable "lambdas_source_path" {
   type = string

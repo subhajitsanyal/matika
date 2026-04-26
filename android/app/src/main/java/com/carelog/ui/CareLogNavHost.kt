@@ -30,6 +30,15 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import com.carelog.dashboard.ui.AlertListScreen
+import com.carelog.dashboard.ui.CaregiverHomeScreen
+import com.carelog.dashboard.ui.PatientHomeScreen
+import com.carelog.dashboard.ui.PatientLogScreen
+import com.carelog.onboarding.ui.CaregiverRegistrationScreen
+import com.carelog.onboarding.ui.InviteScreen
+import com.carelog.onboarding.ui.PatientOnboardingConversationScreen
+import com.carelog.onboarding.ui.PatientProfileConfirmationScreen
+import com.carelog.onboarding.ui.ProtocolConfigConversationScreen
 import com.carelog.ui.attendant.AttendantDashboardScreen
 import com.carelog.ui.attendant.AttendantLoginScreen
 import com.carelog.ui.attendant.AttendantNotesScreen
@@ -37,6 +46,10 @@ import com.carelog.ui.auth.ForgotPasswordScreen
 import com.carelog.ui.auth.LoginScreen
 import com.carelog.ui.auth.RegisterScreen
 import com.carelog.ui.auth.VerificationScreen
+import com.carelog.conversation.ConversationViewModel
+import com.carelog.conversation.ui.ConversationScreen
+import com.carelog.conversation.ui.SessionSummaryScreen
+import com.carelog.conversation.photo.DevicePhotoCaptureScreen
 import com.carelog.ui.chat.ChatPlaceholderScreen
 import com.carelog.ui.consent.ConsentScreen
 import com.carelog.ui.dashboard.DashboardScreen
@@ -78,6 +91,7 @@ object CareLogRoutes {
     const val ONBOARDING = "onboarding"
     const val PATIENT_DASHBOARD = "patient_dashboard"
     const val RELATIVE_DASHBOARD = "relative_dashboard"
+    const val CAREGIVER_DASHBOARD = "caregiver_dashboard"
     const val ATTENDANT_DASHBOARD = "attendant_dashboard"
     const val ATTENDANT_LOGIN = "attendant_login"
     const val ATTENDANT_NOTES = "attendant_notes"
@@ -117,16 +131,45 @@ object CareLogRoutes {
     // LLM Chat placeholder
     const val CHAT = "chat"
 
+    // Patient home with conversation support (P1)
+    const val PATIENT_HOME = "patient_home"
+
+    // Conversation session routes (P1)
+    const val CONVERSATION = "conversation/{patientId}"
+    const val SESSION_SUMMARY = "session_summary"
+    const val DEVICE_PHOTO_CAPTURE = "device_photo_capture"
+
+    // Caregiver onboarding routes (P2)
+    const val CAREGIVER_REGISTRATION = "caregiver_registration"
+    const val PATIENT_ONBOARDING_CONVERSATION = "patient_onboarding_conversation"
+    const val PATIENT_PROFILE_CONFIRMATION = "patient_profile_confirmation"
+    const val PROTOCOL_CONFIG_CONVERSATION = "protocol_config_conversation/{patientId}/{patientName}"
+    const val CAREGIVER_INVITE = "caregiver_invite/{patientId}/{patientName}/{temporaryPassword}"
+
+    // Caregiver dashboard routes (P2)
+    const val PATIENT_LOGS = "patient_logs/{patientId}"
+    const val CAREGIVER_ALERTS = "caregiver_alerts/{patientId}"
+
     fun verification(email: String) = "verification/$email"
     fun camera(fileType: FileType) = "media/camera/${fileType.name}"
+    fun conversation(patientId: String) = "conversation/$patientId"
+    fun protocolConfig(patientId: String, patientName: String) =
+        "protocol_config_conversation/$patientId/$patientName"
+    fun caregiverInvite(patientId: String, patientName: String, temporaryPassword: String) =
+        "caregiver_invite/$patientId/$patientName/$temporaryPassword"
+    fun patientLogs(patientId: String) = "patient_logs/$patientId"
+    fun caregiverAlerts(patientId: String) = "caregiver_alerts/$patientId"
 }
 
 /**
  * Returns the dashboard route for a given persona type.
  */
+@Suppress("DEPRECATION")
 private fun dashboardRouteForPersona(persona: PersonaType): String = when (persona) {
-    PersonaType.RELATIVE -> CareLogRoutes.RELATIVE_DASHBOARD
-    PersonaType.ATTENDANT -> CareLogRoutes.ATTENDANT_DASHBOARD
+    PersonaType.CAREGIVER -> CareLogRoutes.CAREGIVER_DASHBOARD
+    // Legacy values — map to caregiver dashboard
+    PersonaType.RELATIVE -> CareLogRoutes.CAREGIVER_DASHBOARD
+    PersonaType.ATTENDANT -> CareLogRoutes.CAREGIVER_DASHBOARD
     PersonaType.PATIENT -> CareLogRoutes.PATIENT_DASHBOARD
     PersonaType.DOCTOR -> CareLogRoutes.PATIENT_DASHBOARD // fallback
 }
@@ -373,7 +416,124 @@ fun CareLogNavHost() {
             )
         }
 
-        // ── Relative Dashboard & Screens ────────────────────────
+        // ── Caregiver Dashboard (P2) ────────────────────────────
+        composable(CareLogRoutes.CAREGIVER_DASHBOARD) {
+            CaregiverHomeScreen(
+                onNavigateToOnboarding = {
+                    navController.navigate(CareLogRoutes.PATIENT_ONBOARDING_CONVERSATION)
+                },
+                onNavigateToPatientLogs = { patientId ->
+                    navController.navigate(CareLogRoutes.patientLogs(patientId))
+                },
+                onNavigateToAlerts = { patientId ->
+                    navController.navigate(CareLogRoutes.caregiverAlerts(patientId))
+                },
+                onNavigateToSettings = {
+                    navController.navigate(CareLogRoutes.SETTINGS)
+                }
+            )
+        }
+
+        // ── Caregiver Registration (P2) ─────────────────────────
+        composable(CareLogRoutes.CAREGIVER_REGISTRATION) {
+            CaregiverRegistrationScreen(
+                onNavigateBack = { navController.popBackStack() },
+                onRegistrationSuccess = {
+                    navController.navigate(CareLogRoutes.SPLASH) {
+                        popUpTo(CareLogRoutes.LOGIN) { inclusive = true }
+                    }
+                },
+                onNavigateToVerification = { email ->
+                    navController.navigate(CareLogRoutes.verification(email))
+                }
+            )
+        }
+
+        // ── Patient Onboarding Conversation (P2) ────────────────
+        composable(CareLogRoutes.PATIENT_ONBOARDING_CONVERSATION) {
+            PatientOnboardingConversationScreen(
+                onNavigateBack = { navController.popBackStack() },
+                onProfileComplete = { _ ->
+                    navController.navigate(CareLogRoutes.PATIENT_PROFILE_CONFIRMATION)
+                }
+            )
+        }
+
+        // ── Patient Profile Confirmation (P2) ───────────────────
+        composable(CareLogRoutes.PATIENT_PROFILE_CONFIRMATION) {
+            PatientProfileConfirmationScreen(
+                onNavigateBack = { navController.popBackStack() },
+                onPatientCreated = { patientId, temporaryPassword ->
+                    navController.navigate(
+                        CareLogRoutes.protocolConfig(patientId, "Patient")
+                    ) {
+                        popUpTo(CareLogRoutes.PATIENT_ONBOARDING_CONVERSATION) { inclusive = true }
+                    }
+                }
+            )
+        }
+
+        // ── Protocol Config Conversation (P2) ───────────────────
+        composable(
+            route = CareLogRoutes.PROTOCOL_CONFIG_CONVERSATION,
+            arguments = listOf(
+                navArgument("patientId") { type = NavType.StringType },
+                navArgument("patientName") { type = NavType.StringType }
+            )
+        ) { backStackEntry ->
+            val patientId = backStackEntry.arguments?.getString("patientId") ?: ""
+            val patientName = backStackEntry.arguments?.getString("patientName") ?: ""
+            ProtocolConfigConversationScreen(
+                onNavigateBack = { navController.popBackStack() },
+                onConfigComplete = {
+                    navController.navigate(
+                        CareLogRoutes.caregiverInvite(patientId, patientName, "")
+                    ) {
+                        popUpTo(CareLogRoutes.CAREGIVER_DASHBOARD) { inclusive = false }
+                    }
+                }
+            )
+        }
+
+        // ── Caregiver Invite Screen (P2) ────────────────────────
+        composable(
+            route = CareLogRoutes.CAREGIVER_INVITE,
+            arguments = listOf(
+                navArgument("patientId") { type = NavType.StringType },
+                navArgument("patientName") { type = NavType.StringType },
+                navArgument("temporaryPassword") { type = NavType.StringType }
+            )
+        ) {
+            InviteScreen(
+                onDone = {
+                    navController.navigate(CareLogRoutes.CAREGIVER_DASHBOARD) {
+                        popUpTo(CareLogRoutes.CAREGIVER_DASHBOARD) { inclusive = true }
+                    }
+                }
+            )
+        }
+
+        // ── Patient Logs (P2) ───────────────────────────────────
+        composable(
+            route = CareLogRoutes.PATIENT_LOGS,
+            arguments = listOf(navArgument("patientId") { type = NavType.StringType })
+        ) {
+            PatientLogScreen(
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+
+        // ── Caregiver Alerts (P2) ───────────────────────────────
+        composable(
+            route = CareLogRoutes.CAREGIVER_ALERTS,
+            arguments = listOf(navArgument("patientId") { type = NavType.StringType })
+        ) {
+            AlertListScreen(
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+
+        // ── Relative Dashboard & Screens (legacy) ──────────────
         composable(CareLogRoutes.RELATIVE_DASHBOARD) {
             RelativeDashboardScreen(
                 onNavigateToTrends = { navController.navigate(CareLogRoutes.TRENDS) },
@@ -462,6 +622,55 @@ fun CareLogNavHost() {
         // ── Chat (Placeholder) ──────────────────────────────────
         composable(CareLogRoutes.CHAT) {
             ChatPlaceholderScreen(onNavigateBack = { navController.popBackStack() })
+        }
+
+        // ── Patient Home with Conversation (P1) ────────────────
+        composable(CareLogRoutes.PATIENT_HOME) {
+            PatientHomeScreen(
+                onStartConversation = {
+                    // TODO: Replace "self" with actual patient ID from auth state
+                    navController.navigate(CareLogRoutes.conversation("self"))
+                }
+            )
+        }
+
+        // ── Conversation Session (P1) ──────────────────────────
+        composable(
+            route = CareLogRoutes.CONVERSATION,
+            arguments = listOf(navArgument("patientId") { type = NavType.StringType })
+        ) {
+            ConversationScreen(
+                onNavigateBack = { navController.popBackStack() },
+                onNavigateToPhoto = {
+                    navController.navigate(CareLogRoutes.DEVICE_PHOTO_CAPTURE)
+                },
+                onSessionEnded = {
+                    navController.navigate(CareLogRoutes.SESSION_SUMMARY) {
+                        popUpTo(CareLogRoutes.CONVERSATION) { inclusive = true }
+                    }
+                }
+            )
+        }
+
+        composable(CareLogRoutes.SESSION_SUMMARY) {
+            SessionSummaryScreen(
+                onDoneClicked = {
+                    navController.popBackStack(
+                        route = CareLogRoutes.PATIENT_DASHBOARD,
+                        inclusive = false
+                    )
+                }
+            )
+        }
+
+        composable(CareLogRoutes.DEVICE_PHOTO_CAPTURE) {
+            DevicePhotoCaptureScreen(
+                onPhotoConfirmed = { _ ->
+                    // Photo bytes are passed via shared ViewModel; navigate back
+                    navController.popBackStack()
+                },
+                onNavigateBack = { navController.popBackStack() }
+            )
         }
     }
 }

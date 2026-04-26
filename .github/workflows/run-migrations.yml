@@ -1,0 +1,119 @@
+name: Run Database Migrations
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      dry_run:
+        description: 'Dry run (info only, no migration)'
+        required: false
+        type: boolean
+        default: true
+
+env:
+  AWS_REGION: 'ap-south-1'
+  FLYWAY_VERSION: '10.4.1'
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  migrate:
+    name: Run Migrations (${{ github.event.inputs.environment }})
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Flyway
+        run: |
+          wget -qO- https://repo1.maven.org/maven2/org/flywaydb/flyway-commandline/${{ env.FLYWAY_VERSION }}/flyway-commandline-${{ env.FLYWAY_VERSION }}-linux-x64.tar.gz | tar xz
+          echo "$(pwd)/flyway-${{ env.FLYWAY_VERSION }}" >> $GITHUB_PATH
+
+      # Get bastion instance ID and RDS endpoint from SSM/Terraform
+      - name: Get infrastructure details
+        id: infra
+        run: |
+          BASTION_ID=$(aws ssm get-parameter --name "/carelog/${{ github.event.inputs.environment }}/bastion-instance-id" --query "Parameter.Value" --output text 2>/dev/null || echo "")
+          RDS_ENDPOINT=$(aws ssm get-parameter --name "/carelog/${{ github.event.inputs.environment }}/rds-endpoint" --query "Parameter.Value" --output text 2>/dev/null || echo "")
+          RDS_PORT=$(aws ssm get-parameter --name "/carelog/${{ github.event.inputs.environment }}/rds-port" --query "Parameter.Value" --output text 2>/dev/null || echo "5432")
+          DB_SECRET_NAME=$(aws ssm get-parameter --name "/carelog/${{ github.event.inputs.environment }}/db-secret-name" --query "Parameter.Value" --output text 2>/dev/null || echo "")
+
+          echo "bastion_id=${BASTION_ID}" >> $GITHUB_OUTPUT
+          echo "rds_endpoint=${RDS_ENDPOINT}" >> $GITHUB_OUTPUT
+          echo "rds_port=${RDS_PORT}" >> $GITHUB_OUTPUT
+          echo "db_secret_name=${DB_SECRET_NAME}" >> $GITHUB_OUTPUT
+
+      # Get DB credentials from Secrets Manager
+      - name: Get DB credentials
+        id: db_creds
+        run: |
+          SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id "${{ steps.infra.outputs.db_secret_name }}" --query "SecretString" --output text)
+          DB_USERNAME=$(echo "${SECRET_JSON}" | jq -r '.username')
+          DB_PASSWORD=$(echo "${SECRET_JSON}" | jq -r '.password')
+          echo "::add-mask::${DB_PASSWORD}"
+          echo "db_username=${DB_USERNAME}" >> $GITHUB_OUTPUT
+          echo "db_password=${DB_PASSWORD}" >> $GITHUB_OUTPUT
+
+      # Start SSM port-forwarding session to RDS via bastion
+      - name: Start SSM port-forward
+        run: |
+          aws ssm start-session \
+            --target "${{ steps.infra.outputs.bastion_id }}" \
+            --document-name AWS-StartPortForwardingSessionToRemoteHost \
+            --parameters "{\"host\":[\"${{ steps.infra.outputs.rds_endpoint }}\"],\"portNumber\":[\"${{ steps.infra.outputs.rds_port }}\"],\"localPortNumber\":[\"15432\"]}" &
+
+          # Wait for tunnel to be ready
+          echo "Waiting for SSM tunnel..."
+          for i in $(seq 1 30); do
+            if nc -z 127.0.0.1 15432 2>/dev/null; then
+              echo "Tunnel is ready."
+              break
+            fi
+            sleep 2
+          done
+
+      # Run Flyway migration
+      - name: Run Flyway info
+        working-directory: backend/database
+        run: |
+          flyway info \
+            -url="jdbc:postgresql://127.0.0.1:15432/carelog" \
+            -user="${{ steps.db_creds.outputs.db_username }}" \
+            -password="${{ steps.db_creds.outputs.db_password }}" \
+            -locations="filesystem:migrations"
+
+      - name: Run Flyway migrate
+        if: github.event.inputs.dry_run == 'false'
+        working-directory: backend/database
+        run: |
+          flyway migrate \
+            -url="jdbc:postgresql://127.0.0.1:15432/carelog" \
+            -user="${{ steps.db_creds.outputs.db_username }}" \
+            -password="${{ steps.db_creds.outputs.db_password }}" \
+            -locations="filesystem:migrations"
+
+      - name: Migration Summary
+        run: |
+          echo "## Database Migration Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment:** ${{ github.event.inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Dry run:** ${{ github.event.inputs.dry_run }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Triggered by:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY

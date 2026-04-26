@@ -41,14 +41,9 @@ output "patients_group_name" {
   value       = aws_cognito_user_group.patients.name
 }
 
-output "attendants_group_name" {
-  description = "Name of the attendants user group"
-  value       = aws_cognito_user_group.attendants.name
-}
-
-output "relatives_group_name" {
-  description = "Name of the relatives user group"
-  value       = aws_cognito_user_group.relatives.name
+output "caregivers_group_name" {
+  description = "Name of the caregivers user group"
+  value       = aws_cognito_user_group.caregivers.name
 }
 
 output "doctors_group_name" {

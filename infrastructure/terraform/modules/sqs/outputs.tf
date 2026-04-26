@@ -39,3 +39,18 @@ output "kms_key_arn" {
   description = "ARN of the KMS key for SQS encryption"
   value       = aws_kms_key.sqs.arn
 }
+
+output "document_processing_queue_name" {
+  description = "Name of the document processing SQS queue"
+  value       = aws_sqs_queue.document_processing.name
+}
+
+output "document_processing_dlq_name" {
+  description = "Name of the document processing dead-letter queue"
+  value       = aws_sqs_queue.document_processing_dlq.name
+}
+
+output "alerts_dlq_name" {
+  description = "Name of the alerts dead-letter queue"
+  value       = aws_sqs_queue.alerts_dlq.name
+}

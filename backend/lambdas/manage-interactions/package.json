@@ -1,0 +1,20 @@
+{
+  "name": "carelog-manage-interactions",
+  "version": "1.0.0",
+  "description": "CareLog Manage Interactions Lambda",
+  "main": "index.js",
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.978.0",
+    "@aws-sdk/client-s3": "^3.978.0",
+    "pg": "^8.11.0"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  },
+  "scripts": {
+    "test": "jest"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

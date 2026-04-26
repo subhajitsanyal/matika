@@ -84,3 +84,38 @@ variable "get_observations_invoke_arn" {
   type    = string
   default = ""
 }
+
+variable "fetch_session_config_invoke_arn" {
+  type    = string
+  default = ""
+}
+
+variable "store_interaction_invoke_arn" {
+  type    = string
+  default = ""
+}
+
+variable "construct_fhir_batch_invoke_arn" {
+  type    = string
+  default = ""
+}
+
+variable "manage_recommendations_invoke_arn" {
+  type    = string
+  default = ""
+}
+
+variable "manage_parameter_configs_invoke_arn" {
+  type    = string
+  default = ""
+}
+
+variable "manage_interactions_invoke_arn" {
+  type    = string
+  default = ""
+}
+
+variable "manage_prompts_invoke_arn" {
+  type    = string
+  default = ""
+}

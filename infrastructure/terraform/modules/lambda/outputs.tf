@@ -41,3 +41,88 @@ output "patient_summary_invoke_arn" {
 output "get_observations_invoke_arn" {
   value = aws_lambda_function.get_observations.invoke_arn
 }
+
+output "fetch_session_config_invoke_arn" {
+  value = aws_lambda_function.fetch_session_config.invoke_arn
+}
+
+output "store_interaction_invoke_arn" {
+  value = aws_lambda_function.store_interaction.invoke_arn
+}
+
+output "construct_fhir_batch_invoke_arn" {
+  value = aws_lambda_function.construct_fhir_batch.invoke_arn
+}
+
+output "evaluate_thresholds_batch_arn" {
+  value = aws_lambda_function.evaluate_thresholds_batch.arn
+}
+
+output "evaluate_thresholds_batch_function_name" {
+  value = aws_lambda_function.evaluate_thresholds_batch.function_name
+}
+
+output "check_daily_deadline_arn" {
+  value = aws_lambda_function.check_daily_deadline.arn
+}
+
+output "check_daily_deadline_function_name" {
+  value = aws_lambda_function.check_daily_deadline.function_name
+}
+
+output "check_missed_measurements_arn" {
+  value = aws_lambda_function.check_missed_measurements.arn
+}
+
+output "check_missed_measurements_function_name" {
+  value = aws_lambda_function.check_missed_measurements.function_name
+}
+
+output "manage_recommendations_invoke_arn" {
+  value = aws_lambda_function.manage_recommendations.invoke_arn
+}
+
+output "manage_parameter_configs_invoke_arn" {
+  value = aws_lambda_function.manage_parameter_configs.invoke_arn
+}
+
+output "manage_interactions_invoke_arn" {
+  value = aws_lambda_function.manage_interactions.invoke_arn
+}
+
+output "manage_prompts_invoke_arn" {
+  value = aws_lambda_function.manage_prompts.invoke_arn
+}
+
+output "construct_fhir_batch_function_name" {
+  description = "Function name of construct-fhir-batch Lambda"
+  value       = aws_lambda_function.construct_fhir_batch.function_name
+}
+
+output "all_function_names" {
+  description = "List of all Lambda function names for monitoring"
+  value = [
+    aws_lambda_function.post_confirmation.function_name,
+    aws_lambda_function.create_patient.function_name,
+    aws_lambda_function.accept_invite.function_name,
+    aws_lambda_function.invite_attendant.function_name,
+    aws_lambda_function.invite_doctor.function_name,
+    aws_lambda_function.sync_observation.function_name,
+    aws_lambda_function.bulk_sync.function_name,
+    aws_lambda_function.presigned_url.function_name,
+    aws_lambda_function.patient_summary.function_name,
+    aws_lambda_function.get_observations.function_name,
+    aws_lambda_function.care_team.function_name,
+    aws_lambda_function.fetch_session_config.function_name,
+    aws_lambda_function.store_interaction.function_name,
+    aws_lambda_function.construct_fhir_batch.function_name,
+    aws_lambda_function.evaluate_thresholds_batch.function_name,
+    aws_lambda_function.check_daily_deadline.function_name,
+    aws_lambda_function.check_missed_measurements.function_name,
+    aws_lambda_function.manage_recommendations.function_name,
+    aws_lambda_function.manage_parameter_configs.function_name,
+    aws_lambda_function.manage_interactions.function_name,
+    aws_lambda_function.manage_prompts.function_name,
+    aws_lambda_function.process_pending_invites.function_name,
+  ]
+}

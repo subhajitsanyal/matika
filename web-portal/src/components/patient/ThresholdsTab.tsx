@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { getThresholds, setThreshold, Threshold } from '../../services/api';
-import { VITAL_TYPES, VITAL_CONFIG } from '../../config/constants';
+import { VITAL_CONFIG } from '../../config/constants';
 import LoadingSpinner from '../LoadingSpinner';
 
 interface ThresholdsTabProps {

@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.carelog.llm</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/carelog/venv/bin/uvicorn</string>
+        <string>llm_service:app</string>
+        <string>--host</string>
+        <string>0.0.0.0</string>
+        <string>--port</string>
+        <string>8002</string>
+        <string>--workers</string>
+        <string>1</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/opt/carelog/services</string>
+
+    <key>UserName</key>
+    <string>carelog</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/opt/carelog/logs/llm.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/opt/carelog/logs/llm.error.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/carelog/venv/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>CARELOG_SERVICE</key>
+        <string>llm</string>
+        <key>CARELOG_PORT</key>
+        <string>8002</string>
+        <key>CARELOG_MODELS_DIR</key>
+        <string>/opt/carelog/models</string>
+        <key>CARELOG_TMP_DIR</key>
+        <string>/opt/carelog/tmp</string>
+    </dict>
+
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>4096</integer>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+</dict>
+</plist>

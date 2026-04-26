@@ -254,7 +254,7 @@ fun RegisterScreen(
                         password = password,
                         name = name,
                         phone = phone.ifBlank { null },
-                        personaType = PersonaType.RELATIVE
+                        personaType = PersonaType.CAREGIVER
                     )
                 },
                 enabled = isFormValid && uiState !is RegisterUiState.Loading,

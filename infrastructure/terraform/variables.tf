@@ -48,13 +48,6 @@ variable "domain_name" {
   default     = "carelog.com"
 }
 
-# Cognito variables (T-004)
-variable "cognito_user_pool_name" {
-  description = "Name of the Cognito user pool"
-  type        = string
-  default     = "carelog-users"
-}
-
 # RDS variables (T-009)
 variable "db_instance_class" {
   description = "RDS instance class"
@@ -89,16 +82,17 @@ variable "enable_healthlake" {
   default     = false
 }
 
-variable "enable_waf" {
-  description = "Enable AWS WAF for API Gateway"
-  type        = bool
-  default     = true
-}
-
 variable "enable_bastion" {
   description = "Enable bastion EC2 instance for SSM port-forwarding to RDS"
   type        = bool
   default     = false
+}
+
+# Monitoring
+variable "alert_email" {
+  description = "Email address for operator alert notifications (CloudWatch alarms)"
+  type        = string
+  default     = ""
 }
 
 # SES Email (optional — defaults to Cognito built-in email with 50/day limit)

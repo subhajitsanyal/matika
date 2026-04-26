@@ -43,7 +43,6 @@ module "carelog" {
 
   # Feature flags
   enable_healthlake = false # Disable for dev to save costs
-  enable_waf        = false # Disable for dev
   enable_bastion    = true  # Enable bastion for RDS access via SSM
 }
 

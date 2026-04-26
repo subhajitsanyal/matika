@@ -214,11 +214,102 @@ resource "aws_api_gateway_resource" "invites_accept" {
   path_part   = "accept"
 }
 
+# /session-config
+resource "aws_api_gateway_resource" "session_config" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  parent_id   = aws_api_gateway_rest_api.main.root_resource_id
+  path_part   = "session-config"
+}
+
+# /session-config/{patientId}
+resource "aws_api_gateway_resource" "session_config_patient" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  parent_id   = aws_api_gateway_resource.session_config.id
+  path_part   = "{patientId}"
+}
+
+# /interactions
+resource "aws_api_gateway_resource" "interactions" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  parent_id   = aws_api_gateway_rest_api.main.root_resource_id
+  path_part   = "interactions"
+}
+
+# /observations/batch
+resource "aws_api_gateway_resource" "observations_batch" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  parent_id   = aws_api_gateway_resource.observations.id
+  path_part   = "batch"
+}
+
 # /observations/bulk-sync
 resource "aws_api_gateway_resource" "observations_bulk_sync" {
   rest_api_id = aws_api_gateway_rest_api.main.id
   parent_id   = aws_api_gateway_resource.observations.id
   path_part   = "bulk-sync"
+}
+
+# /patients/{patientId}/recommendations
+resource "aws_api_gateway_resource" "patient_recommendations" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  parent_id   = aws_api_gateway_resource.patient.id
+  path_part   = "recommendations"
+}
+
+# /patients/{patientId}/recommendations/{recommendationId}
+resource "aws_api_gateway_resource" "patient_recommendation" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  parent_id   = aws_api_gateway_resource.patient_recommendations.id
+  path_part   = "{recommendationId}"
+}
+
+# /patients/{patientId}/parameter-configs
+resource "aws_api_gateway_resource" "patient_parameter_configs" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  parent_id   = aws_api_gateway_resource.patient.id
+  path_part   = "parameter-configs"
+}
+
+# /patients/{patientId}/parameter-configs/{configId}
+resource "aws_api_gateway_resource" "patient_parameter_config" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  parent_id   = aws_api_gateway_resource.patient_parameter_configs.id
+  path_part   = "{configId}"
+}
+
+# /patients/{patientId}/interactions
+resource "aws_api_gateway_resource" "patient_interactions" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  parent_id   = aws_api_gateway_resource.patient.id
+  path_part   = "interactions"
+}
+
+# /patients/{patientId}/interactions/{interactionId}
+resource "aws_api_gateway_resource" "patient_interaction" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  parent_id   = aws_api_gateway_resource.patient_interactions.id
+  path_part   = "{interactionId}"
+}
+
+# /patients/{patientId}/interactions/{interactionId}/transcript
+resource "aws_api_gateway_resource" "patient_interaction_transcript" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  parent_id   = aws_api_gateway_resource.patient_interaction.id
+  path_part   = "transcript"
+}
+
+# /prompts
+resource "aws_api_gateway_resource" "prompts" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  parent_id   = aws_api_gateway_rest_api.main.root_resource_id
+  path_part   = "prompts"
+}
+
+# /prompts/{promptType}
+resource "aws_api_gateway_resource" "prompt_type" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  parent_id   = aws_api_gateway_resource.prompts.id
+  path_part   = "{promptType}"
 }
 
 # ============================================================
@@ -499,6 +590,60 @@ resource "aws_api_gateway_integration" "patient_summary_get" {
   uri                     = var.patient_summary_invoke_arn
 }
 
+# GET /session-config/{patientId} → fetch-session-config Lambda
+resource "aws_api_gateway_method" "session_config_get" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.session_config_patient.id
+  http_method   = "GET"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+}
+
+resource "aws_api_gateway_integration" "session_config_get" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.session_config_patient.id
+  http_method             = aws_api_gateway_method.session_config_get.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = var.fetch_session_config_invoke_arn
+}
+
+# POST /interactions → store-interaction Lambda
+resource "aws_api_gateway_method" "interactions_post" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.interactions.id
+  http_method   = "POST"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+}
+
+resource "aws_api_gateway_integration" "interactions_post" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.interactions.id
+  http_method             = aws_api_gateway_method.interactions_post.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = var.store_interaction_invoke_arn
+}
+
+# POST /observations/batch → construct-fhir-batch Lambda
+resource "aws_api_gateway_method" "observations_batch_post" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.observations_batch.id
+  http_method   = "POST"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+}
+
+resource "aws_api_gateway_integration" "observations_batch_post" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.observations_batch.id
+  http_method             = aws_api_gateway_method.observations_batch_post.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = var.construct_fhir_batch_invoke_arn
+}
+
 # GET /patients/{patientId}/observations → get-observations Lambda
 resource "aws_api_gateway_method" "patient_observations_get" {
   rest_api_id   = aws_api_gateway_rest_api.main.id
@@ -515,6 +660,220 @@ resource "aws_api_gateway_integration" "patient_observations_get" {
   integration_http_method = "POST"
   type                    = "AWS_PROXY"
   uri                     = var.get_observations_invoke_arn
+}
+
+# ============================================================
+# P3 DOCTOR PORTAL — RECOMMENDATIONS
+# ============================================================
+
+# GET /patients/{patientId}/recommendations → manage-recommendations
+resource "aws_api_gateway_method" "patient_recommendations_get" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.patient_recommendations.id
+  http_method   = "GET"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+}
+
+resource "aws_api_gateway_integration" "patient_recommendations_get" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.patient_recommendations.id
+  http_method             = aws_api_gateway_method.patient_recommendations_get.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = var.manage_recommendations_invoke_arn
+}
+
+# POST /patients/{patientId}/recommendations → manage-recommendations
+resource "aws_api_gateway_method" "patient_recommendations_post" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.patient_recommendations.id
+  http_method   = "POST"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+}
+
+resource "aws_api_gateway_integration" "patient_recommendations_post" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.patient_recommendations.id
+  http_method             = aws_api_gateway_method.patient_recommendations_post.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = var.manage_recommendations_invoke_arn
+}
+
+# PUT /patients/{patientId}/recommendations/{recommendationId} → manage-recommendations
+resource "aws_api_gateway_method" "patient_recommendation_put" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.patient_recommendation.id
+  http_method   = "PUT"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+}
+
+resource "aws_api_gateway_integration" "patient_recommendation_put" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.patient_recommendation.id
+  http_method             = aws_api_gateway_method.patient_recommendation_put.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = var.manage_recommendations_invoke_arn
+}
+
+# ============================================================
+# P3 DOCTOR PORTAL — PARAMETER CONFIGS
+# ============================================================
+
+# GET /patients/{patientId}/parameter-configs → manage-parameter-configs
+resource "aws_api_gateway_method" "patient_parameter_configs_get" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.patient_parameter_configs.id
+  http_method   = "GET"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+}
+
+resource "aws_api_gateway_integration" "patient_parameter_configs_get" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.patient_parameter_configs.id
+  http_method             = aws_api_gateway_method.patient_parameter_configs_get.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = var.manage_parameter_configs_invoke_arn
+}
+
+# POST /patients/{patientId}/parameter-configs → manage-parameter-configs
+resource "aws_api_gateway_method" "patient_parameter_configs_post" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.patient_parameter_configs.id
+  http_method   = "POST"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+}
+
+resource "aws_api_gateway_integration" "patient_parameter_configs_post" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.patient_parameter_configs.id
+  http_method             = aws_api_gateway_method.patient_parameter_configs_post.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = var.manage_parameter_configs_invoke_arn
+}
+
+# PUT /patients/{patientId}/parameter-configs/{configId} → manage-parameter-configs
+resource "aws_api_gateway_method" "patient_parameter_config_put" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.patient_parameter_config.id
+  http_method   = "PUT"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+}
+
+resource "aws_api_gateway_integration" "patient_parameter_config_put" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.patient_parameter_config.id
+  http_method             = aws_api_gateway_method.patient_parameter_config_put.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = var.manage_parameter_configs_invoke_arn
+}
+
+# DELETE /patients/{patientId}/parameter-configs/{configId} → manage-parameter-configs
+resource "aws_api_gateway_method" "patient_parameter_config_delete" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.patient_parameter_config.id
+  http_method   = "DELETE"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+}
+
+resource "aws_api_gateway_integration" "patient_parameter_config_delete" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.patient_parameter_config.id
+  http_method             = aws_api_gateway_method.patient_parameter_config_delete.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = var.manage_parameter_configs_invoke_arn
+}
+
+# ============================================================
+# P3 DOCTOR PORTAL — INTERACTIONS
+# ============================================================
+
+# GET /patients/{patientId}/interactions → manage-interactions
+resource "aws_api_gateway_method" "patient_interactions_get" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.patient_interactions.id
+  http_method   = "GET"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+}
+
+resource "aws_api_gateway_integration" "patient_interactions_get" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.patient_interactions.id
+  http_method             = aws_api_gateway_method.patient_interactions_get.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = var.manage_interactions_invoke_arn
+}
+
+# GET /patients/{patientId}/interactions/{interactionId}/transcript → manage-interactions
+resource "aws_api_gateway_method" "patient_interaction_transcript_get" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.patient_interaction_transcript.id
+  http_method   = "GET"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+}
+
+resource "aws_api_gateway_integration" "patient_interaction_transcript_get" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.patient_interaction_transcript.id
+  http_method             = aws_api_gateway_method.patient_interaction_transcript_get.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = var.manage_interactions_invoke_arn
+}
+
+# ============================================================
+# P3 DOCTOR PORTAL — PROMPTS
+# ============================================================
+
+# GET /prompts → manage-prompts
+resource "aws_api_gateway_method" "prompts_get" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.prompts.id
+  http_method   = "GET"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+}
+
+resource "aws_api_gateway_integration" "prompts_get" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.prompts.id
+  http_method             = aws_api_gateway_method.prompts_get.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = var.manage_prompts_invoke_arn
+}
+
+# PUT /prompts/{promptType} → manage-prompts
+resource "aws_api_gateway_method" "prompt_type_put" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.prompt_type.id
+  http_method   = "PUT"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+}
+
+resource "aws_api_gateway_integration" "prompt_type_put" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.prompt_type.id
+  http_method             = aws_api_gateway_method.prompt_type_put.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = var.manage_prompts_invoke_arn
 }
 
 # ============================================================
@@ -652,6 +1011,48 @@ resource "aws_api_gateway_deployment" "main" {
       aws_api_gateway_integration.patient_summary_get.id,
       aws_api_gateway_method.patient_observations_get.id,
       aws_api_gateway_integration.patient_observations_get.id,
+      aws_api_gateway_resource.session_config.id,
+      aws_api_gateway_resource.session_config_patient.id,
+      aws_api_gateway_method.session_config_get.id,
+      aws_api_gateway_integration.session_config_get.id,
+      aws_api_gateway_resource.interactions.id,
+      aws_api_gateway_method.interactions_post.id,
+      aws_api_gateway_integration.interactions_post.id,
+      aws_api_gateway_resource.observations_batch.id,
+      aws_api_gateway_method.observations_batch_post.id,
+      aws_api_gateway_integration.observations_batch_post.id,
+      # P3 Doctor Portal routes
+      aws_api_gateway_resource.patient_recommendations.id,
+      aws_api_gateway_resource.patient_recommendation.id,
+      aws_api_gateway_method.patient_recommendations_get.id,
+      aws_api_gateway_integration.patient_recommendations_get.id,
+      aws_api_gateway_method.patient_recommendations_post.id,
+      aws_api_gateway_integration.patient_recommendations_post.id,
+      aws_api_gateway_method.patient_recommendation_put.id,
+      aws_api_gateway_integration.patient_recommendation_put.id,
+      aws_api_gateway_resource.patient_parameter_configs.id,
+      aws_api_gateway_resource.patient_parameter_config.id,
+      aws_api_gateway_method.patient_parameter_configs_get.id,
+      aws_api_gateway_integration.patient_parameter_configs_get.id,
+      aws_api_gateway_method.patient_parameter_configs_post.id,
+      aws_api_gateway_integration.patient_parameter_configs_post.id,
+      aws_api_gateway_method.patient_parameter_config_put.id,
+      aws_api_gateway_integration.patient_parameter_config_put.id,
+      aws_api_gateway_method.patient_parameter_config_delete.id,
+      aws_api_gateway_integration.patient_parameter_config_delete.id,
+      aws_api_gateway_resource.patient_interactions.id,
+      aws_api_gateway_resource.patient_interaction.id,
+      aws_api_gateway_resource.patient_interaction_transcript.id,
+      aws_api_gateway_method.patient_interactions_get.id,
+      aws_api_gateway_integration.patient_interactions_get.id,
+      aws_api_gateway_method.patient_interaction_transcript_get.id,
+      aws_api_gateway_integration.patient_interaction_transcript_get.id,
+      aws_api_gateway_resource.prompts.id,
+      aws_api_gateway_resource.prompt_type.id,
+      aws_api_gateway_method.prompts_get.id,
+      aws_api_gateway_integration.prompts_get.id,
+      aws_api_gateway_method.prompt_type_put.id,
+      aws_api_gateway_integration.prompt_type_put.id,
     ]))
   }
 

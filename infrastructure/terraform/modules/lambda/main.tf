@@ -179,6 +179,100 @@ resource "aws_iam_role_policy" "s3_inline" {
   })
 }
 
+# Role 5: RDS + S3 + Lambda invoke (fetch-session-config, store-interaction, construct-fhir-batch)
+resource "aws_iam_role" "lambda_rds_s3_invoke" {
+  name               = "${local.function_prefix}-lambda-rds-s3-invoke"
+  assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
+}
+
+resource "aws_iam_role_policy_attachment" "rds_s3_invoke_vpc" {
+  role       = aws_iam_role.lambda_rds_s3_invoke.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+}
+
+resource "aws_iam_role_policy" "rds_s3_invoke_inline" {
+  name = "rds-s3-invoke-access"
+  role = aws_iam_role.lambda_rds_s3_invoke.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = [var.db_secret_arn]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt", "kms:Encrypt", "kms:GenerateDataKey"]
+        Resource = [var.rds_kms_key_arn, var.s3_kms_key_arn]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:ListBucket"
+        ]
+        Resource = [
+          var.documents_bucket_arn,
+          "${var.documents_bucket_arn}/*"
+        ]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["lambda:InvokeFunction"]
+        Resource = ["*"]
+      }
+    ]
+  })
+}
+
+# Role 6: RDS + SQS (evaluate-thresholds-batch, check-daily-deadline, check-missed-measurements)
+resource "aws_iam_role" "lambda_rds_sqs" {
+  name               = "${local.function_prefix}-lambda-rds-sqs"
+  assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
+}
+
+resource "aws_iam_role_policy_attachment" "rds_sqs_vpc" {
+  role       = aws_iam_role.lambda_rds_sqs.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+}
+
+resource "aws_iam_role_policy" "rds_sqs_inline" {
+  name = "rds-sqs-access"
+  role = aws_iam_role.lambda_rds_sqs.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = [var.db_secret_arn]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = [var.rds_kms_key_arn]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "sqs:SendMessage",
+          "sqs:GetQueueAttributes"
+        ]
+        Resource = [var.alerts_queue_arn]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt", "kms:GenerateDataKey"]
+        Resource = [var.sqs_kms_key_arn]
+      }
+    ]
+  })
+}
+
 # Role 4: HealthLake (sync-observation, bulk-sync)
 resource "aws_iam_role" "lambda_healthlake" {
   name               = "${local.function_prefix}-lambda-healthlake"
@@ -286,6 +380,66 @@ data "archive_file" "presigned_url" {
   type        = "zip"
   source_dir  = "${var.lambdas_source_path}/presigned-url"
   output_path = "${path.module}/archives/presigned-url.zip"
+}
+
+data "archive_file" "fetch_session_config" {
+  type        = "zip"
+  source_dir  = "${var.lambdas_source_path}/fetch-session-config"
+  output_path = "${path.module}/archives/fetch-session-config.zip"
+}
+
+data "archive_file" "store_interaction" {
+  type        = "zip"
+  source_dir  = "${var.lambdas_source_path}/store-interaction"
+  output_path = "${path.module}/archives/store-interaction.zip"
+}
+
+data "archive_file" "construct_fhir_batch" {
+  type        = "zip"
+  source_dir  = "${var.lambdas_source_path}/construct-fhir-batch"
+  output_path = "${path.module}/archives/construct-fhir-batch.zip"
+}
+
+data "archive_file" "evaluate_thresholds_batch" {
+  type        = "zip"
+  source_dir  = "${var.lambdas_source_path}/evaluate-thresholds-batch"
+  output_path = "${path.module}/archives/evaluate-thresholds-batch.zip"
+}
+
+data "archive_file" "check_daily_deadline" {
+  type        = "zip"
+  source_dir  = "${var.lambdas_source_path}/check-daily-deadline"
+  output_path = "${path.module}/archives/check-daily-deadline.zip"
+}
+
+data "archive_file" "check_missed_measurements" {
+  type        = "zip"
+  source_dir  = "${var.lambdas_source_path}/check-missed-measurements"
+  output_path = "${path.module}/archives/check-missed-measurements.zip"
+}
+
+data "archive_file" "manage_recommendations" {
+  type        = "zip"
+  source_dir  = "${var.lambdas_source_path}/manage-recommendations"
+  output_path = "${path.module}/archives/manage-recommendations.zip"
+}
+
+data "archive_file" "manage_parameter_configs" {
+  type        = "zip"
+  source_dir  = "${var.lambdas_source_path}/manage-parameter-configs"
+  output_path = "${path.module}/archives/manage-parameter-configs.zip"
+}
+
+data "archive_file" "manage_interactions" {
+  type        = "zip"
+  source_dir  = "${var.lambdas_source_path}/manage-interactions"
+  output_path = "${path.module}/archives/manage-interactions.zip"
+}
+
+data "archive_file" "manage_prompts" {
+  type        = "zip"
+  source_dir  = "${var.lambdas_source_path}/manage-prompts"
+  output_path = "${path.module}/archives/manage-prompts.zip"
 }
 
 # ============================================================
@@ -528,6 +682,221 @@ resource "aws_lambda_function" "care_team" {
   }
 }
 
+resource "aws_lambda_function" "fetch_session_config" {
+  function_name    = "${local.function_prefix}-fetch-session-config"
+  role             = aws_iam_role.lambda_rds_s3_invoke.arn
+  handler          = "index.handler"
+  runtime          = "nodejs20.x"
+  timeout          = 30
+  memory_size      = 256
+  filename         = data.archive_file.fetch_session_config.output_path
+  source_code_hash = data.archive_file.fetch_session_config.output_base64sha256
+
+  vpc_config {
+    subnet_ids         = var.private_subnet_ids
+    security_group_ids = [var.lambda_security_group_id]
+  }
+
+  environment {
+    variables = merge(local.rds_env, {
+      S3_FHIR_BUCKET = var.documents_bucket_name
+    })
+  }
+}
+
+resource "aws_lambda_function" "store_interaction" {
+  function_name    = "${local.function_prefix}-store-interaction"
+  role             = aws_iam_role.lambda_rds_s3_invoke.arn
+  handler          = "index.handler"
+  runtime          = "nodejs20.x"
+  timeout          = 60
+  memory_size      = 512
+  filename         = data.archive_file.store_interaction.output_path
+  source_code_hash = data.archive_file.store_interaction.output_base64sha256
+
+  vpc_config {
+    subnet_ids         = var.private_subnet_ids
+    security_group_ids = [var.lambda_security_group_id]
+  }
+
+  environment {
+    variables = merge(local.rds_env, {
+      S3_RAW_BUCKET = var.raw_interactions_bucket_name
+    })
+  }
+}
+
+resource "aws_lambda_function" "construct_fhir_batch" {
+  function_name    = "${local.function_prefix}-construct-fhir-batch"
+  role             = aws_iam_role.lambda_rds_s3_invoke.arn
+  handler          = "index.handler"
+  runtime          = "nodejs20.x"
+  timeout          = 60
+  memory_size      = 512
+  filename         = data.archive_file.construct_fhir_batch.output_path
+  source_code_hash = data.archive_file.construct_fhir_batch.output_base64sha256
+
+  vpc_config {
+    subnet_ids         = var.private_subnet_ids
+    security_group_ids = [var.lambda_security_group_id]
+  }
+
+  environment {
+    variables = merge(local.rds_env, {
+      S3_FHIR_BUCKET                    = var.documents_bucket_name
+      EVALUATE_THRESHOLDS_FUNCTION_NAME = "${local.function_prefix}-evaluate-thresholds-batch"
+    })
+  }
+}
+
+resource "aws_lambda_function" "evaluate_thresholds_batch" {
+  function_name    = "${local.function_prefix}-evaluate-thresholds-batch"
+  role             = aws_iam_role.lambda_rds_sqs.arn
+  handler          = "index.handler"
+  runtime          = "nodejs20.x"
+  timeout          = 60
+  memory_size      = 512
+  filename         = data.archive_file.evaluate_thresholds_batch.output_path
+  source_code_hash = data.archive_file.evaluate_thresholds_batch.output_base64sha256
+
+  vpc_config {
+    subnet_ids         = var.private_subnet_ids
+    security_group_ids = [var.lambda_security_group_id]
+  }
+
+  environment {
+    variables = merge(local.rds_env, {
+      SQS_ALERT_QUEUE_URL = var.alerts_queue_url
+    })
+  }
+}
+
+resource "aws_lambda_function" "check_daily_deadline" {
+  function_name    = "${local.function_prefix}-check-daily-deadline"
+  role             = aws_iam_role.lambda_rds_sqs.arn
+  handler          = "index.handler"
+  runtime          = "nodejs20.x"
+  timeout          = 120
+  memory_size      = 256
+  filename         = data.archive_file.check_daily_deadline.output_path
+  source_code_hash = data.archive_file.check_daily_deadline.output_base64sha256
+
+  vpc_config {
+    subnet_ids         = var.private_subnet_ids
+    security_group_ids = [var.lambda_security_group_id]
+  }
+
+  environment {
+    variables = merge(local.rds_env, {
+      SQS_ALERT_QUEUE_URL = var.alerts_queue_url
+    })
+  }
+}
+
+resource "aws_lambda_function" "check_missed_measurements" {
+  function_name    = "${local.function_prefix}-check-missed-measurements"
+  role             = aws_iam_role.lambda_rds_sqs.arn
+  handler          = "index.handler"
+  runtime          = "nodejs20.x"
+  timeout          = 120
+  memory_size      = 256
+  filename         = data.archive_file.check_missed_measurements.output_path
+  source_code_hash = data.archive_file.check_missed_measurements.output_base64sha256
+
+  vpc_config {
+    subnet_ids         = var.private_subnet_ids
+    security_group_ids = [var.lambda_security_group_id]
+  }
+
+  environment {
+    variables = merge(local.rds_env, {
+      SQS_ALERT_QUEUE_URL = var.alerts_queue_url
+    })
+  }
+}
+
+resource "aws_lambda_function" "manage_recommendations" {
+  function_name    = "${local.function_prefix}-manage-recommendations"
+  role             = aws_iam_role.lambda_rds_s3_invoke.arn
+  handler          = "index.handler"
+  runtime          = "nodejs20.x"
+  timeout          = 30
+  memory_size      = 256
+  filename         = data.archive_file.manage_recommendations.output_path
+  source_code_hash = data.archive_file.manage_recommendations.output_base64sha256
+
+  vpc_config {
+    subnet_ids         = var.private_subnet_ids
+    security_group_ids = [var.lambda_security_group_id]
+  }
+
+  environment {
+    variables = local.rds_env
+  }
+}
+
+resource "aws_lambda_function" "manage_parameter_configs" {
+  function_name    = "${local.function_prefix}-manage-parameter-configs"
+  role             = aws_iam_role.lambda_rds_s3_invoke.arn
+  handler          = "index.handler"
+  runtime          = "nodejs20.x"
+  timeout          = 30
+  memory_size      = 256
+  filename         = data.archive_file.manage_parameter_configs.output_path
+  source_code_hash = data.archive_file.manage_parameter_configs.output_base64sha256
+
+  vpc_config {
+    subnet_ids         = var.private_subnet_ids
+    security_group_ids = [var.lambda_security_group_id]
+  }
+
+  environment {
+    variables = local.rds_env
+  }
+}
+
+resource "aws_lambda_function" "manage_interactions" {
+  function_name    = "${local.function_prefix}-manage-interactions"
+  role             = aws_iam_role.lambda_rds_s3_invoke.arn
+  handler          = "index.handler"
+  runtime          = "nodejs20.x"
+  timeout          = 30
+  memory_size      = 256
+  filename         = data.archive_file.manage_interactions.output_path
+  source_code_hash = data.archive_file.manage_interactions.output_base64sha256
+
+  vpc_config {
+    subnet_ids         = var.private_subnet_ids
+    security_group_ids = [var.lambda_security_group_id]
+  }
+
+  environment {
+    variables = merge(local.rds_env, {
+      S3_RAW_BUCKET = var.raw_interactions_bucket_name
+    })
+  }
+}
+
+resource "aws_lambda_function" "manage_prompts" {
+  function_name    = "${local.function_prefix}-manage-prompts"
+  role             = aws_iam_role.lambda_rds_s3_invoke.arn
+  handler          = "index.handler"
+  runtime          = "nodejs20.x"
+  timeout          = 30
+  memory_size      = 256
+  filename         = data.archive_file.manage_prompts.output_path
+  source_code_hash = data.archive_file.manage_prompts.output_base64sha256
+
+  vpc_config {
+    subnet_ids         = var.private_subnet_ids
+    security_group_ids = [var.lambda_security_group_id]
+  }
+
+  environment {
+    variables = local.rds_env
+  }
+}
+
 resource "aws_lambda_function" "process_pending_invites" {
   function_name    = "${local.function_prefix}-process-pending-invites"
   role             = aws_iam_role.lambda_rds_ses.arn
@@ -614,6 +983,56 @@ resource "aws_cloudwatch_log_group" "get_observations" {
   retention_in_days = 365
 }
 
+resource "aws_cloudwatch_log_group" "fetch_session_config" {
+  name              = "/aws/lambda/${aws_lambda_function.fetch_session_config.function_name}"
+  retention_in_days = 365
+}
+
+resource "aws_cloudwatch_log_group" "store_interaction" {
+  name              = "/aws/lambda/${aws_lambda_function.store_interaction.function_name}"
+  retention_in_days = 365
+}
+
+resource "aws_cloudwatch_log_group" "construct_fhir_batch" {
+  name              = "/aws/lambda/${aws_lambda_function.construct_fhir_batch.function_name}"
+  retention_in_days = 365
+}
+
+resource "aws_cloudwatch_log_group" "evaluate_thresholds_batch" {
+  name              = "/aws/lambda/${aws_lambda_function.evaluate_thresholds_batch.function_name}"
+  retention_in_days = 365
+}
+
+resource "aws_cloudwatch_log_group" "check_daily_deadline" {
+  name              = "/aws/lambda/${aws_lambda_function.check_daily_deadline.function_name}"
+  retention_in_days = 365
+}
+
+resource "aws_cloudwatch_log_group" "check_missed_measurements" {
+  name              = "/aws/lambda/${aws_lambda_function.check_missed_measurements.function_name}"
+  retention_in_days = 365
+}
+
+resource "aws_cloudwatch_log_group" "manage_recommendations" {
+  name              = "/aws/lambda/${aws_lambda_function.manage_recommendations.function_name}"
+  retention_in_days = 365
+}
+
+resource "aws_cloudwatch_log_group" "manage_parameter_configs" {
+  name              = "/aws/lambda/${aws_lambda_function.manage_parameter_configs.function_name}"
+  retention_in_days = 365
+}
+
+resource "aws_cloudwatch_log_group" "manage_interactions" {
+  name              = "/aws/lambda/${aws_lambda_function.manage_interactions.function_name}"
+  retention_in_days = 365
+}
+
+resource "aws_cloudwatch_log_group" "manage_prompts" {
+  name              = "/aws/lambda/${aws_lambda_function.manage_prompts.function_name}"
+  retention_in_days = 365
+}
+
 # ============================================================
 # API GATEWAY PERMISSIONS (allow API Gateway to invoke Lambdas)
 # ============================================================
@@ -694,6 +1113,62 @@ resource "aws_lambda_permission" "get_observations" {
   statement_id  = "AllowAPIGateway"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.get_observations.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${var.api_execution_arn}/*"
+}
+
+resource "aws_lambda_permission" "fetch_session_config" {
+  statement_id  = "AllowAPIGateway"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.fetch_session_config.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${var.api_execution_arn}/*"
+}
+
+resource "aws_lambda_permission" "store_interaction" {
+  statement_id  = "AllowAPIGateway"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.store_interaction.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${var.api_execution_arn}/*"
+}
+
+resource "aws_lambda_permission" "construct_fhir_batch" {
+  statement_id  = "AllowAPIGateway"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.construct_fhir_batch.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${var.api_execution_arn}/*"
+}
+
+resource "aws_lambda_permission" "manage_recommendations" {
+  statement_id  = "AllowAPIGateway"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.manage_recommendations.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${var.api_execution_arn}/*"
+}
+
+resource "aws_lambda_permission" "manage_parameter_configs" {
+  statement_id  = "AllowAPIGateway"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.manage_parameter_configs.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${var.api_execution_arn}/*"
+}
+
+resource "aws_lambda_permission" "manage_interactions" {
+  statement_id  = "AllowAPIGateway"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.manage_interactions.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${var.api_execution_arn}/*"
+}
+
+resource "aws_lambda_permission" "manage_prompts" {
+  statement_id  = "AllowAPIGateway"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.manage_prompts.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${var.api_execution_arn}/*"
 }

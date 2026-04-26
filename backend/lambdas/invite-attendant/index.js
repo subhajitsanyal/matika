@@ -1,8 +1,8 @@
 /**
- * CareLog Invite Attendant Lambda
+ * CareLog Invite Caregiver Lambda
  *
- * Sends invites to attendants for a patient:
- * 1. Validates relative has permission to invite
+ * Sends invites to caregivers for a patient:
+ * 1. Validates caregiver has permission to invite
  * 2. Creates invite record in RDS
  * 3. Sends email via SES or SMS via SNS
  *
@@ -101,9 +101,9 @@ function generatePassword() {
 }
 
 /**
- * Create Cognito account for attendant and RDS records.
+ * Create Cognito account for caregiver and RDS records.
  */
-async function createAttendantAccount(dbClient, email, name, password, patientDbId, invitedBy) {
+async function createCaregiverAccount(dbClient, email, name, password, patientDbId, invitedBy) {
   let cognitoSub;
 
   // Create Cognito user (or reuse existing)
@@ -116,7 +116,7 @@ async function createAttendantAccount(dbClient, email, name, password, patientDb
           { Name: "email", Value: email },
           { Name: "email_verified", Value: "true" },
           { Name: "name", Value: name },
-          { Name: "custom:persona_type", Value: "attendant" },
+          { Name: "custom:persona_type", Value: "caregiver" },
         ],
         MessageAction: "SUPPRESS",
       })
@@ -145,19 +145,19 @@ async function createAttendantAccount(dbClient, email, name, password, patientDb
     })
   );
 
-  // Add to attendants group
+  // Add to caregivers group
   await cognitoClient.send(
     new AdminAddUserToGroupCommand({
       UserPoolId: process.env.COGNITO_USER_POOL_ID,
       Username: email,
-      GroupName: "attendants",
+      GroupName: "caregivers",
     })
   );
 
   // Create or update user record in RDS
   const userResult = await dbClient.query(
     `INSERT INTO users (cognito_sub, email, name, persona_type, is_active, created_at, updated_at)
-     VALUES ($1, $2, $3, 'attendant', true, NOW(), NOW())
+     VALUES ($1, $2, $3, 'caregiver', true, NOW(), NOW())
      ON CONFLICT (email) DO UPDATE SET cognito_sub = $1, name = $3, is_active = true, updated_at = NOW()
      RETURNING id`,
     [cognitoSub, email, name]
@@ -170,7 +170,7 @@ async function createAttendantAccount(dbClient, email, name, password, patientDb
       patient_id, linked_user_id, relationship, is_primary,
       can_log_vitals, can_configure_thresholds, can_view_history, can_receive_alerts,
       invited_by, accepted_at, is_active
-    ) VALUES ($1, $2, 'attendant', false, true, false, true, true,
+    ) VALUES ($1, $2, 'caregiver', false, true, false, true, true,
       (SELECT id FROM users WHERE cognito_sub = $3), NOW(), true)
     ON CONFLICT (patient_id, linked_user_id) DO UPDATE SET is_active = true, updated_at = NOW()`,
     [patientDbId, userId, invitedBy]
@@ -182,7 +182,7 @@ async function createAttendantAccount(dbClient, email, name, password, patientDb
 /**
  * Send invite email via SES with login credentials and download link.
  */
-async function sendInviteEmail(email, attendantName, patientName, password, downloadLink) {
+async function sendInviteEmail(email, caregiverName, patientName, password, downloadLink) {
   const params = {
     Source: process.env.FROM_EMAIL || "noreply@carelog.com",
     Destination: {
@@ -218,9 +218,9 @@ async function sendInviteEmail(email, attendantName, patientName, password, down
                   <h1>Welcome to CareLog</h1>
                 </div>
                 <div class="content">
-                  <p>Hello ${attendantName},</p>
+                  <p>Hello ${caregiverName},</p>
 
-                  <p>You've been invited to join CareLog as an attendant for <strong>${patientName}</strong>.</p>
+                  <p>You've been invited to join CareLog as a caregiver for <strong>${patientName}</strong>.</p>
 
                   <p>Your account has been created. Here are your login credentials:</p>
 
@@ -238,7 +238,7 @@ async function sendInviteEmail(email, attendantName, patientName, password, down
 
                   <p><strong>Step 2:</strong> Open the app and sign in with the credentials above.</p>
 
-                  <p>As an attendant, you'll be able to:</p>
+                  <p>As a caregiver, you'll be able to:</p>
                   <ul>
                     <li>Log vital signs and health observations</li>
                     <li>Track medication and care activities</li>
@@ -256,9 +256,9 @@ async function sendInviteEmail(email, attendantName, patientName, password, down
           Charset: "UTF-8",
         },
         Text: {
-          Data: `Hello ${attendantName},
+          Data: `Hello ${caregiverName},
 
-You've been invited to join CareLog as an attendant for ${patientName}.
+You've been invited to join CareLog as a caregiver for ${patientName}.
 
 Your account has been created:
   Email: ${email}
@@ -281,8 +281,8 @@ CareLog - Health monitoring made simple`,
 /**
  * Send invite SMS via SNS.
  */
-async function sendInviteSMS(phone, attendantName, patientName, inviteLink) {
-  const message = `Hi ${attendantName}, you've been invited to care for ${patientName} on CareLog. Accept here: ${inviteLink}`;
+async function sendInviteSMS(phone, caregiverName, patientName, inviteLink) {
+  const message = `Hi ${caregiverName}, you've been invited to care for ${patientName} on CareLog. Accept here: ${inviteLink}`;
 
   const params = {
     Message: message,
@@ -302,10 +302,10 @@ async function sendInviteSMS(phone, attendantName, patientName, inviteLink) {
  * Lambda handler.
  */
 exports.handler = async (event) => {
-  console.log("Invite attendant request received");
+  console.log("Invite caregiver request received");
 
   const body = JSON.parse(event.body);
-  const relativeCognitoSub = event.requestContext.authorizer.claims.sub;
+  const caregiverCognitoSub = event.requestContext.authorizer.claims.sub;
 
   // Validate required fields
   if (!body.patientId) {
@@ -316,13 +316,16 @@ exports.handler = async (event) => {
     };
   }
 
-  if (!body.attendantName) {
+  if (!body.caregiverName && !body.attendantName) {
     return {
       statusCode: 400,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ error: "Attendant name is required" }),
+      body: JSON.stringify({ error: "Caregiver name is required" }),
     };
   }
+
+  // Support legacy attendantName field for backward compatibility
+  const inviteeName = body.caregiverName || body.attendantName;
 
   if (!body.email && !body.phone) {
     return {
@@ -339,7 +342,7 @@ exports.handler = async (event) => {
   try {
     dbClient = await createDbConnection();
 
-    // Verify relative has access to this patient
+    // Verify caregiver has access to this patient
     const accessCheck = await dbClient.query(
       `SELECT p.id, p.patient_id, u.name as patient_name
        FROM patients p
@@ -347,9 +350,9 @@ exports.handler = async (event) => {
        JOIN users u ON u.id = p.user_id
        WHERE p.patient_id = $1
          AND pl.linked_user_id = (SELECT id FROM users WHERE cognito_sub = $2)
-         AND pl.relationship = 'relative'
+         AND pl.relationship = 'caregiver'
          AND pl.is_active = true`,
-      [body.patientId, relativeCognitoSub]
+      [body.patientId, caregiverCognitoSub]
     );
 
     if (accessCheck.rows.length === 0) {
@@ -357,7 +360,7 @@ exports.handler = async (event) => {
         statusCode: 403,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          error: "You do not have permission to invite attendants for this patient",
+          error: "You do not have permission to invite caregivers for this patient",
         }),
       };
     }
@@ -380,10 +383,10 @@ exports.handler = async (event) => {
         inviteId,
         patientDbId,
         inviteToken,
-        body.attendantName,
+        inviteeName,
         body.email || null,
         body.phone || null,
-        relativeCognitoSub,
+        caregiverCognitoSub,
         expiresAt,
       ]
     );
@@ -394,33 +397,33 @@ exports.handler = async (event) => {
        VALUES (
          (SELECT id FROM users WHERE cognito_sub = $1),
          'INVITE',
-         'attendant',
+         'caregiver',
          $2,
          $3
        )`,
       [
-        relativeCognitoSub,
+        caregiverCognitoSub,
         inviteId,
         JSON.stringify({
           patientId: body.patientId,
-          attendantName: body.attendantName,
+          caregiverName: inviteeName,
           method: body.email ? "email" : "sms",
         }),
       ]
     );
 
-    // Generate password and create the attendant's account
+    // Generate password and create the caregiver's account
     const password = generatePassword();
     const downloadLink = process.env.APP_DOWNLOAD_URL || "https://appdistribution.firebase.google.com/testerapps/1:191872106923:android:63245761468592e0d612ee";
 
     // Create Cognito account + RDS records
-    await createAttendantAccount(
+    await createCaregiverAccount(
       dbClient,
       body.email,
-      body.attendantName,
+      inviteeName,
       password,
       patientDbId,
-      relativeCognitoSub
+      caregiverCognitoSub
     );
 
     // Mark invite as accepted (account already created)
@@ -444,7 +447,7 @@ exports.handler = async (event) => {
       if (status === "Success") {
         await sendInviteEmail(
           body.email,
-          body.attendantName,
+          inviteeName,
           patientName,
           password,
           downloadLink
@@ -462,9 +465,9 @@ exports.handler = async (event) => {
       }
     }
 
-    console.log(`Attendant account created and invite sent: ${inviteId}, emailStatus: ${emailStatus}`);
+    console.log(`Caregiver account created and invite sent: ${inviteId}, emailStatus: ${emailStatus}`);
 
-    // Notify admin to add attendant to Firebase testers group
+    // Notify admin to add caregiver to Firebase testers group
     try {
       const adminEmail = (process.env.FROM_EMAIL || "").replace(/.*<(.+)>.*/, "$1") || "noreply@carelog.com";
       await sesClient.send(
@@ -475,7 +478,7 @@ exports.handler = async (event) => {
             Subject: { Data: `[CareLog] Add tester: ${body.email}` },
             Body: {
               Text: {
-                Data: `A new attendant has been invited and needs access to the app.\n\nAttendant: ${body.attendantName}\nEmail: ${body.email}\nPatient: ${patientName}\n\nPlease add them to the Firebase App Distribution testers group:\n\nfirebase appdistribution:testers:add --emails "${body.email}" --group-aliases internal-testers --project carelog-7de0c\n\nOr add via Firebase Console:\nhttps://console.firebase.google.com/project/carelog-7de0c/appdistribution`,
+                Data: `A new caregiver has been invited and needs access to the app.\n\nCaregiver: ${inviteeName}\nEmail: ${body.email}\nPatient: ${patientName}\n\nPlease add them to the Firebase App Distribution testers group:\n\nfirebase appdistribution:testers:add --emails "${body.email}" --group-aliases internal-testers --project carelog-7de0c\n\nOr add via Firebase Console:\nhttps://console.firebase.google.com/project/carelog-7de0c/appdistribution`,
               },
             },
           },
@@ -488,8 +491,8 @@ exports.handler = async (event) => {
 
     const message =
       emailStatus === "verification_pending"
-        ? "Account created. A verification email has been sent to the attendant. Once verified, they will receive their login credentials."
-        : "Invitation sent successfully. The attendant will receive their login credentials by email.";
+        ? "Account created. A verification email has been sent to the caregiver. Once verified, they will receive their login credentials."
+        : "Invitation sent successfully. The caregiver will receive their login credentials by email.";
 
     return {
       statusCode: 201,

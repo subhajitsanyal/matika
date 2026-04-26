@@ -1,6 +1,6 @@
 # CareLog Setup and Deployment Guide
 
-**Version:** 2.2
+**Version:** 3.0
 **Last Updated:** April 2026
 
 ---
@@ -20,11 +20,12 @@
 | Java JDK | 17 | Android builds |
 | Firebase CLI | Latest | App distribution |
 | Fastlane | Latest | Build automation |
+| Python | 3.11+ | Mac Mini model services |
 
 ### 1.2 Install (macOS)
 
 ```bash
-brew install node@20 terraform awscli cocoapods fastlane openjdk@17
+brew install node@20 terraform awscli cocoapods fastlane openjdk@17 python@3.11
 npm install -g firebase-tools
 
 echo 'export PATH="/opt/homebrew/opt/openjdk@17/bin:$PATH"' >> ~/.zshrc
@@ -45,7 +46,7 @@ aws configure
 # Output format:     json
 ```
 
-You need `AdministratorAccess` for initial setup, or a scoped policy covering VPC, Cognito, API Gateway, RDS, S3, SQS, SNS, EC2, IAM, KMS, CloudWatch, and Secrets Manager.
+You need `AdministratorAccess` for initial setup, or a scoped policy covering VPC, Cognito, API Gateway, RDS, S3, SQS, SNS, EC2, IAM, KMS, CloudWatch, CloudTrail, EventBridge, and Secrets Manager.
 
 ### 1.4 SES Email Setup (Recommended)
 
@@ -74,7 +75,7 @@ aws ses verify-email-identity --email-address your-test-email@gmail.com --region
 
 #### 1.4.3 Add to Terraform Config
 
-Add to your `terraform.tfvars` (§3.2):
+Add to your `terraform.tfvars` (see section 3.2):
 
 ```hcl
 ses_email_arn  = "arn:aws:ses:ap-south-1:YOUR_ACCOUNT_ID:identity/YOUR_EMAIL@yourdomain.com"
@@ -97,18 +98,56 @@ aws sesv2 put-account-details \
     --region ap-south-1
 ```
 
-AWS reviews and approves within 24–48 hours.
+AWS reviews and approves within 24-48 hours.
 
 ### 1.5 Firebase Project Setup
 
 1. Create project `carelog` at [Firebase Console](https://console.firebase.google.com)
-2. Add Android app (`com.carelog`) → download `google-services.json`
-3. Add iOS app (`com.carelog.CareLog`) → download `GoogleService-Info.plist`
+2. Add Android app (`com.carelog`) -> download `google-services.json`
+3. Add iOS app (`com.carelog.CareLog`) -> download `GoogleService-Info.plist`
 4. Enable Firebase App Distribution
+5. Enable Firebase Cloud Messaging (FCM) for push notifications
 
 ---
 
-## 2. Clone the Repository
+## 2. Architecture Overview
+
+CareLog v3.0 introduces a **conversational, voice-first** health monitoring system with 4 deployment boundaries:
+
+```
+                          +-----------------+
+                          |   Mac Mini M4   |
+                          | (LAN, mDNS)    |
+                          |                 |
+                          | STT  :8001      |
+                          | LLM  :8002      |
+          WiFi/LAN        | TTS  :8003      |
+    +-------------------->| Vision :8004    |
+    |                     | Health :8000    |
+    |                     +-----------------+
+    |
++---+----------+          +-----------------+       +------------------+
+| Android App  |---HTTPS->| API Gateway     |------>| Lambda Functions |
+| (Patient /   |          |                 |       +--------+---------+
+|  Caregiver)  |          +-----------------+                |
++--------------+                                    +--------v---------+
+                                                    | RDS PostgreSQL   |
++--------------+          +-----------------+       | S3 (FHIR + Raw)  |
+| Web Portal   |---HTTPS->| API Gateway     |       | SQS / SNS        |
+| (Doctor)     |          |                 |       +------------------+
++--------------+          +-----------------+
+```
+
+**Key concepts:**
+- **Mac Mini M4** runs AI model services (STT, LLM, TTS, Vision) on the local network, discovered via mDNS (`_carelog._tcp`)
+- **Android app** uses dual networking: LAN for inference (Mac Mini), HTTPS for persistence (AWS)
+- **Cognito groups**: `patients`, `caregivers`, `doctors` (note: `attendants` and `relatives` have been replaced by `caregivers`)
+- **3 languages**: English, Hindi, Bengali with code-mixing support
+- **Latency target**: P95 < 2 seconds end-to-end (STT + LLM + TTS)
+
+---
+
+## 3. Clone the Repository
 
 ```bash
 git clone git@github.com:subhajitsanyal/matika.git
@@ -117,13 +156,180 @@ cd matika
 
 ---
 
-## 3. Backend Deployment
+## 4. Mac Mini Setup
 
-### 3.0 Clean Up Previous Deployments
+The Mac Mini M4 hosts 5 FastAPI model services that handle speech-to-text, language model inference, text-to-speech, and vision extraction. The Android app discovers the Mac Mini via mDNS on the local network.
+
+### 4.1 Directory Structure
+
+After provisioning, the Mac Mini will have:
+
+```
+/opt/carelog/
+├── models/
+│   ├── whisper-large-v3.bin          # STT model
+│   ├── qwen-2.5-7b-q4.gguf          # LLM model
+│   ├── qwen-vl-7b-q4.gguf           # Vision model
+│   ├── piper-en.onnx                 # TTS English voice
+│   ├── piper-hi.onnx                 # TTS Hindi voice
+│   ├── piper-bn.onnx                 # TTS Bengali voice
+│   ├── current-stt -> whisper-large-v3.bin
+│   ├── current-llm -> qwen-2.5-7b-q4.gguf
+│   ├── current-vision -> qwen-vl-7b-q4.gguf
+│   └── previous/                      # Rollback versions
+├── services/                          # Python FastAPI service files
+├── venv/                              # Python virtual environment
+├── logs/                              # Service logs (rotated)
+└── tmp/                               # Ephemeral session data (auto-cleaned)
+```
+
+### 4.2 Provisioning
+
+Before running the provisioning script, update the model download URLs in the script or export them as environment variables:
+
+```bash
+export MODEL_STT_URL="https://your-host/whisper-large-v3.bin"
+export MODEL_LLM_URL="https://your-host/qwen-2.5-7b-q4.gguf"
+export MODEL_VISION_URL="https://your-host/qwen-vl-7b-q4.gguf"
+export MODEL_TTS_EN_URL="https://your-host/piper-en.onnx"
+export MODEL_TTS_HI_URL="https://your-host/piper-hi.onnx"
+export MODEL_TTS_BN_URL="https://your-host/piper-bn.onnx"
+```
+
+Then run the provisioning script (idempotent — safe to re-run):
+
+```bash
+cd mac-mini/deploy
+sudo ./provision.sh
+```
+
+This script:
+1. Installs macOS updates and Xcode CLI tools
+2. Installs Homebrew and Python 3.11
+3. Creates the `/opt/carelog` directory structure
+4. Sets up a Python virtual environment with dependencies
+5. Downloads all model weights and creates symlinks
+6. Copies service files from `mac-mini/services/`
+7. Installs launchd plists for all 5 services
+8. Registers mDNS service (`_carelog._tcp` on port 8000)
+9. Runs security hardening (firewall, FileVault check, SSH hardening)
+10. Verifies all services respond to health checks
+
+### 4.3 Service Ports
+
+| Service | Port | Endpoint | Purpose |
+|---------|------|----------|---------|
+| Health Aggregator | 8000 | `GET /health` | Aggregated health status + mDNS advertisement |
+| STT (Whisper) | 8001 | `POST /transcribe`, `WS /transcribe/stream` | Speech-to-text |
+| LLM (Qwen 2.5) | 8002 | Session CRUD + `/sessions/{id}/turn` | Conversation engine |
+| TTS (Piper) | 8003 | `POST /synthesize`, `WS /synthesize/stream` | Text-to-speech |
+| Vision (Qwen-VL) | 8004 | `POST /extract` | Photo-based reading extraction |
+
+### 4.4 Verify Services
+
+```bash
+# Check all services via health aggregator
+curl http://localhost:8000/health
+
+# Expected response:
+# {
+#   "status": "healthy",
+#   "services": {
+#     "stt": { "status": "healthy", "model": "whisper-large-v3", ... },
+#     "llm": { "status": "healthy", "model": "qwen-2.5-7b", ... },
+#     "tts": { "status": "healthy", "voices": ["en", "hi", "bn"], ... },
+#     "vision": { "status": "healthy", ... }
+#   }
+# }
+
+# Check individual services
+curl http://localhost:8001/health   # STT
+curl http://localhost:8002/health   # LLM
+curl http://localhost:8003/health   # TTS
+curl http://localhost:8004/health   # Vision
+```
+
+### 4.5 Managing Services
+
+Services are managed via launchd:
+
+```bash
+# View service status
+sudo launchctl list | grep carelog
+
+# Stop a service
+sudo launchctl unload /Library/LaunchDaemons/com.carelog.llm.plist
+
+# Start a service
+sudo launchctl load /Library/LaunchDaemons/com.carelog.llm.plist
+
+# View logs
+tail -f /opt/carelog/logs/llm.log
+tail -f /opt/carelog/logs/llm.error.log
+```
+
+### 4.6 Model Updates
+
+To update a model without downtime:
+
+```bash
+cd mac-mini/deploy
+sudo ./update-model.sh stt https://your-host/whisper-large-v3-new.bin
+sudo ./update-model.sh llm https://your-host/qwen-2.5-7b-q4-new.gguf
+```
+
+The script downloads to a staging area, swaps the symlink, restarts the service, verifies health, and auto-rolls back on failure.
+
+### 4.7 Security Hardening
+
+The provisioning script automatically runs security hardening. To run individually:
+
+```bash
+# Firewall: allow only ports 8000-8004 + mDNS
+sudo mac-mini/deploy/security/firewall-setup.sh
+
+# FileVault: check/enable disk encryption
+sudo mac-mini/deploy/security/filevault-check.sh
+
+# SSH: restrict to key-only, LAN-only
+sudo mac-mini/deploy/security/harden-ssh.sh
+```
+
+### 4.8 Monitoring
+
+Cron jobs are installed by the provisioning script:
+
+| Job | Schedule | Script | Purpose |
+|-----|----------|--------|---------|
+| Health logging | Every 5 min | `monitoring/health-cron.sh` | Log memory/disk/service status |
+| Tmp cleanup | Every hour | `monitoring/cleanup-tmp.sh` | Remove stale `/opt/carelog/tmp/` directories |
+| Log rotation | Daily | `monitoring/log-rotate.conf` | Rotate service logs (7 day retention) |
+
+### 4.9 Pilot Deployment
+
+For deploying Mac Minis to patient households:
+
+```bash
+cd mac-mini/deploy
+
+# Set up a household-specific Mac Mini
+sudo ./pilot-setup.sh --hostname "household-kumar" --wifi-ssid "KumarHome" --wifi-pass "password"
+
+# Run smoke test
+./pilot-smoke-test.sh
+```
+
+The pilot setup script configures hostname, WiFi, runs full provisioning, and verifies all services.
+
+---
+
+## 5. Backend Deployment
+
+### 5.0 Clean Up Previous Deployments
 
 If you have infrastructure from a prior deployment, tear it down first to avoid state conflicts, orphaned resources, and naming collisions.
 
-#### 3.0.1 Destroy Terraform-Managed Resources
+#### 5.0.1 Destroy Terraform-Managed Resources
 
 ```bash
 cd infrastructure/terraform/environments/dev
@@ -133,12 +339,12 @@ terraform destroy
 
 Review the plan and confirm. RDS deletion takes several minutes.
 
-#### 3.0.2 Clean Up Resources That Survive `terraform destroy`
+#### 5.0.2 Clean Up Resources That Survive `terraform destroy`
 
 Some resources have deletion protection or deferred deletion. Clean them up manually:
 
 ```bash
-# Force-delete Secrets Manager secrets (otherwise they wait 7–30 days)
+# Force-delete Secrets Manager secrets (otherwise they wait 7-30 days)
 aws secretsmanager delete-secret --secret-id carelog-dev-db-password \
     --force-delete-without-recovery --region ap-south-1
 
@@ -152,7 +358,7 @@ for prefix in /aws/vpc/carelog-dev /aws/apigateway/carelog-dev /aws/lambda/carel
 done
 ```
 
-#### 3.0.3 Clean Up Cognito Users and Domain
+#### 5.0.3 Clean Up Cognito Users and Domain
 
 If you want a completely clean slate with no dangling users or roles from before:
 
@@ -196,7 +402,7 @@ print('Done.')
 fi
 ```
 
-#### 3.0.4 Verify Clean State
+#### 5.0.4 Verify Clean State
 
 ```bash
 REGION="ap-south-1"
@@ -241,7 +447,7 @@ for role in $(aws iam list-roles --query 'Roles[?contains(RoleName, `carelog`)].
 done
 ```
 
-#### 3.0.5 Reset Local Terraform State
+#### 5.0.5 Reset Local Terraform State
 
 ```bash
 cd infrastructure/terraform/environments/dev
@@ -250,23 +456,25 @@ rm -rf .terraform terraform.tfstate terraform.tfstate.backup tfplan .terraform.l
 
 You're now ready for a clean deployment.
 
-### 3.1 What Terraform Creates
+### 5.1 What Terraform Creates
 
 A single `terraform apply` deploys everything:
 
 | Resource | Details |
 |----------|---------|
 | VPC | Public/private subnets, NAT gateways, security groups |
-| Cognito | User Pool with 4 groups (patients, attendants, relatives, doctors), OAuth clients, post-confirmation Lambda trigger |
-| API Gateway | REST API with Cognito authorizer, Lambda proxy integrations |
-| Lambda | 12 functions deployed via Terraform + 2 MOCK-stubbed routes (see §5) |
+| Cognito | User Pool with 3 groups (`patients`, `caregivers`, `doctors`), OAuth clients, post-confirmation Lambda trigger |
+| API Gateway | REST API with Cognito authorizer, Lambda proxy integrations (30+ routes) |
+| Lambda | 24+ functions deployed via Terraform |
 | RDS | PostgreSQL 15 in private subnet, encrypted, password in Secrets Manager |
-| S3 | Documents + observations bucket (KMS encrypted, lifecycle rules) + access logs bucket |
+| S3 | Documents bucket + FHIR observations bucket + raw interactions bucket (all KMS encrypted, lifecycle rules) + access logs bucket |
 | SQS | Document processing queue + alerts queue (both with DLQs) |
-| SNS | Push notification platform apps (APNs, FCM) + alert topics |
+| SNS | Push notification platform apps (APNs, FCM) + alert topics + operator alert topic |
 | Bastion | EC2 instance for SSM port-forwarding to RDS (dev only) |
+| EventBridge | Scheduled rules for deadline checks (15 min) and missed measurements (1 hour) |
+| CloudWatch | 6 alarms (Lambda errors, API 5xx, SQS DLQ, RDS CPU/storage) + operational dashboard |
 
-### 3.2 Configure SES Email (Optional)
+### 5.2 Configure SES Email (Optional)
 
 All infrastructure variables (VPC, DB, feature flags, etc.) are already configured in each environment's `main.tf`. The only optional configuration is SES email for Cognito verification emails.
 
@@ -281,9 +489,9 @@ ses_email_arn  = "arn:aws:ses:ap-south-1:YOUR_ACCOUNT_ID:identity/your-email@dom
 ses_from_email = "CareLog <your-email@domain.com>"
 ```
 
-> **Note:** The SES identity must already be verified (see §1.4). If you skip this, Cognito will still work with its default email — you can add SES later.
+> **Note:** The SES identity must already be verified (see section 1.4). If you skip this, Cognito will still work with its default email — you can add SES later.
 
-### 3.3 Install Lambda Dependencies (before Terraform)
+### 5.3 Install Lambda Dependencies (before Terraform)
 
 Terraform zips each Lambda directory for deployment, so `node_modules/` must exist first:
 
@@ -298,7 +506,7 @@ done
 cd ../../infrastructure/terraform/environments/dev
 ```
 
-### 3.4 Deploy Infrastructure + Lambdas
+### 5.4 Deploy Infrastructure + Lambdas
 
 ```bash
 terraform init
@@ -306,17 +514,17 @@ terraform plan -out=tfplan
 terraform apply tfplan
 ```
 
-This deploys everything in one step: VPC, Cognito, RDS, S3, SQS, SNS, API Gateway, all 8 Lambda functions, and the Cognito post-confirmation trigger. RDS creation takes 5–15 minutes on first deploy; Lambda functions take 2–7 minutes each (VPC ENI setup).
+This deploys everything in one step: VPC, Cognito, RDS, S3, SQS, SNS, API Gateway, all Lambda functions, EventBridge rules, CloudWatch alarms, and the Cognito post-confirmation trigger. RDS creation takes 5-15 minutes on first deploy; Lambda functions take 2-7 minutes each (VPC ENI setup).
 
-### 3.5 Note the Outputs
+### 5.5 Note the Outputs
 
 ```bash
 terraform output
 ```
 
-Key outputs: `vpc_id`, `bastion_instance_id`, `public_subnet_ids`, `private_subnet_ids`, `api_gateway_url`.
+Key outputs: `vpc_id`, `bastion_instance_id`, `public_subnet_ids`, `private_subnet_ids`, `api_gateway_url`, `raw_interactions_bucket_name`, `operator_alerts_topic_arn`.
 
-### 3.6 Update App Configs After Deploy
+### 5.6 Update App Configs After Deploy
 
 After every `terraform apply`, run the config update script to sync the app with the new infrastructure values (API Gateway URL, Cognito pool IDs, S3 bucket name):
 
@@ -350,7 +558,7 @@ bundle exec fastlane distribute_debug
 > **Important:** Never hardcode API Gateway IDs in source files. Always use `update-app-config.sh`
 > after infrastructure changes. The API Gateway ID changes on every fresh `terraform apply`.
 
-### 3.7 Troubleshooting Deployment Issues
+### 5.7 Troubleshooting Deployment Issues
 
 **Secrets Manager: "secret already scheduled for deletion"**
 ```bash
@@ -371,20 +579,20 @@ terraform import module.carelog.module.vpc.aws_cloudwatch_log_group.vpc_flow_log
 terraform apply
 ```
 
-**S3 Bucket: 409 Conflict** — S3 names are globally unique. If recently deleted, wait 5–10 minutes or change `s3_bucket_prefix`.
+**S3 Bucket: 409 Conflict** — S3 names are globally unique. If recently deleted, wait 5-10 minutes or change `s3_bucket_prefix`.
 
 ---
 
-## 4. Database Setup
+## 6. Database Setup
 
-### 4.1 One-Time Prerequisites
+### 6.1 One-Time Prerequisites
 
 ```bash
 brew install --cask session-manager-plugin
 brew install flyway
 ```
 
-### 4.2 Start Port-Forwarding (Terminal 1)
+### 6.2 Start Port-Forwarding (Terminal 1)
 
 Get connection details, then start the SSM session:
 
@@ -416,7 +624,7 @@ aws ec2 authorize-security-group-ingress \
 
 Then restart the SSM session.
 
-### 4.3 Run Migrations (Terminal 2)
+### 6.3 Run Migrations (Terminal 2)
 
 Retrieve the auto-generated password from Secrets Manager:
 
@@ -440,17 +648,34 @@ EOF
 flyway migrate
 ```
 
+The V004 migration (`V004__conversational_system.sql`) creates the following new tables and alterations:
+
+| New Tables | Purpose |
+|------------|---------|
+| `interaction_sessions` | Conversation session metadata (type, language, duration, transcript ref) |
+| `parameter_configs` | Per-patient monitoring parameters (BP, glucose, etc.) with frequencies + thresholds |
+| `topics` | Conversation topics (medications, conditions, wellness) |
+| `patient_topics` | Links patients to their active topics |
+| `recommendations` | Doctor/analytics parameter recommendations with accept/reject workflow |
+| `conversation_prompts` | System prompts for patient_logging, caregiver_config, caregiver_onboarding |
+| `vision_results` | Photo-based reading extraction results |
+
+| Altered Tables | Changes |
+|----------------|---------|
+| `patients` | Added `language`, `timezone` columns |
+| `reminder_configs` | Added `daily_deadline`, `frequency_days`, `timezone` columns |
+
 ---
 
-## 5. Lambda Functions
+## 7. Lambda Functions
 
-### 5.1 Overview
+### 7.1 Overview
 
 Lambda functions live in `backend/lambdas/`. Each has its own `package.json` and `index.js`. Terraform packages and deploys them automatically via `archive_file` data sources in the Lambda module (`infrastructure/terraform/modules/lambda/`).
 
 **Important:** You must run `npm install` in each Lambda directory **before** `terraform apply`, since Terraform zips the entire directory (including `node_modules/`) for deployment.
 
-### 5.2 Install Dependencies
+### 7.2 Install Dependencies
 
 ```bash
 cd backend/lambdas
@@ -467,72 +692,90 @@ done
 
 > **Note:** All `@aws-sdk/*` dependencies must be `^3.978.0` or later to avoid critical vulnerabilities in `fast-xml-parser` and transitive `@aws-sdk/core` packages (patched in v3.973+).
 
-### 5.3 Lambda Environment Variables
+### 7.3 Lambda Environment Variables
 
 These are set automatically by Terraform when the Lambda module deploys:
 
 | Variable | Source | Which Lambdas |
 |----------|--------|---------------|
-| `DB_SECRET_NAME` | RDS module → `db_password_secret_name` | post-confirmation, create-patient, accept-invite, invite-attendant, invite-doctor |
-| `COGNITO_USER_POOL_ID` | Cognito module → extracted from ARN | post-confirmation, create-patient, accept-invite |
+| `DB_SECRET_NAME` | RDS module -> `db_password_secret_name` | post-confirmation, create-patient, accept-invite, invite-attendant, invite-doctor, fetch-session-config, store-interaction, construct-fhir-batch, evaluate-thresholds-batch, check-daily-deadline, check-missed-measurements, manage-recommendations, manage-parameter-configs, manage-interactions, manage-prompts |
+| `COGNITO_USER_POOL_ID` | Cognito module -> extracted from ARN | post-confirmation, create-patient, accept-invite |
 | `FROM_EMAIL` | Terraform variable (default: `noreply@carelog.com`) | invite-attendant, invite-doctor, process-pending-invites |
 | `WEB_PORTAL_URL` | API Gateway base URL | invite-attendant, process-pending-invites |
 | `APP_DOWNLOAD_URL` | Firebase App Distribution link | invite-attendant |
-| `OBSERVATIONS_BUCKET` | S3 observations bucket name | patient-summary |
-| `S3_BUCKET_NAME` | S3 module → `documents_bucket_name` | sync-observation, bulk-sync, presigned-url |
-| `S3_KMS_KEY_ID` | S3 module → `kms_key_arn` | sync-observation, bulk-sync |
+| `OBSERVATIONS_BUCKET` | S3 observations bucket name | patient-summary, construct-fhir-batch |
+| `RAW_INTERACTIONS_BUCKET` | S3 raw interactions bucket name | store-interaction, manage-interactions |
+| `S3_BUCKET_NAME` | S3 module -> `documents_bucket_name` | sync-observation, bulk-sync, presigned-url |
+| `S3_KMS_KEY_ID` | S3 module -> `kms_key_arn` | sync-observation, bulk-sync, construct-fhir-batch, store-interaction |
+| `SQS_ALERTS_QUEUE_URL` | SQS module -> queue URL | evaluate-thresholds-batch, check-missed-measurements |
+| `EVALUATE_THRESHOLDS_FUNCTION_NAME` | Lambda name | construct-fhir-batch (async invoke) |
 
-### 5.4 Lambda Functions Reference
+### 7.4 Lambda Functions Reference
 
-#### Deployed via Terraform (12 functions — packaged and deployed automatically by `terraform apply`)
-
-All Lambda code changes are deployed automatically by running `terraform apply` — Terraform zips each Lambda directory (including `node_modules/`) and uploads it. No manual deployment needed.
+#### Core Patient/Caregiver Lambdas (deployed via Terraform)
 
 | Lambda | Route | Description |
 |--------|-------|-------------|
-| `create-patient` | `POST /patients` | Creates patient in RDS + Cognito; ensures relative's user record exists; sets `custom:linked_patient_id` on relative's Cognito account server-side |
-| `patient-summary` | `GET /patients/{patientId}/summary` | Returns patient info, latest vitals from S3, unread alert count, last activity time (used by relative dashboard) |
-| `get-observations` | `GET /patients/{patientId}/observations` | Returns FHIR observations from S3 filtered by vital type and date range (used by trends view) |
-| `invite-attendant` | `POST /invites/attendant` | Creates attendant Cognito account + RDS records immediately, emails credentials + app download link via SES. Handles SES sandbox by triggering verification first if recipient not verified. |
+| `create-patient` | `POST /patients` | Creates patient in RDS + Cognito. Accepts language, timezone, conditions, medications, allergies, emergency_contact. Sets `custom:linked_patient_id` on caregiver's Cognito account. |
+| `patient-summary` | `GET /patients/{patientId}/summary` | Returns patient info, latest vitals from S3, interaction session metadata, unread alert count |
+| `get-observations` | `GET /patients/{patientId}/observations` | Returns FHIR observations from S3 filtered by vital type and date range |
+| `invite-attendant` | `POST /invites/attendant` | Creates caregiver Cognito account + RDS records, emails credentials via SES |
 | `invite-doctor` | `POST /invites/doctor` | Sends doctor invite email via SES |
-| `accept-invite` | `GET,POST /invites/accept` | GET serves HTML registration page; POST creates Cognito account for doctor invitees (no auth — user not yet registered) |
-| `post-confirmation` | Cognito trigger | Runs after user confirms signup; creates user record in RDS, sets persona_type, adds to Cognito group |
-| `sync-observation` | `POST /observations/sync` | Stores FHIR Observation as JSON in S3 (`observations/{patientId}/{YYYY}/{MM}/{DD}/{id}.json`, KMS encrypted) |
+| `accept-invite` | `GET,POST /invites/accept` | GET serves HTML registration page; POST creates Cognito account for doctor invitees |
+| `post-confirmation` | Cognito trigger | Runs after user confirms signup; creates user record in RDS, sets persona_type, adds to Cognito group (`caregivers` or `patients`) |
+| `sync-observation` | `POST /observations/sync` | Stores FHIR Observation as JSON in S3 (KMS encrypted) |
 | `bulk-sync` | `POST /observations/bulk-sync` | Batch stores FHIR resources in S3 |
 | `presigned-url` | `POST /documents/presigned-url` | Generates S3 presigned upload/download URLs |
-| `care-team` | `GET /patients/{patientId}/team` | Returns care team members (attendants, doctors, relatives) + pending invites |
-| `process-pending-invites` | EventBridge (every 2 min) | Checks pending invites for newly SES-verified emails and sends credentials emails automatically |
+| `care-team` | `GET /patients/{patientId}/team` | Returns care team members (caregivers, doctors) + pending invites |
+| `process-pending-invites` | EventBridge (every 2 min) | Checks pending invites for newly SES-verified emails and sends credentials emails |
 
-#### MOCK-Stubbed Routes (API Gateway routes exist but return mock responses — Lambda code exists but not yet wired in Terraform)
+#### Conversational System Lambdas (new in v3.0)
+
+| Lambda | Route | Description |
+|--------|-------|-------------|
+| `fetch-session-config` | `GET /session-config/{patientId}` | Returns patient's parameter configs, topics, conversation prompts, last session info, and active recommendations. Used by Android app before starting a conversation. |
+| `construct-fhir-batch` | `POST /observations/batch` | Receives batch of extracted values from a conversation session. Constructs FHIR R4 Observations (with LOINC/UCUM coding), stores in S3, and asynchronously invokes `evaluate-thresholds-batch`. |
+| `store-interaction` | `POST /interactions` | Receives multipart upload (audio files + transcript JSON + photos + metadata). Stores each in S3 raw bucket at `interactions/{patientId}/{YYYY}/{MM}/{DD}/{sessionId}/`, creates `interaction_sessions` record in RDS. |
+| `evaluate-thresholds-batch` | (async invoke) | Evaluates extracted values against `parameter_configs` thresholds. Creates alert records in RDS, enqueues SQS messages for `notification-sender`. Supports multi-component thresholds (e.g., systolic AND diastolic for BP). |
+| `check-daily-deadline` | EventBridge (every 15 min) | Queries `parameter_configs` for deadlines. Checks today's `interaction_sessions` per patient. Sends reminder FCM via `notification-sender` for patients who haven't logged by their deadline. Timezone-aware, with duplicate prevention. |
+| `check-missed-measurements` | EventBridge (every 1 hour) | Scans `parameter_configs` for overdue parameters based on `frequency_days`. Creates `missed_measurement` alerts and enqueues SQS for notification. |
+| `notification-sender` | SQS consumer | Handles 3 alert types with detailed FCM payloads: `threshold_breach` (parameter name, value, threshold), `missed_measurement` (parameter, days overdue), `reminder` (deadline approaching). |
+
+#### Doctor Portal Lambdas (new in v3.0)
+
+| Lambda | Route | Description |
+|--------|-------|-------------|
+| `manage-parameter-configs` | `GET/POST/PUT/DELETE /patients/{patientId}/parameter-configs[/{id}]` | Full CRUD for patient monitoring parameters. Doctors can set thresholds (`threshold_set_by` tracks who). Soft-delete with `active=false`. |
+| `manage-recommendations` | `GET/POST /patients/{patientId}/recommendations`, `PUT .../recommendations/{id}` | Doctor creates recommendations (suggested parameters/frequencies). Caregivers accept/reject. Accepting auto-creates a `parameter_config`. |
+| `manage-interactions` | `GET /patients/{patientId}/interactions`, `GET .../interactions/{id}/transcript` | Paginated list of conversation sessions with metadata. Transcript retrieval fetches from S3 raw bucket. |
+| `manage-prompts` | `GET /prompts`, `PUT /prompts/{promptType}` | View and update system prompts for conversation types (patient_logging, caregiver_config, caregiver_onboarding). Version bumped on each update. |
+
+#### MOCK-Stubbed Routes
 
 | Lambda | Route | Description |
 |--------|-------|-------------|
 | `delete-patient` | `DELETE /patients/{patientId}` | Cascade-deletes patient, disables Cognito accounts, sends notifications |
 | `remove-team-member` | `DELETE /patients/{patientId}/team/{memberId}` | Removes team member, disables Cognito account |
 
-#### Planned API Resources (API Gateway resources defined, no methods/integrations yet)
+#### Scaffolded (code exists but not yet wired in Terraform)
 
-| Path | Intended Lambda(s) |
-|------|---------------------|
-| `/thresholds`, `/thresholds/{patientId}` | `threshold-crud` |
-| `/reminders`, `/reminders/{patientId}` | `reminder-crud` |
-| `/alerts` | `alert-crud` |
-| `/device-tokens` | `device-token` |
-| `/audit-log` | `audit-log` |
+`account-deletion`, `alert-crud`, `audit-log`, `care-plan`, `consent`, `create-document-reference`, `data-export`, `device-token`, `doctor-documents`, `doctor-patients`, `observation-annotation`, `reminder-crud`, `threshold-crud`
 
-#### Scaffolded (code in `backend/lambdas/` but not yet deployed or wired)
+### 7.5 EventBridge Schedules
 
-`account-deletion`, `alert-crud`, `audit-log`, `care-plan`, `consent`, `create-document-reference`, `data-export`, `device-token`, `doctor-documents`, `doctor-patients`, `notification-sender`, `observation-annotation`, `reminder-crud`, `threshold-crud`
-
-### 5.5 EventBridge Schedules
-
-> **Note:** EventBridge schedules are NOT managed by Terraform — they must be created manually after deployment.
+The following EventBridge rules are managed by Terraform (module `infrastructure/terraform/modules/eventbridge/`):
 
 | Rule | Schedule | Lambda | Description |
 |------|----------|--------|-------------|
-| `carelog-dev-process-pending-invites` | Every 2 minutes | `process-pending-invites` | Polls pending invite records; checks SES verification status; sends credentials email once verified |
+| `carelog-check-daily-deadline-{env}` | Every 15 minutes | `check-daily-deadline` | Checks for patients whose daily measurement deadline has passed |
+| `carelog-check-missed-measurements-{env}` | Every 1 hour | `check-missed-measurements` | Scans for overdue measurements based on configured frequencies |
+| `carelog-dev-process-pending-invites` | Every 2 minutes | `process-pending-invites` | Polls pending invite records; sends credentials when SES-verified |
 
-To create the schedule manually after deploying the `process-pending-invites` Lambda:
+> **Note:** The `process-pending-invites` schedule may need to be created manually if not yet in Terraform. See the command in section 7.6.
+
+### 7.6 Manual EventBridge Rule (if needed)
+
+If `process-pending-invites` is not managed by Terraform:
 
 ```bash
 REGION="ap-south-1"
@@ -553,19 +796,102 @@ aws lambda add-permission --function-name carelog-dev-process-pending-invites \
     --region $REGION
 ```
 
-### 5.6 Persona Flow
+### 7.7 API Routes Summary
 
-1. Only **caregivers** (persona: `relative`) can self-register via the app
-2. Caregivers create a patient → `create-patient` (also creates caregiver's RDS user record if missing, and sets `custom:linked_patient_id` on their Cognito account)
-3. Caregivers invite attendants → `invite-attendant` creates the attendant's Cognito account + RDS records immediately, emails credentials
-   - **SES sandbox mode:** If recipient email not verified in SES, a verification email is sent first. After verification, `process-pending-invites` (scheduled every 2 min) sends the credentials email automatically.
-4. Caregivers invite doctors → `invite-doctor` sends invite email; doctors accept via `accept-invite` HTML registration page
-5. Caregivers can remove members (`remove-team-member`) or delete entire patient cascade (`delete-patient`)
-6. **Relative dashboard** calls `GET /patients/{patientId}/summary` via `patient-summary` Lambda for patient data
+| Method | Path | Lambda | Auth Groups |
+|--------|------|--------|-------------|
+| POST | `/patients` | create-patient | caregivers |
+| GET | `/patients/{patientId}/summary` | patient-summary | patients, caregivers, doctors |
+| GET | `/patients/{patientId}/observations` | get-observations | patients, caregivers, doctors |
+| POST | `/invites/attendant` | invite-attendant | caregivers |
+| POST | `/invites/doctor` | invite-doctor | caregivers |
+| GET,POST | `/invites/accept` | accept-invite | (no auth) |
+| POST | `/observations/sync` | sync-observation | patients, caregivers |
+| POST | `/observations/bulk-sync` | bulk-sync | patients, caregivers |
+| POST | `/documents/presigned-url` | presigned-url | any authenticated |
+| GET | `/patients/{patientId}/team` | care-team | caregivers, doctors |
+| GET | `/session-config/{patientId}` | fetch-session-config | patients, caregivers |
+| POST | `/interactions` | store-interaction | patients, caregivers |
+| POST | `/observations/batch` | construct-fhir-batch | patients, caregivers |
+| GET | `/patients/{patientId}/recommendations` | manage-recommendations | caregivers, doctors |
+| POST | `/patients/{patientId}/recommendations` | manage-recommendations | doctors |
+| PUT | `/patients/{patientId}/recommendations/{id}` | manage-recommendations | caregivers |
+| GET | `/patients/{patientId}/parameter-configs` | manage-parameter-configs | caregivers, doctors |
+| POST | `/patients/{patientId}/parameter-configs` | manage-parameter-configs | caregivers, doctors |
+| PUT | `/patients/{patientId}/parameter-configs/{id}` | manage-parameter-configs | caregivers, doctors |
+| DELETE | `/patients/{patientId}/parameter-configs/{id}` | manage-parameter-configs | caregivers, doctors |
+| GET | `/patients/{patientId}/interactions` | manage-interactions | caregivers, doctors |
+| GET | `/patients/{patientId}/interactions/{id}/transcript` | manage-interactions | caregivers, doctors |
+| GET | `/prompts` | manage-prompts | any authenticated |
+| PUT | `/prompts/{promptType}` | manage-prompts | doctors |
+| PUT | `/patients/{patientId}/language` | (handler) | caregivers |
+| POST | `/patients/{patientId}/topics/{topicId}` | (handler) | caregivers |
+
+### 7.8 Persona Flow
+
+1. Only **caregivers** can self-register via the app
+2. Caregivers create a patient -> `create-patient` (accepts language, timezone, conditions, medications, allergies, emergency_contact; creates caregiver's RDS user record if missing; sets `custom:linked_patient_id` on their Cognito account)
+3. Caregivers can onboard patients via a **conversational flow** in the Android app, which extracts profile information from natural language
+4. Caregivers configure monitoring protocols (parameters, frequencies, thresholds) via conversation or manually
+5. Caregivers invite other caregivers -> `invite-attendant` creates the caregiver's Cognito account + RDS records, emails credentials
+6. Caregivers invite doctors -> `invite-doctor` sends invite email; doctors accept via `accept-invite` HTML registration page
+7. **Patient conversation flow**: Patient speaks in preferred language -> STT (Mac Mini) -> LLM extracts values -> Patient confirms -> FHIR batch constructed (Lambda) -> Thresholds evaluated -> Alerts sent to caregivers
+8. **Doctors** manage patient parameters, thresholds, and recommendations via the web portal
 
 ---
 
-## 6. Configure Amplify (Mobile Apps)
+## 8. Web Portal Deployment
+
+### 8.1 Development
+
+```bash
+cd web-portal
+npm install
+npm run dev    # Starts Vite dev server at http://localhost:5173
+```
+
+### 8.2 Production Build
+
+```bash
+cd web-portal
+npm run build    # Type-check (tsc) + Vite production build -> dist/
+```
+
+### 8.3 Deploy to S3 + CloudFront
+
+```bash
+# Build
+cd web-portal && npm install && npm run build
+
+# Deploy to S3
+aws s3 sync dist/ s3://carelog-dev-web-portal/ --delete --region ap-south-1
+
+# Invalidate CloudFront cache (if configured)
+aws cloudfront create-invalidation --distribution-id YOUR_DIST_ID --paths "/*"
+```
+
+### 8.4 New Features in v3.0
+
+The web portal (doctor-facing) has 3 new tabs in the Patient View:
+
+| Tab | Component | Purpose |
+|-----|-----------|---------|
+| **Protocol** | `ProtocolTab.tsx` | View/add/edit/remove patient monitoring parameters (BP, glucose, etc.) with frequencies, thresholds, and deadlines |
+| **Recommendations** | `RecommendationsTab.tsx` | Create parameter recommendations for caregivers; view accept/reject status; filter by status |
+| **Interactions** | `InteractionsTab.tsx` | View conversation session history; click to view full transcripts in chat-bubble format |
+
+### 8.5 Tests
+
+```bash
+cd web-portal
+npm run test           # Vitest
+npm run test:coverage  # Vitest with coverage
+npm run lint           # ESLint
+```
+
+---
+
+## 9. Configure Amplify (Mobile Apps)
 
 After Terraform deploys, retrieve the values needed for mobile app configuration:
 
@@ -628,19 +954,45 @@ grep -E 'PoolId|AppClientId|Region|WebDomain|bucket' "$IOS_CONFIG"
 
 ---
 
-## 7. Android Development
+## 10. Android Development
 
-### 7.1 Setup
+### 10.1 Setup
 
 1. Open `matika/android` in Android Studio
 2. Wait for Gradle sync
 3. Copy `google-services.json` to `android/app/`
 
-### 7.2 Create Emulator
+### 10.2 New in v3.0
 
-In Android Studio: **Tools → Device Manager → Create Device → Pixel 6 → API 34**
+The Android app includes the following new modules:
 
-### 7.3 Run
+| Package | Purpose |
+|---------|---------|
+| `discovery/` | Mac Mini mDNS discovery (`_carelog._tcp`) + health check polling (10s interval) |
+| `conversation/` | Full voice conversation flow: audio capture, STT/LLM/TTS pipeline, session management, value extraction + confirmation |
+| `conversation/audio/` | Audio pipeline: PCM 16kHz capture, VAD silence detection, batch + streaming modes |
+| `conversation/photo/` | Camera capture for device photo readings (BP monitors, glucometers) |
+| `conversation/instrumentation/` | Pipeline latency tracking (t0-t7 timestamps, P50/P95/P99 stats) |
+| `onboarding/` | Caregiver onboarding flow: patient setup, protocol config, credential invites |
+| `dashboard/` | Patient home screen (last session, model status) + caregiver dashboard (alerts, urgency) |
+| `core/di/NetworkModule.kt` | Dual Retrofit instances: `@CloudApi` (AWS HTTPS) + `@MacMiniApi` (LAN HTTP) with cert pinning |
+| `core/config/AppSettings.kt` | DataStore settings: audio mode, Mac Mini URL, language preference |
+
+### 10.3 Network Configuration
+
+The app uses **dual networking**:
+- **LAN (HTTP)**: Direct connection to Mac Mini for STT, LLM, TTS, Vision inference (low latency)
+- **Cloud (HTTPS)**: AWS API Gateway for authentication, data persistence, configuration
+
+The Mac Mini URL is discovered automatically via mDNS. Manual override is available in Settings.
+
+**Important:** `network_security_config.xml` allows cleartext HTTP to the local network (`10.0.0.0/8`, `192.168.0.0/16`, `172.16.0.0/12`) for Mac Mini communication. This is by design.
+
+### 10.4 Create Emulator
+
+In Android Studio: **Tools -> Device Manager -> Create Device -> Pixel 6 -> API 34**
+
+### 10.5 Run
 
 ```bash
 cd android
@@ -656,11 +1008,11 @@ emulator -avd Pixel_6_API_34 &
 adb shell am start -n com.carelog/.ui.MainActivity
 ```
 
-### 7.4 Build APKs
+### 10.6 Build APKs
 
 ```bash
-./gradlew assembleDebug     # → app/build/outputs/apk/debug/app-debug.apk
-./gradlew assembleRelease   # → app/build/outputs/apk/release/app-release.apk
+./gradlew assembleDebug     # -> app/build/outputs/apk/debug/app-debug.apk
+./gradlew assembleRelease   # -> app/build/outputs/apk/release/app-release.apk
 ```
 
 Release builds require a keystore in `local.properties`:
@@ -674,7 +1026,7 @@ RELEASE_KEY_PASSWORD=your_key_password
 
 Generate one with: `keytool -genkey -v -keystore carelog-release.keystore -alias carelog -keyalg RSA -keysize 2048 -validity 10000`
 
-### 7.5 Tests
+### 10.7 Tests
 
 ```bash
 ./gradlew test                    # Unit tests
@@ -683,9 +1035,9 @@ Generate one with: `keytool -genkey -v -keystore carelog-release.keystore -alias
 
 ---
 
-## 8. iOS Development
+## 11. iOS Development
 
-### 8.1 Setup
+### 11.1 Setup
 
 ```bash
 cd ios/CareLog
@@ -694,9 +1046,9 @@ open CareLog.xcodeproj    # or CareLog.xcworkspace if using CocoaPods
 
 Copy `GoogleService-Info.plist` to `ios/CareLog/CareLog/` and add it to the Xcode project.
 
-Configure signing: **Project → CareLog target → Signing & Capabilities → select your Team**.
+Configure signing: **Project -> CareLog target -> Signing & Capabilities -> select your Team**.
 
-### 8.2 Run in Simulator
+### 11.2 Run in Simulator
 
 ```bash
 xcrun simctl boot "iPhone 15 Pro"
@@ -710,7 +1062,7 @@ xcrun simctl launch booted com.carelog.CareLog
 
 Or use Xcode: select simulator from dropdown, press `Cmd + R`.
 
-### 8.3 Tests
+### 11.3 Tests
 
 ```bash
 xcodebuild test -scheme CareLog \
@@ -719,9 +1071,9 @@ xcodebuild test -scheme CareLog \
 
 ---
 
-## 9. Firebase App Distribution
+## 12. Firebase App Distribution
 
-### 9.1 Prerequisites
+### 12.1 Prerequisites
 
 | Tool | Install | Purpose |
 |------|---------|---------|
@@ -751,7 +1103,7 @@ sdk.dir=/opt/homebrew/share/android-commandlinetools
 
 Or if using Android Studio, it typically installs at `~/Library/Android/sdk`.
 
-### 9.2 Firebase Authentication
+### 12.2 Firebase Authentication
 
 ```bash
 # Login to Firebase (opens browser)
@@ -771,7 +1123,7 @@ firebase login:ci
 >
 > Without both, uploads will fail with "does not have the required permissions".
 
-### 9.3 Install Fastlane Dependencies
+### 12.3 Install Fastlane Dependencies
 
 ```bash
 cd android
@@ -780,7 +1132,7 @@ bundle install    # Installs fastlane + firebase_app_distribution plugin from Ge
 
 The `Gemfile` and `fastlane/` directory are already configured in the repo.
 
-### 9.4 Android Distribution (Fastlane)
+### 12.4 Android Distribution (Fastlane)
 
 Three distribution lanes are available:
 
@@ -792,8 +1144,6 @@ Three distribution lanes are available:
 
 **Distribute a debug build to internal testers:**
 
-Both `FIREBASE_ANDROID_APP_ID` and `FIREBASE_TOKEN` must be set. Without these, Fastlane uses placeholder values and cached credentials which will fail with permission errors.
-
 ```bash
 cd android
 export FIREBASE_ANDROID_APP_ID="1:191872106923:android:63245761468592e0d612ee"
@@ -801,44 +1151,23 @@ export FIREBASE_TOKEN="<your-firebase-ci-token>"
 bundle exec fastlane distribute_debug
 ```
 
-This will:
-1. Build the debug APK (`./gradlew clean assembleDebug`)
-2. Generate release notes from recent git commits
-3. Upload APK to Firebase App Distribution
-4. Distribute to the `internal-testers` group
-5. Testers receive an email with a download link
-
-**Distribute a release build** (requires signing credentials):
-
-```bash
-cd android
-export FIREBASE_ANDROID_APP_ID="1:191872106923:android:63245761468592e0d612ee"
-export FIREBASE_TOKEN="<your-firebase-ci-token>"
-export KEYSTORE_PATH="/path/to/release.keystore"
-export KEYSTORE_PASSWORD="<password>"
-export KEY_ALIAS="<alias>"
-export KEY_PASSWORD="<key-password>"
-bundle exec fastlane distribute
-```
-
 **Custom release notes:**
 
 ```bash
-bundle exec fastlane distribute_debug release_notes:"Fix persona routing and history bugs"
+bundle exec fastlane distribute_debug release_notes:"Add conversational health logging flow"
 ```
 
-### 9.5 Creating Tester Groups
+### 12.5 Creating Tester Groups
 
 Before distributing, create the tester groups in Firebase:
 
 ```bash
-# Create groups
 firebase appdistribution:group:create internal-testers "Internal Testers" --project carelog-7de0c
 firebase appdistribution:group:create qa-team "QA Team" --project carelog-7de0c
 firebase appdistribution:group:create beta-testers "Beta Testers" --project carelog-7de0c
 ```
 
-### 9.6 Managing Testers
+### 12.6 Managing Testers
 
 ```bash
 # Add testers to a group
@@ -858,7 +1187,7 @@ firebase appdistribution:testers:remove \
 
 Or manage testers via the [Firebase Console](https://console.firebase.google.com/project/carelog-7de0c/appdistribution).
 
-### 9.7 iOS Distribution
+### 12.7 iOS Distribution
 
 ```bash
 cd ios/CareLog
@@ -874,7 +1203,7 @@ fastlane match init
 fastlane match adhoc
 ```
 
-### 9.8 GitHub Actions (Automated)
+### 12.8 GitHub Actions (Automated)
 
 The CI workflow (`.github/workflows/android-ci.yml`) automatically distributes to `internal-testers` on pushes to `develop`:
 
@@ -885,14 +1214,16 @@ git merge main
 git push origin develop
 ```
 
-**Required GitHub Secrets** (configure in repo Settings → Secrets):
+**Required GitHub Secrets** (configure in repo Settings -> Secrets):
 
 | Secret | Value |
 |--------|-------|
 | `FIREBASE_APP_ID` | `1:191872106923:android:63245761468592e0d612ee` |
 | `FIREBASE_SERVICE_ACCOUNT` | Firebase service account JSON content |
+| `AWS_ACCESS_KEY_ID` | AWS credentials for Lambda/Terraform deployments |
+| `AWS_SECRET_ACCESS_KEY` | AWS credentials for Lambda/Terraform deployments |
 
-### 9.9 Troubleshooting Firebase Distribution
+### 12.9 Troubleshooting Firebase Distribution
 
 | Error | Cause | Fix |
 |-------|-------|-----|
@@ -902,11 +1233,170 @@ git push origin develop
 | `Invalid request` during distribution | Tester group doesn't exist | Create group first: `firebase appdistribution:group:create <name> "<display>" --project carelog-7de0c` |
 | `Could not locate Gemfile` | Wrong directory | Run from `android/` directory, not project root |
 
-Get Firebase App IDs from: **Firebase Console → Project Settings → General → Your apps**.
+---
+
+## 13. Test Automation
+
+### 13.1 Overview
+
+The `test-automation/` directory contains E2E tests, integration tests, multilingual validation, performance benchmarks, and compliance verification scripts.
+
+```bash
+cd test-automation
+npm install
+```
+
+### 13.2 E2E Test Scenarios
+
+| # | Scenario | What it tests |
+|---|----------|---------------|
+| E2E-1 | Full patient logging session | Caregiver configures BP + glucose -> Patient conversation -> Confirms -> FHIR stored |
+| E2E-2 | Photo-based device reading | Camera capture -> Vision extraction -> FHIR stored |
+| E2E-3 | Threshold breach alert | Patient logs high BP -> Caregiver notified within 60s |
+| E2E-4 | Missed measurement alert | No logging for N days -> Caregiver notified |
+| E2E-5 | Caregiver onboarding | Register -> Onboard patient -> Configure protocol -> Send invite |
+| E2E-6 | Pause timeout | Patient pauses -> 5-min timeout -> Session auto-ends |
+| E2E-7 | Doctor protocol update | Doctor adds threshold via portal -> Next session uses it |
+| E2E-8 | STT failure fallback | Speech garbage -> Text input fallback |
+| E2E-9 | Emergency detection | "Chest pain" in Hindi -> Emergency advice -> Caregiver alerted |
+| E2E-10 | Mac Mini offline | Power off -> Health check fails -> Conversation button disabled |
+
+```bash
+# Run all E2E tests
+npx vitest run e2e/
+
+# Run a specific scenario
+npx vitest run e2e/scenarios/e2e-03-threshold-breach-alert.test.ts
+```
+
+### 13.3 Integration Tests
+
+```bash
+npx vitest run integration/
+```
+
+Tests cover: conversation-FHIR pipeline, threshold evaluation, session config fetch, interaction storage, reminder pipeline, missed measurement detection, doctor protocol updates.
+
+### 13.4 Multilingual Validation
+
+```bash
+npx vitest run multilingual/
+```
+
+Tests STT accuracy, LLM extraction, and TTS quality across English, Hindi, and Bengali including code-mixed speech.
+
+### 13.5 Performance Benchmarks
+
+```bash
+# Run latency benchmarks (100 turns, 3 languages)
+npx ts-node performance/latency-benchmark.ts
+
+# Generate P50/P95/P99 report
+npx ts-node performance/latency-report.ts
+```
+
+Target: P95 total pipeline latency < 2000ms.
+
+### 13.6 Compliance Verification
+
+```bash
+cd test-automation
+
+# Run all compliance checks
+npx ts-node compliance/data-localisation-verify.ts    # All data in ap-south-1
+npx ts-node compliance/phi-log-scan.ts                # No PHI in logs
+npx ts-node compliance/mac-mini-cleanup-verify.ts     # No persistent patient data
+npx ts-node compliance/encryption-verify.ts           # S3 SSE-KMS, RDS encryption, TLS
+npx ts-node compliance/access-control-verify.ts       # Cognito groups, API auth
+npx ts-node compliance/audit-logging-verify.ts        # CloudTrail multi-region, Object Lock
+npx ts-node compliance/data-retention-verify.ts       # S3 lifecycle, CloudWatch retention
+npx ts-node compliance/cert-pinning-verify.ts         # TLS version, cipher suites
+npx ts-node compliance/mac-mini-security-verify.ts    # LAN-only, firewall, FileVault
+npx ts-node compliance/cognito-security-verify.ts     # MFA, token expiry, password policy
+
+# Or run the full pilot readiness check (runs all of the above)
+npx ts-node pilot/pilot-readiness-check.ts
+```
 
 ---
 
-## 10. Troubleshooting
+## 14. CI/CD Pipelines
+
+### 14.1 GitHub Actions Workflows
+
+| Workflow | File | Trigger | Purpose |
+|----------|------|---------|---------|
+| Run Tests | `.github/workflows/run-tests.yml` | Push/PR | Lint, type-check, unit tests, build checks for all components |
+| Deploy Lambdas | `.github/workflows/deploy-lambdas.yml` | Manual | Package and deploy Lambda functions to selected environment |
+| Run Migrations | `.github/workflows/run-migrations.yml` | Manual | Run Flyway migrations via SSM port-forward |
+
+### 14.2 Running Locally
+
+```bash
+# Lint + type-check web portal
+cd web-portal && npm run lint && npx tsc --noEmit
+
+# Run Mac Mini service tests
+cd mac-mini && python -m pytest tests/ -v
+
+# Run Lambda unit tests
+cd backend/lambdas/construct-fhir-batch && npm test
+cd backend/lambdas/fetch-session-config && npm test
+# ... (each Lambda has its own test suite)
+
+# Run test automation suite
+cd test-automation && npx vitest run
+```
+
+---
+
+## 15. Monitoring & Alerting
+
+### 15.1 CloudWatch Alarms
+
+Terraform deploys the following alarms (module `infrastructure/terraform/modules/monitoring/`):
+
+| Alarm | Condition | Action |
+|-------|-----------|--------|
+| Lambda error rate | > 5% over 5 min | SNS -> operator email |
+| Lambda duration (construct-fhir-batch) | P95 > 5s | SNS -> operator email |
+| API Gateway 5xx rate | > 1% over 5 min | SNS -> operator email |
+| SQS dead letter queue depth | > 0 | SNS -> operator email |
+| RDS CPU utilization | > 80% for 10 min | SNS -> operator email |
+| RDS free storage | < 5 GB | SNS -> operator email |
+
+### 15.2 CloudWatch Dashboard
+
+A dashboard named `carelog-{env}-dashboard` is created with panels for Lambda invocations, errors, duration, API Gateway requests, RDS metrics, and SQS queue depth.
+
+### 15.3 Mac Mini Monitoring
+
+On the Mac Mini, cron jobs log health data:
+
+```bash
+# View recent health logs
+tail -50 /opt/carelog/logs/health-cron.log
+
+# View service logs
+tail -f /opt/carelog/logs/stt.log
+tail -f /opt/carelog/logs/llm.log
+```
+
+### 15.4 Lambda Logs
+
+```bash
+# Follow logs in real time
+aws logs tail /aws/lambda/carelog-dev-FUNCTION-NAME --follow --region ap-south-1
+
+# View last 5 minutes
+aws logs tail /aws/lambda/carelog-dev-FUNCTION-NAME --since 5m --region ap-south-1
+```
+
+Deployed function names: `post-confirmation`, `create-patient`, `patient-summary`, `accept-invite`, `invite-attendant`, `invite-doctor`, `process-pending-invites`, `sync-observation`, `bulk-sync`, `presigned-url`, `care-team`, `fetch-session-config`, `construct-fhir-batch`, `store-interaction`, `evaluate-thresholds-batch`, `check-daily-deadline`, `check-missed-measurements`, `notification-sender`, `manage-recommendations`, `manage-parameter-configs`, `manage-interactions`, `manage-prompts`.
+
+---
+
+## 16. Troubleshooting
 
 ### Verifying Observation Sync (Android)
 
@@ -917,9 +1407,9 @@ After building and deploying the app, verify that FHIR observations sync correct
    cd android && ./gradlew clean installDebug
    ```
 
-2. **Log a reading** (e.g. blood pressure) in the app.
+2. **Log a reading** via the conversational flow (or manually via the app).
 
-3. **Force restart the app** to trigger `FhirSyncWorker`:
+3. **Force restart the app** to trigger sync:
    ```bash
    adb shell am force-stop com.carelog
    adb shell monkey -p com.carelog -c android.intent.category.LAUNCHER 1
@@ -927,15 +1417,51 @@ After building and deploying the app, verify that FHIR observations sync correct
 
 4. **Watch sync logs:**
    ```bash
-   adb logcat -s "FhirSyncWorker" "HealthLakeFhirClient" | grep -i "sync\|error\|observation"
+   adb logcat -s "FhirSyncWorker" "HealthLakeFhirClient" "ConversationRepository" | grep -i "sync\|error\|observation\|fhir"
    ```
 
-5. **After ~1 minute, verify observations landed in S3:**
+5. **Verify observations in S3:**
    ```bash
    aws s3 ls s3://<YOUR_BUCKET>/observations/ --recursive --region ap-south-1
    ```
 
-> **Note:** If observations don't appear, check that the app sets `id=null` on new observations before saving to Room DB — this ensures they enter the sync queue as `PENDING` rather than being marked `SYNCED` immediately.
+6. **Verify raw interactions in S3:**
+   ```bash
+   aws s3 ls s3://<RAW_BUCKET>/interactions/ --recursive --region ap-south-1
+   ```
+
+### Mac Mini Not Discovered
+
+If the Android app doesn't find the Mac Mini:
+
+1. **Verify mDNS is registered:**
+   ```bash
+   # On the Mac Mini
+   dns-sd -B _carelog._tcp
+   ```
+
+2. **Verify services are running:**
+   ```bash
+   curl http://<mac-mini-ip>:8000/health
+   ```
+
+3. **Check they're on the same network** — Mac Mini and Android device must be on the same WiFi/LAN subnet.
+
+4. **Check firewall** — ensure ports 8000-8004 are allowed:
+   ```bash
+   sudo /usr/libexec/ApplicationFirewall/socketfilterfw --listapps
+   ```
+
+### Conversation Flow Issues
+
+| Issue | Likely Cause | Fix |
+|-------|-------------|-----|
+| "Conversation button disabled" | Mac Mini health check failing | Check Mac Mini services (`curl localhost:8000/health`) |
+| STT returns garbage | Audio format mismatch | Verify PCM 16kHz mono format in audio capture settings |
+| LLM doesn't extract values | Session config missing | Check `fetch-session-config` Lambda logs; verify `parameter_configs` exist for patient |
+| TTS silent | Language mismatch | Verify TTS model exists for patient's language (piper-en/hi/bn.onnx) |
+| Values not saved | FHIR batch Lambda error | Check `construct-fhir-batch` Lambda logs |
+| Alerts not sent | Threshold eval / SQS issue | Check `evaluate-thresholds-batch` logs, SQS DLQ depth |
 
 ### Android
 
@@ -952,7 +1478,7 @@ sudo gem install cocoapods && pod cache clean --all && rm -rf Pods Podfile.lock 
 
 # SPM resolution fails
 rm -rf ~/Library/Caches/org.swift.swiftpm ~/Library/Developer/Xcode/DerivedData
-# Then in Xcode: File → Packages → Reset Package Caches
+# Then in Xcode: File -> Packages -> Reset Package Caches
 ```
 
 ### Backend
@@ -960,9 +1486,6 @@ rm -rf ~/Library/Caches/org.swift.swiftpm ~/Library/Developer/Xcode/DerivedData
 ```bash
 # Terraform state lock
 terraform force-unlock LOCK_ID
-
-# Lambda logs
-aws logs tail /aws/lambda/carelog-dev-FUNCTION-NAME --follow --region ap-south-1
 
 # Manual Lambda code update
 aws lambda update-function-code --function-name carelog-dev-FUNCTION-NAME --zip-file fileb://function.zip --region ap-south-1
@@ -974,17 +1497,27 @@ aws lambda update-function-code --function-name carelog-dev-FUNCTION-NAME --zip-
 
 | Task | Command |
 |------|---------|
-| Deploy infrastructure + Lambdas | `cd infrastructure/terraform/environments/dev && terraform apply` |
-| Port-forward to RDS | `aws ssm start-session --target BASTION_ID ...` (see §4.2) |
-| Run DB migrations | `cd backend/database && flyway migrate` |
-| Install Lambda deps | `cd backend/lambdas/FUNCTION && npm install` |
-| Android debug build | `cd android && ./gradlew assembleDebug` |
-| Android tests | `cd android && ./gradlew test` |
-| iOS build | `cd ios/CareLog && xcodebuild -scheme CareLog -destination '...' build` |
-| iOS tests | `cd ios/CareLog && xcodebuild test -scheme CareLog -destination '...'` |
-| Distribute Android | `cd android && fastlane distribute` |
-| Distribute iOS | `cd ios/CareLog && fastlane distribute` |
-| View Lambda logs | `aws logs tail /aws/lambda/carelog-dev-FUNCTION --follow` |
+| **Provision Mac Mini** | `cd mac-mini/deploy && sudo ./provision.sh` |
+| **Check Mac Mini health** | `curl http://<mac-mini-ip>:8000/health` |
+| **Update model** | `cd mac-mini/deploy && sudo ./update-model.sh <service> <url>` |
+| **Deploy infrastructure** | `cd infrastructure/terraform/environments/dev && terraform apply` |
+| **Port-forward to RDS** | `aws ssm start-session --target BASTION_ID ...` (see section 6.2) |
+| **Run DB migrations** | `cd backend/database && flyway migrate` |
+| **Install Lambda deps** | `cd backend/lambdas/FUNCTION && npm install` |
+| **Web portal dev server** | `cd web-portal && npm run dev` |
+| **Web portal build** | `cd web-portal && npm run build` |
+| **Android debug build** | `cd android && ./gradlew assembleDebug` |
+| **Android tests** | `cd android && ./gradlew test` |
+| **iOS build** | `cd ios/CareLog && xcodebuild -scheme CareLog -destination '...' build` |
+| **iOS tests** | `cd ios/CareLog && xcodebuild test -scheme CareLog -destination '...'` |
+| **Distribute Android** | `cd android && bundle exec fastlane distribute_debug` |
+| **Distribute iOS** | `cd ios/CareLog && bundle exec fastlane distribute` |
+| **Run E2E tests** | `cd test-automation && npx vitest run e2e/` |
+| **Run compliance checks** | `cd test-automation && npx ts-node pilot/pilot-readiness-check.ts` |
+| **Run latency benchmarks** | `cd test-automation && npx ts-node performance/latency-benchmark.ts` |
+| **Mac Mini service tests** | `cd mac-mini && python -m pytest tests/ -v` |
+| **View Lambda logs** | `aws logs tail /aws/lambda/carelog-dev-FUNCTION --follow` |
+| **Pilot Mac Mini setup** | `cd mac-mini/deploy && sudo ./pilot-setup.sh --hostname NAME` |
 
 ---
 
@@ -1003,7 +1536,7 @@ POOL_ID=$(aws cognito-idp list-user-pools --max-results 10 --region $REGION \
 aws cognito-idp list-users --user-pool-id $POOL_ID --region $REGION \
     --query 'Users[].{Username:Username,Status:UserStatus}' --output table
 
-# Delete all users (handles usernames with special characters correctly)
+# Delete all users
 aws cognito-idp list-users --user-pool-id $POOL_ID --region $REGION \
     --query 'Users[].Username' --output json | \
     python3 -c "
@@ -1024,9 +1557,6 @@ aws cognito-idp list-users --user-pool-id $POOL_ID --region $REGION \
 # Should output: []
 ```
 
-> **Note:** The `--output text` format joins usernames with tabs which breaks `for` loops.
-> Always use `--output json` with `python3` for reliable parsing.
-
 **2. Delete a single user:**
 
 ```bash
@@ -1046,7 +1576,7 @@ aws cognito-idp admin-delete-user \
 cd backend/database
 echo 'flyway.cleanDisabled=false' >> flyway.conf
 flyway clean    # drops all objects
-flyway migrate  # recreates schema from scratch
+flyway migrate  # recreates schema from scratch (V001-V004)
 ```
 
 > **Warning:** `flyway clean` drops everything — only use in dev.
@@ -1066,7 +1596,7 @@ PASSWORD="Carelog2026@x"
 # Create and confirm a user in one go
 EMAIL="testuser@example.com"
 NAME="Test User"
-PERSONA="relative"  # or: patient, attendant, doctor
+PERSONA="caregiver"  # or: patient, doctor
 
 aws cognito-idp sign-up --client-id $CLIENT_ID --username "$EMAIL" \
     --password "$PASSWORD" \
@@ -1082,9 +1612,7 @@ aws cognito-idp admin-update-user-attributes \
     --region $REGION
 ```
 
-> **Note:** `custom:persona_type` cannot be sent during `sign-up` via Amplify — it must
-> be set afterwards via `admin-update-user-attributes` or through the app's post-sign-in
-> `flushPendingPersona()` flow.
+> **Note:** Valid persona types are `caregiver`, `patient`, `doctor`. The old `relative` and `attendant` types are no longer used.
 
 ### How do I manually confirm a user (skip email verification)?
 
@@ -1123,8 +1651,6 @@ aws logs tail /aws/lambda/carelog-dev-FUNCTION-NAME --follow --region ap-south-1
 aws logs tail /aws/lambda/carelog-dev-FUNCTION-NAME --since 5m --region ap-south-1
 ```
 
-Deployed function names: `post-confirmation`, `create-patient`, `patient-summary`, `accept-invite`, `invite-attendant`, `invite-doctor`, `process-pending-invites`, `sync-observation`, `bulk-sync`, `presigned-url`.
-
 ### How do I get the database password?
 
 ```bash
@@ -1136,14 +1662,14 @@ aws secretsmanager get-secret-value --secret-id carelog-dev-db-password --region
 ### Not receiving Cognito verification emails?
 
 1. Check spam/junk folder
-2. If using Cognito default email: daily limit is 50 — switch to SES (see §1.4)
+2. If using Cognito default email: daily limit is 50 — switch to SES (see section 1.4)
 3. If using SES in sandbox mode: recipient email must be verified too (`aws ses verify-email-identity`)
 4. Resend code: `aws cognito-idp resend-confirmation-code --client-id CLIENT_ID --username USERNAME --region ap-south-1`
 5. Skip email and confirm manually: see "How do I manually confirm a user" above
 
 ### "Could not find the required online resource" when signing in?
 
-The app has a stale Cognito Pool ID from a previous deployment. After `terraform destroy` + `terraform apply`, the pool ID changes. Re-run the Amplify config update (§6):
+The app has a stale Cognito Pool ID from a previous deployment. After `terraform destroy` + `terraform apply`, the pool ID changes. Re-run the Amplify config update (section 9):
 
 ```bash
 cd /path/to/matika
@@ -1173,6 +1699,33 @@ sed -i '' \
 
 Then rebuild and deploy the app.
 
+### How do I test the conversation flow end-to-end?
+
+1. **Ensure Mac Mini is running** and all 5 services are healthy (`curl http://<mac-mini-ip>:8000/health`)
+2. **Ensure backend is deployed** with V004 migration applied
+3. **Create a test caregiver account** (see "How do I create pre-confirmed test accounts")
+4. **Create a patient** via the app's caregiver flow (or via API)
+5. **Configure parameters** for the patient (at minimum, one parameter like blood_pressure)
+6. **Log in as the patient** on the Android app
+7. **Start a conversation** — the app should discover the Mac Mini, fetch session config, and present the conversation UI
+8. **Speak a vital reading** (e.g., "my blood pressure is 130 over 85") — the system should extract, confirm, and store it
+9. **Verify**: Check S3 for FHIR observations, check `interaction_sessions` in RDS, check Lambda logs
+
+### How do I set up a pilot Mac Mini for a household?
+
+```bash
+cd mac-mini/deploy
+
+# 1. Run pilot setup (includes full provisioning + household config)
+sudo ./pilot-setup.sh --hostname "household-kumar" --wifi-ssid "KumarHome" --wifi-pass "password"
+
+# 2. Run smoke test to verify everything works
+./pilot-smoke-test.sh
+
+# 3. Verify from the Android app on the same network
+#    The app should auto-discover the Mac Mini via mDNS
+```
+
 ---
 
-*CareLog Setup and Deployment Guide v2.2 — April 2026*
+*CareLog Setup and Deployment Guide v3.0 — April 2026*

@@ -84,9 +84,10 @@ class AttendantSessionManager @Inject constructor(
             if (result.isSuccess) {
                 val user = result.getOrThrow()
 
-                // Verify user is an attendant
-                if (user.personaType != PersonaType.ATTENDANT) {
-                    return Result.failure(AttendantSessionException("User is not an attendant"))
+                // Verify user is a caregiver (attendants are now caregivers)
+                @Suppress("DEPRECATION")
+                if (user.personaType != PersonaType.CAREGIVER && user.personaType != PersonaType.ATTENDANT) {
+                    return Result.failure(AttendantSessionException("User is not a caregiver"))
                 }
 
                 // Store session

@@ -45,27 +45,40 @@ data class CareLogUser(
 
 /**
  * User persona types as defined in the PRD.
+ *
+ * Backend Cognito groups are: patients, caregivers, doctors.
+ * ATTENDANT and RELATIVE are legacy values retained for backward
+ * compatibility with existing user records; they map to CAREGIVER.
  */
 enum class PersonaType {
     PATIENT,
+    CAREGIVER,
+    DOCTOR,
+
+    /** @deprecated Use CAREGIVER. Retained for backward compatibility. */
+    @Deprecated("Use CAREGIVER", replaceWith = ReplaceWith("CAREGIVER"))
     ATTENDANT,
-    RELATIVE,
-    DOCTOR;
+
+    /** @deprecated Use CAREGIVER. Retained for backward compatibility. */
+    @Deprecated("Use CAREGIVER", replaceWith = ReplaceWith("CAREGIVER"))
+    RELATIVE;
 
     companion object {
         fun fromString(value: String?): PersonaType {
             return when (value?.lowercase()) {
                 "patient" -> PATIENT
-                "attendant" -> ATTENDANT
-                "relative" -> RELATIVE
+                "caregiver" -> CAREGIVER
+                // Legacy values map to CAREGIVER
+                "attendant" -> CAREGIVER
+                "relative" -> CAREGIVER
                 "doctor" -> DOCTOR
                 else -> {
                     if (value != null) {
-                        android.util.Log.w("PersonaType", "Unknown persona type: $value, defaulting to RELATIVE")
+                        android.util.Log.w("PersonaType", "Unknown persona type: $value, defaulting to CAREGIVER")
                     } else {
-                        android.util.Log.w("PersonaType", "Persona type is null, defaulting to RELATIVE")
+                        android.util.Log.w("PersonaType", "Persona type is null, defaulting to CAREGIVER")
                     }
-                    RELATIVE
+                    CAREGIVER
                 }
             }
         }

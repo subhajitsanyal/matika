@@ -43,7 +43,7 @@ export default function FilesTab({ patientId }: FilesTabProps) {
     }
   }
 
-  function getFileIcon(fileType: string, contentType: string) {
+  function getFileIcon(_fileType: string, contentType: string) {
     if (contentType.startsWith('image/')) {
       return (
         <svg className="w-10 h-10 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">

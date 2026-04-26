@@ -1,4 +1,11 @@
 import { fetchAuthSession } from 'aws-amplify/auth';
+import type {
+  ParameterConfig,
+  Recommendation,
+  InteractionSession,
+  TranscriptEntry,
+  ConversationPrompt,
+} from '../types';
 
 const API_ENDPOINT = import.meta.env.VITE_API_ENDPOINT || '';
 
@@ -233,6 +240,147 @@ export async function setThreshold(
     }
   );
   return handleResponse<Threshold>(response);
+}
+
+// Parameter Configs API
+export async function getParameterConfigs(patientId: string): Promise<ParameterConfig[]> {
+  const headers = await getAuthHeaders();
+  const response = await fetch(
+    `${API_ENDPOINT}/doctor/patients/${patientId}/parameter-configs`,
+    { headers }
+  );
+  const data = await handleResponse<{ parameter_configs: ParameterConfig[] }>(response);
+  return data.parameter_configs;
+}
+
+export async function createParameterConfig(
+  patientId: string,
+  data: Partial<ParameterConfig>
+): Promise<ParameterConfig> {
+  const headers = await getAuthHeaders();
+  const response = await fetch(
+    `${API_ENDPOINT}/doctor/patients/${patientId}/parameter-configs`,
+    {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(data),
+    }
+  );
+  return handleResponse<ParameterConfig>(response);
+}
+
+export async function updateParameterConfig(
+  patientId: string,
+  configId: string,
+  data: Partial<ParameterConfig>
+): Promise<void> {
+  const headers = await getAuthHeaders();
+  const response = await fetch(
+    `${API_ENDPOINT}/doctor/patients/${patientId}/parameter-configs/${configId}`,
+    {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify(data),
+    }
+  );
+  await handleResponse<{ success: boolean }>(response);
+}
+
+export async function deleteParameterConfig(
+  patientId: string,
+  configId: string
+): Promise<void> {
+  const headers = await getAuthHeaders();
+  const response = await fetch(
+    `${API_ENDPOINT}/doctor/patients/${patientId}/parameter-configs/${configId}`,
+    {
+      method: 'DELETE',
+      headers,
+    }
+  );
+  await handleResponse<{ success: boolean }>(response);
+}
+
+// Recommendations API
+export async function getRecommendations(patientId: string): Promise<Recommendation[]> {
+  const headers = await getAuthHeaders();
+  const response = await fetch(
+    `${API_ENDPOINT}/doctor/patients/${patientId}/recommendations`,
+    { headers }
+  );
+  const data = await handleResponse<{ recommendations: Recommendation[] }>(response);
+  return data.recommendations;
+}
+
+export async function createRecommendation(
+  patientId: string,
+  data: {
+    parameter_name: string;
+    loinc_code?: string;
+    rationale: string;
+    suggested_frequency_days?: number;
+  }
+): Promise<Recommendation> {
+  const headers = await getAuthHeaders();
+  const response = await fetch(
+    `${API_ENDPOINT}/doctor/patients/${patientId}/recommendations`,
+    {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(data),
+    }
+  );
+  return handleResponse<Recommendation>(response);
+}
+
+// Interaction Sessions API
+export async function getInteractionSessions(
+  patientId: string,
+  params?: { limit?: number; offset?: number }
+): Promise<InteractionSession[]> {
+  const headers = await getAuthHeaders();
+  const queryParams = new URLSearchParams();
+  if (params?.limit) queryParams.set('limit', params.limit.toString());
+  if (params?.offset) queryParams.set('offset', params.offset.toString());
+
+  const url = `${API_ENDPOINT}/doctor/patients/${patientId}/interactions?${queryParams}`;
+  const response = await fetch(url, { headers });
+  const data = await handleResponse<{ sessions: InteractionSession[] }>(response);
+  return data.sessions;
+}
+
+export async function getInteractionTranscript(
+  patientId: string,
+  sessionId: string
+): Promise<TranscriptEntry[]> {
+  const headers = await getAuthHeaders();
+  const response = await fetch(
+    `${API_ENDPOINT}/doctor/patients/${patientId}/interactions/${sessionId}/transcript`,
+    { headers }
+  );
+  const data = await handleResponse<{ transcript: TranscriptEntry[] }>(response);
+  return data.transcript;
+}
+
+// Prompts API
+export async function getPrompts(): Promise<ConversationPrompt[]> {
+  const headers = await getAuthHeaders();
+  const response = await fetch(`${API_ENDPOINT}/admin/prompts`, { headers });
+  const data = await handleResponse<{ prompts: ConversationPrompt[] }>(response);
+  return data.prompts;
+}
+
+export async function updatePrompt(
+  promptType: string,
+  data: { system_prompt: string }
+): Promise<void> {
+  const headers = await getAuthHeaders();
+  const response = await fetch(`${API_ENDPOINT}/admin/prompts/${promptType}`, {
+    method: 'PUT',
+    headers,
+    body: JSON.stringify(data),
+  });
+  await handleResponse<{ success: boolean }>(response);
 }
 
 // Doctor Registration API

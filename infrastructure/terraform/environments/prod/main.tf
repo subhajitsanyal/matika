@@ -42,7 +42,6 @@ module "carelog" {
 
   # Feature flags
   enable_healthlake = false
-  enable_waf        = true
   enable_bastion    = true
 }
 
