@@ -1,9 +1,12 @@
 package com.carelog.discovery
 
+import android.content.Context
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
+import android.net.wifi.WifiManager
 import android.util.Log
 import com.carelog.core.config.AppSettings
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -25,8 +28,10 @@ import javax.inject.Singleton
 @Singleton
 class MacMiniDiscovery @Inject constructor(
     private val nsdManager: NsdManager,
-    private val appSettings: AppSettings
+    private val appSettings: AppSettings,
+    @ApplicationContext private val context: Context
 ) {
+    private var multicastLock: WifiManager.MulticastLock? = null
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -61,6 +66,16 @@ class MacMiniDiscovery @Inject constructor(
         if (isDiscovering) {
             Log.d(TAG, "Discovery already active, skipping start")
             return
+        }
+
+        // Acquire multicast lock so mDNS packets aren't filtered (required on Samsung/some devices)
+        if (multicastLock == null) {
+            val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            multicastLock = wifi?.createMulticastLock("carelog_mdns")?.apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+            Log.i(TAG, "Multicast lock acquired")
         }
 
         val listener = object : NsdManager.DiscoveryListener {
@@ -163,6 +178,8 @@ class MacMiniDiscovery @Inject constructor(
         isDiscovering = false
         discoveryListener = null
         _discoveryState.value = DiscoveryState.IDLE
+        multicastLock?.release()
+        multicastLock = null
     }
 
     @Suppress("DEPRECATION")
