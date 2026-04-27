@@ -1,0 +1,10 @@
+{
+  "name": "carelog-get-patients",
+  "version": "1.0.0",
+  "description": "Get linked patients for caregiver or doctor",
+  "main": "index.js",
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.600.0",
+    "pg": "^8.12.0"
+  }
+}

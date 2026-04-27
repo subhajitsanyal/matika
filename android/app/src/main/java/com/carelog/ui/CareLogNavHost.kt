@@ -420,7 +420,7 @@ fun CareLogNavHost() {
         composable(CareLogRoutes.CAREGIVER_DASHBOARD) {
             CaregiverHomeScreen(
                 onNavigateToOnboarding = {
-                    navController.navigate(CareLogRoutes.PATIENT_ONBOARDING_CONVERSATION)
+                    navController.navigate(CareLogRoutes.ONBOARDING)
                 },
                 onNavigateToPatientLogs = { patientId ->
                     navController.navigate(CareLogRoutes.patientLogs(patientId))

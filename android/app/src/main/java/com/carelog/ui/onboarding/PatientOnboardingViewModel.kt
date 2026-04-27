@@ -28,6 +28,7 @@ class PatientOnboardingViewModel @Inject constructor(
      */
     fun createPatient(
         name: String,
+        patientEmail: String? = null,
         dateOfBirth: String?,
         gender: String?,
         bloodType: String?,
@@ -46,10 +47,11 @@ class PatientOnboardingViewModel @Inject constructor(
                     ?: throw Exception("Not authenticated")
 
                 // Create patient via API
-                val patientId = patientRepository.createPatient(
+                val result = patientRepository.createPatient(
                     token = token,
                     request = CreatePatientRequest(
                         name = name,
+                        patientEmail = patientEmail,
                         dateOfBirth = dateOfBirth,
                         gender = gender,
                         bloodType = bloodType,
@@ -63,10 +65,14 @@ class PatientOnboardingViewModel @Inject constructor(
 
                 // Link patient ID to user so vitals use the real patient entity
                 // (server also sets this, but try client-side too for immediate refresh)
-                authRepository.updateLinkedPatientId(patientId)
+                authRepository.updateLinkedPatientId(result.patientId)
                     .getOrElse { Log.w("PatientOnboarding", "Client-side link failed, server-side should have set it", it) }
 
-                _uiState.value = PatientOnboardingUiState.Success(patientId)
+                _uiState.value = PatientOnboardingUiState.Success(
+                    patientId = result.patientId,
+                    email = result.email,
+                    temporaryPassword = result.temporaryPassword
+                )
             } catch (e: Exception) {
                 _uiState.value = PatientOnboardingUiState.Error(
                     e.message ?: "Failed to create patient"
@@ -81,6 +87,7 @@ class PatientOnboardingViewModel @Inject constructor(
  */
 data class CreatePatientRequest(
     val name: String,
+    val patientEmail: String? = null,
     val dateOfBirth: String?,
     val gender: String?,
     val bloodType: String?,
@@ -92,8 +99,17 @@ data class CreatePatientRequest(
 )
 
 /**
+ * Response from patient creation API.
+ */
+data class CreatePatientResult(
+    val patientId: String,
+    val email: String?,
+    val temporaryPassword: String?
+)
+
+/**
  * Repository for patient operations.
  */
 interface PatientRepository {
-    suspend fun createPatient(token: String, request: CreatePatientRequest): String
+    suspend fun createPatient(token: String, request: CreatePatientRequest): CreatePatientResult
 }

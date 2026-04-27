@@ -36,13 +36,12 @@ MODEL_TTS_HI_URL="${MODEL_TTS_HI_URL:-https://huggingface.co/rhasspy/piper-voice
 MODEL_TTS_BN_URL="${MODEL_TTS_BN_URL:-https://huggingface.co/rhasspy/piper-voices/resolve/main/bn/bn_BD/placeholder/medium/bn_BD-placeholder-medium.onnx}"
 
 # Service ports for health checks
-declare -A SERVICE_PORTS=(
-    [health]=8000
-    [stt]=8001
-    [llm]=8002
-    [tts]=8003
-    [vision]=8004
-)
+SERVICE_PORT_health=8000
+SERVICE_PORT_stt=8001
+SERVICE_PORT_llm=8002
+SERVICE_PORT_tts=8003
+SERVICE_PORT_vision=8004
+SERVICE_NAMES="health stt llm tts vision"
 
 # ---------------------------------------------------------------------------
 # Helper Functions
@@ -277,14 +276,14 @@ download_models() {
 create_model_symlinks() {
     log "Creating model version symlinks..."
 
-    local -A symlinks=(
-        [current-stt]="whisper-large-v3.bin"
-        [current-llm]="qwen-2.5-7b-q4.gguf"
-        [current-vision]="qwen-vl-7b-q4.gguf"
-    )
+    local link_names="current-stt current-llm current-vision"
+    local link_targets="whisper-large-v3.bin qwen-2.5-7b-q4.gguf qwen-vl-7b-q4.gguf"
 
-    for link_name in "${!symlinks[@]}"; do
-        local target="${symlinks[$link_name]}"
+    local i=0
+    for link_name in ${link_names}; do
+        local target
+        target="$(echo "${link_targets}" | cut -d' ' -f$((i+1)))"
+        i=$((i+1))
         local link_path="${MODELS_DIR}/${link_name}"
 
         if [[ -L "${link_path}" ]]; then
@@ -450,8 +449,9 @@ verify_services() {
     sleep 10
 
     local all_healthy=true
-    for service in "${!SERVICE_PORTS[@]}"; do
-        local port="${SERVICE_PORTS[$service]}"
+    for service in ${SERVICE_NAMES}; do
+        local port_var="SERVICE_PORT_${service}"
+        local port="${!port_var}"
         local url="http://127.0.0.1:${port}/health"
 
         if curl -sf --max-time 5 "${url}" &>/dev/null; then
@@ -638,8 +638,9 @@ main() {
     log "============================================="
     log ""
     log "Service endpoints:"
-    for service in health stt llm tts vision; do
-        log "  ${service}: http://127.0.0.1:${SERVICE_PORTS[$service]}"
+    for service in ${SERVICE_NAMES}; do
+        local port_var="SERVICE_PORT_${service}"
+        log "  ${service}: http://127.0.0.1:${!port_var}"
     done
     log ""
     log "Logs:   ${LOGS_DIR}/"

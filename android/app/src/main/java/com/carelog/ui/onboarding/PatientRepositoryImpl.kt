@@ -29,9 +29,10 @@ class PatientRepositoryImpl @Inject constructor() : PatientRepository {
     override suspend fun createPatient(
         token: String,
         request: CreatePatientRequest
-    ): String = withContext(Dispatchers.IO) {
+    ): CreatePatientResult = withContext(Dispatchers.IO) {
         val requestBody = JSONObject().apply {
             put("name", request.name)
+            request.patientEmail?.let { put("patientEmail", it) }
             request.dateOfBirth?.let { put("dateOfBirth", it) }
             request.gender?.let { put("gender", it) }
             request.bloodType?.let { put("bloodType", it) }
@@ -54,8 +55,13 @@ class PatientRepositoryImpl @Inject constructor() : PatientRepository {
         if (response.isSuccessful) {
             val responseBody = response.body.string()
             val json = JSONObject(responseBody)
-            json.optString("patientId").takeIf { it.isNotEmpty() }
+            val patientId = json.optString("patientId").takeIf { it.isNotEmpty() }
                 ?: throw Exception("Server did not return a patientId")
+            CreatePatientResult(
+                patientId = patientId,
+                email = json.optString("email").takeIf { it.isNotEmpty() },
+                temporaryPassword = json.optString("temporary_password").takeIf { it.isNotEmpty() }
+            )
         } else {
             val errorBody = response.body.string()
             throw Exception("Failed to create patient: HTTP ${response.code} $errorBody")

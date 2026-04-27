@@ -1,5 +1,6 @@
 package com.carelog.dashboard.ui
 
+import com.carelog.discovery.OverallStatus
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Spring
@@ -126,7 +127,7 @@ fun CaregiverHomeScreen(
                 icon = {
                     Icon(Icons.Default.PersonAdd, contentDescription = null)
                 },
-                text = { Text("Onboard Patient") },
+                text = { Text("Add Patient") },
                 modifier = Modifier
                     .testTag("onboard_patient_fab")
                     .semantics {
@@ -149,9 +150,11 @@ fun CaregiverHomeScreen(
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // Model status banner
-                item(key = "model_status") {
-                    ModelStatusBanner(healthStatus = healthStatus)
+                // Model status banner - only show when connected or degraded, not when offline
+                if (healthStatus.overall != OverallStatus.OFFLINE) {
+                    item(key = "model_status") {
+                        ModelStatusBanner(healthStatus = healthStatus)
+                    }
                 }
 
                 item(key = "header") {

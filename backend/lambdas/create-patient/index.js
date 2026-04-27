@@ -17,6 +17,7 @@ const {
   AdminCreateUserCommand,
   AdminAddUserToGroupCommand,
   AdminUpdateUserAttributesCommand,
+  AdminSetUserPasswordCommand,
 } = require("@aws-sdk/client-cognito-identity-provider");
 const {
   HealthLakeClient,
@@ -98,38 +99,50 @@ async function createDbConnection() {
 /**
  * Create Cognito user for patient.
  */
-async function createCognitoUser(patientId, patientName) {
+async function createCognitoUser(patientId, patientName, patientEmail) {
   // Generate a temporary password
   const tempPassword = crypto.randomBytes(16).toString("base64") + "Aa1!";
 
-  // Pool requires email as username — generate a placeholder email for the patient
-  const patientEmail = `patient.${patientId}@carelog.internal`;
+  // Use provided email or generate a placeholder
+  const email = patientEmail || `patient.${patientId}@carelog.internal`;
 
   const command = new AdminCreateUserCommand({
     UserPoolId: process.env.COGNITO_USER_POOL_ID,
-    Username: patientEmail,
+    Username: email,
     UserAttributes: [
-      { Name: "email", Value: patientEmail },
+      { Name: "email", Value: email },
+      { Name: "email_verified", Value: "true" },
       { Name: "name", Value: patientName },
       { Name: "custom:persona_type", Value: "patient" },
       { Name: "custom:linked_patient_id", Value: patientId },
     ],
     TemporaryPassword: tempPassword,
-    MessageAction: "SUPPRESS", // Don't send welcome email yet
+    MessageAction: "SUPPRESS",
   });
 
   const result = await cognitoClient.send(command);
+
+  // Set permanent password so patient doesn't face FORCE_CHANGE_PASSWORD challenge
+  await cognitoClient.send(
+    new AdminSetUserPasswordCommand({
+      UserPoolId: process.env.COGNITO_USER_POOL_ID,
+      Username: email,
+      Password: tempPassword,
+      Permanent: true,
+    })
+  );
 
   // Add to patients group
   await cognitoClient.send(
     new AdminAddUserToGroupCommand({
       UserPoolId: process.env.COGNITO_USER_POOL_ID,
-      Username: patientEmail,
+      Username: email,
       GroupName: "patients",
     })
   );
 
-  return result.User.Attributes.find((a) => a.Name === "sub")?.Value;
+  const cognitoSub = result.User.Attributes.find((a) => a.Name === "sub")?.Value;
+  return { cognitoSub, tempPassword, email };
 }
 
 /**
@@ -328,7 +341,9 @@ exports.handler = async (event) => {
     const patientId = generatePatientId();
 
     // Create Cognito user
-    const cognitoSub = await createCognitoUser(patientId, body.name);
+    const patientEmail = body.patientEmail || body.patient_email || null;
+    const { cognitoSub, tempPassword, email: patientLoginEmail } =
+      await createCognitoUser(patientId, body.name, patientEmail);
 
     // Create FHIR Patient resource
     let fhirPatientId = null;
@@ -397,6 +412,8 @@ exports.handler = async (event) => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         patientId,
+        temporary_password: tempPassword,
+        email: patientLoginEmail,
         message: "Patient created successfully",
       }),
     };

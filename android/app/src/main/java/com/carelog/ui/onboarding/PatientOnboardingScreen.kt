@@ -35,6 +35,7 @@ fun PatientOnboardingScreen(
     val uiState by viewModel.uiState.collectAsState()
 
     var name by remember { mutableStateOf("") }
+    var patientEmail by remember { mutableStateOf("") }
     var dateOfBirth by remember { mutableStateOf("") }
     var gender by remember { mutableStateOf("") }
     var bloodType by remember { mutableStateOf("") }
@@ -43,6 +44,7 @@ fun PatientOnboardingScreen(
     var medications by remember { mutableStateOf("") }
     var emergencyContactName by remember { mutableStateOf("") }
     var emergencyContactPhone by remember { mutableStateOf("") }
+    var showCredentialsDialog by remember { mutableStateOf(false) }
 
     var showGenderDropdown by remember { mutableStateOf(false) }
     var showBloodTypeDropdown by remember { mutableStateOf(false) }
@@ -55,10 +57,44 @@ fun PatientOnboardingScreen(
     LaunchedEffect(uiState) {
         when (uiState) {
             is PatientOnboardingUiState.Success -> {
-                onPatientCreated((uiState as PatientOnboardingUiState.Success).patientId)
+                showCredentialsDialog = true
             }
             else -> {}
         }
+    }
+
+    // Show credentials dialog after patient creation
+    if (showCredentialsDialog && uiState is PatientOnboardingUiState.Success) {
+        val successState = uiState as PatientOnboardingUiState.Success
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("Patient Account Created") },
+            text = {
+                Column {
+                    Text("Share these login credentials with the patient:")
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text("Login Email:", style = MaterialTheme.typography.labelMedium)
+                    Text(successState.email ?: "N/A", style = MaterialTheme.typography.bodyLarge)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Temporary Password:", style = MaterialTheme.typography.labelMedium)
+                    Text(successState.temporaryPassword ?: "N/A", style = MaterialTheme.typography.bodyLarge)
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        "The patient can use these credentials to log in to the CareLog app.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    showCredentialsDialog = false
+                    onPatientCreated(successState.patientId)
+                }) {
+                    Text("Done")
+                }
+            }
+        )
     }
 
     Scaffold(
@@ -108,6 +144,23 @@ fun PatientOnboardingScreen(
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth().testTag("onboarding_name"),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next)
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Patient Email (for login credentials)
+            OutlinedTextField(
+                value = patientEmail,
+                onValueChange = { patientEmail = it },
+                label = { Text("Patient's Email (for login)") },
+                leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().testTag("onboarding_email"),
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Email,
+                    imeAction = ImeAction.Next
+                ),
+                supportingText = { Text("Patient will use this email to log in") }
             )
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -284,6 +337,7 @@ fun PatientOnboardingScreen(
                 onClick = {
                     viewModel.createPatient(
                         name = name,
+                        patientEmail = patientEmail.ifBlank { null },
                         dateOfBirth = dateOfBirth.ifBlank { null },
                         gender = gender.ifBlank { null },
                         bloodType = bloodType.ifBlank { null },
@@ -321,6 +375,10 @@ fun PatientOnboardingScreen(
 sealed class PatientOnboardingUiState {
     object Idle : PatientOnboardingUiState()
     object Loading : PatientOnboardingUiState()
-    data class Success(val patientId: String) : PatientOnboardingUiState()
+    data class Success(
+        val patientId: String,
+        val email: String? = null,
+        val temporaryPassword: String? = null
+    ) : PatientOnboardingUiState()
     data class Error(val message: String) : PatientOnboardingUiState()
 }

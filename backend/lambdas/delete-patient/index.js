@@ -18,6 +18,7 @@
 const {
   CognitoIdentityProviderClient,
   AdminDisableUserCommand,
+  AdminUpdateUserAttributesCommand,
 } = require("@aws-sdk/client-cognito-identity-provider");
 const { SESClient, SendEmailCommand } = require("@aws-sdk/client-ses");
 const {
@@ -50,7 +51,7 @@ async function createDbConnection() {
     database: credentials.dbname,
     user: credentials.username,
     password: credentials.password,
-    ssl: { rejectUnauthorized: true },
+    ssl: { rejectUnauthorized: false },
   });
   await client.connect();
   return client;
@@ -128,9 +129,9 @@ exports.handler = async (event) => {
        FROM patients p
        JOIN persona_links pl ON pl.patient_id = p.id
        JOIN users u ON u.id = p.user_id
-       WHERE p.id = $1::uuid
+       WHERE (p.id::text = $1 OR p.patient_id = $1)
          AND pl.linked_user_id = (SELECT id FROM users WHERE cognito_sub = $2)
-         AND pl.relationship IN ('relative', 'caregiver')
+         AND pl.relationship = 'caregiver'
          AND pl.is_primary = true
          AND pl.is_active = true`,
       [patientId, relativeCognitoSub]
@@ -153,7 +154,15 @@ exports.handler = async (event) => {
     await dbClient.query("BEGIN");
 
     try {
-      // 1. Find all linked attendants and doctors
+      // 1. Get patient's own Cognito user (before delete)
+      const patientUser = await dbClient.query(
+        `SELECT u.cognito_sub, u.email FROM users u
+         JOIN patients p ON p.user_id = u.id
+         WHERE p.id = $1`,
+        [patientDbId]
+      );
+
+      // 2. Find all linked attendants and doctors
       const linkedUsers = await dbClient.query(
         `SELECT u.id, u.email, u.name, u.cognito_sub, pl.relationship
          FROM persona_links pl
@@ -164,7 +173,7 @@ exports.handler = async (event) => {
         [patientDbId]
       );
 
-      // 2. Disable each linked user in Cognito and send notification
+      // 3. Disable each linked user in Cognito and send notification
       for (const linkedUser of linkedUsers.rows) {
         await disableCognitoUser(linkedUser.email);
         await sendRemovalEmail(
@@ -174,20 +183,19 @@ exports.handler = async (event) => {
           linkedUser.relationship
         );
 
-        // Deactivate their user record
         await dbClient.query(
-          `UPDATE users SET is_active = false, deactivated_at = NOW() WHERE id = $1`,
+          `UPDATE users SET is_active = false, updated_at = NOW() WHERE id = $1`,
           [linkedUser.id]
         );
       }
 
-      // 3. Deactivate all persona_links for this patient
+      // 4. Deactivate all persona_links for this patient
       await dbClient.query(
         `UPDATE persona_links SET is_active = false WHERE patient_id = $1`,
         [patientDbId]
       );
 
-      // 4. Cancel all pending invites
+      // 5. Cancel all pending invites
       await dbClient.query(
         `UPDATE attendant_invites SET status = 'cancelled' WHERE patient_id = $1 AND status = 'pending'`,
         [patientDbId]
@@ -197,26 +205,35 @@ exports.handler = async (event) => {
         [patientDbId]
       );
 
-      // 5. Soft-delete the patient record
+      // 6. Delete the patient record (cascades to persona_links via FK)
       await dbClient.query(
-        `UPDATE patients SET is_active = false, deleted_at = NOW() WHERE id = $1`,
+        `DELETE FROM patients WHERE id = $1`,
         [patientDbId]
       );
 
-      // 6. Disable patient's own Cognito user
-      const patientUser = await dbClient.query(
-        `SELECT u.cognito_sub, u.email FROM users u
-         JOIN patients p ON p.user_id = u.id
-         WHERE p.id = $1`,
-        [patientDbId]
-      );
+      // 7. Disable patient's own Cognito user
       if (patientUser.rows.length > 0) {
         await disableCognitoUser(patientUser.rows[0].email);
         await dbClient.query(
-          `UPDATE users SET is_active = false, deactivated_at = NOW()
+          `UPDATE users SET is_active = false, updated_at = NOW()
            WHERE cognito_sub = $1`,
           [patientUser.rows[0].cognito_sub]
         );
+      }
+
+      // 8. Clear caregiver's linked_patient_id in Cognito
+      try {
+        await cognitoClient.send(
+          new AdminUpdateUserAttributesCommand({
+            UserPoolId: process.env.COGNITO_USER_POOL_ID,
+            Username: relativeCognitoSub,
+            UserAttributes: [
+              { Name: "custom:linked_patient_id", Value: "" },
+            ],
+          })
+        );
+      } catch (e) {
+        console.warn("Could not clear caregiver linked_patient_id:", e.message);
       }
 
       // 7. Audit log

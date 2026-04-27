@@ -1,0 +1,12 @@
+{
+  "name": "carelog-delete-patient",
+  "version": "1.0.0",
+  "description": "Delete patient and cascade remove associated personas",
+  "main": "index.js",
+  "dependencies": {
+    "@aws-sdk/client-cognito-identity-provider": "^3.600.0",
+    "@aws-sdk/client-ses": "^3.600.0",
+    "@aws-sdk/client-secrets-manager": "^3.600.0",
+    "pg": "^8.12.0"
+  }
+}
