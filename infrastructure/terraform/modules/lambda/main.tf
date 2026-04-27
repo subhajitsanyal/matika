@@ -1080,11 +1080,24 @@ resource "aws_lambda_function" "remove_team_member" {
   }
 }
 
+# Wait for IAM policy to propagate before creating SQS event source mapping.
+# AWS IAM is eventually consistent — the Lambda service may not see the new
+# SQS permissions for up to 30 seconds after the policy is created.
+resource "null_resource" "wait_for_sqs_iam" {
+  depends_on = [aws_iam_role_policy.rds_sqs_inline]
+
+  provisioner "local-exec" {
+    command = "sleep 30"
+  }
+}
+
 # SQS event source mapping for notification-sender
 resource "aws_lambda_event_source_mapping" "notification_sender_sqs" {
   event_source_arn = var.alerts_queue_arn
   function_name    = aws_lambda_function.notification_sender.arn
   batch_size       = 1
+
+  depends_on = [null_resource.wait_for_sqs_iam]
 }
 
 # ============================================================
