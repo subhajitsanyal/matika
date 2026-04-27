@@ -19,6 +19,7 @@ const {
   AdminUpdateUserAttributesCommand,
   AdminSetUserPasswordCommand,
 } = require("@aws-sdk/client-cognito-identity-provider");
+const { SESClient, SendEmailCommand } = require("@aws-sdk/client-ses");
 const {
   HealthLakeClient,
   CreateResourceCommand,
@@ -31,6 +32,7 @@ const {
 const crypto = require("crypto");
 
 const cognitoClient = new CognitoIdentityProviderClient({});
+const sesClient = new SESClient({});
 const healthLakeClient = new HealthLakeClient({});
 const secretsClient = new SecretsManagerClient({});
 
@@ -99,9 +101,31 @@ async function createDbConnection() {
 /**
  * Create Cognito user for patient.
  */
+/**
+ * Generate an 8-character password meeting Cognito policy:
+ * uppercase + lowercase + digit + symbol.
+ */
+function generatePassword() {
+  const upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  const lower = "abcdefghjkmnpqrstuvwxyz";
+  const digits = "23456789";
+  const symbols = "@#$!";
+  const pick = (s) => s[crypto.randomInt(s.length)];
+  // Guarantee one of each required class
+  const required = [pick(upper), pick(lower), pick(digits), pick(symbols)];
+  // Fill remaining 4 from all classes
+  const all = upper + lower + digits + symbols;
+  for (let i = 0; i < 4; i++) required.push(pick(all));
+  // Shuffle
+  for (let i = required.length - 1; i > 0; i--) {
+    const j = crypto.randomInt(i + 1);
+    [required[i], required[j]] = [required[j], required[i]];
+  }
+  return required.join("");
+}
+
 async function createCognitoUser(patientId, patientName, patientEmail) {
-  // Generate a temporary password
-  const tempPassword = crypto.randomBytes(16).toString("base64") + "Aa1!";
+  const tempPassword = generatePassword();
 
   // Use provided email or generate a placeholder
   const email = patientEmail || `patient.${patientId}@carelog.internal`;
@@ -313,6 +337,53 @@ async function createPatientRecords(dbClient, patientData, caregiverCognitoSub, 
 }
 
 /**
+ * Send welcome email with login credentials to the patient.
+ */
+async function sendWelcomeEmail(email, patientName, password, caregiverName) {
+  const fromEmail = process.env.FROM_EMAIL || "noreply@carelog.com";
+  const appDownloadUrl = "https://play.google.com/store/apps/details?id=com.carelog";
+
+  await sesClient.send(
+    new SendEmailCommand({
+      Source: fromEmail,
+      Destination: { ToAddresses: [email] },
+      Message: {
+        Subject: {
+          Data: "Welcome to CareLog - Your Login Credentials",
+          Charset: "UTF-8",
+        },
+        Body: {
+          Html: {
+            Data: `
+<h2>Welcome to CareLog, ${patientName}!</h2>
+<p>${caregiverName} has created a CareLog account for you to help monitor your health.</p>
+<h3>Your Login Credentials</h3>
+<table style="border-collapse:collapse;margin:16px 0">
+  <tr><td style="padding:8px;font-weight:bold">Email:</td><td style="padding:8px">${email}</td></tr>
+  <tr><td style="padding:8px;font-weight:bold">Password:</td><td style="padding:8px;font-family:monospace;font-size:18px">${password}</td></tr>
+</table>
+<h3>Get Started</h3>
+<ol>
+  <li>Download the CareLog app: <a href="${appDownloadUrl}">${appDownloadUrl}</a></li>
+  <li>Open the app and tap <strong>Sign In</strong></li>
+  <li>Enter the email and password above</li>
+  <li>You can change your password after logging in</li>
+</ol>
+<p style="color:#666;font-size:12px">If you did not expect this email, please contact ${caregiverName} directly.</p>
+<p style="color:#666;font-size:12px">CareLog - Health monitoring made simple</p>`,
+            Charset: "UTF-8",
+          },
+          Text: {
+            Data: `Welcome to CareLog, ${patientName}!\n\n${caregiverName} has created a CareLog account for you.\n\nYour Login Credentials:\nEmail: ${email}\nPassword: ${password}\n\nDownload the app: ${appDownloadUrl}\n\nOpen the app, tap Sign In, and enter your credentials above.\n\nCareLog - Health monitoring made simple`,
+            Charset: "UTF-8",
+          },
+        },
+      },
+    })
+  );
+}
+
+/**
  * Lambda handler.
  */
 exports.handler = async (event) => {
@@ -403,6 +474,17 @@ exports.handler = async (event) => {
     } catch (linkError) {
       console.error("Failed to link patient to caregiver in Cognito:", linkError);
       // Don't fail the whole request — patient was created, app can retry linking
+    }
+
+    // Send welcome email with credentials to patient
+    if (patientEmail) {
+      try {
+        await sendWelcomeEmail(patientLoginEmail, body.name, tempPassword, caregiverName);
+        console.log(`Welcome email sent to ${patientLoginEmail}`);
+      } catch (emailError) {
+        console.warn("Failed to send welcome email:", emailError.message);
+        // Don't fail — credentials are also shown in app
+      }
     }
 
     console.log(`Patient created: ${patientId}`);
