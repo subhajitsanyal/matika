@@ -188,8 +188,15 @@ fun SettingsScreen(
                         )
                     }
                     Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedButton(onClick = { showDeviceIpDialog = true }) {
-                        Text(if (savedDeviceUrl != null) "Change Device IP" else "Set Device IP")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = { showDeviceIpDialog = true }) {
+                            Text(if (savedDeviceUrl != null) "Change" else "Set Device IP")
+                        }
+                        if (savedDeviceUrl != null) {
+                            OutlinedButton(onClick = { viewModel.setMacMiniUrl(null) }) {
+                                Text("Clear")
+                            }
+                        }
                     }
                 }
             }
@@ -489,7 +496,7 @@ class SettingsViewModel @Inject constructor(
     val currentUser: StateFlow<CareLogUser?> = authRepository.currentUser
     val macMiniUrl = appSettings.macMiniBaseUrl
 
-    fun setMacMiniUrl(url: String) {
+    fun setMacMiniUrl(url: String?) {
         viewModelScope.launch {
             appSettings.setMacMiniBaseUrl(url)
         }
