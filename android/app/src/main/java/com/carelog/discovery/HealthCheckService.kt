@@ -18,6 +18,7 @@ import com.carelog.core.di.MacMiniApi
 import com.carelog.network.MacMiniApiService
 import com.carelog.network.HealthResponse
 import com.carelog.network.ServiceStatusResponse
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -67,13 +68,14 @@ class HealthCheckService @Inject constructor(
         isPolling = true
 
         pollingJob = scope.launch {
-            // Use mDNS-discovered URL or manually saved URL, whichever is available
+            // Use mDNS-discovered URL or manually saved URL, whichever is available.
+            // collectLatest cancels the previous pollLoop when a new URL arrives.
             combine(
                 macMiniDiscovery.macMiniUrl,
                 appSettings.macMiniBaseUrl
             ) { discoveredUrl, savedUrl ->
                 discoveredUrl ?: savedUrl
-            }.collect { url ->
+            }.collectLatest { url ->
                 if (url != null) {
                     pollLoop(url)
                 } else {
