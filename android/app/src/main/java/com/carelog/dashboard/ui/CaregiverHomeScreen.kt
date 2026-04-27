@@ -151,7 +151,7 @@ fun CaregiverHomeScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 // Model status banner - only show when connected or degraded, not when offline
-                if (healthStatus.overall != OverallStatus.OFFLINE) {
+                if (healthStatus.overallStatus != OverallStatus.OFFLINE) {
                     item(key = "model_status") {
                         ModelStatusBanner(healthStatus = healthStatus)
                     }
