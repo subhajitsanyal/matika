@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -87,6 +88,10 @@ class AppSettings @Inject constructor(
      */
     val macMiniBaseUrl: Flow<String?> = dataStore.data.map { prefs ->
         prefs[Keys.MAC_MINI_BASE_URL]
+    }
+
+    suspend fun getMacMiniBaseUrl(): String? {
+        return dataStore.data.map { prefs -> prefs[Keys.MAC_MINI_BASE_URL] }.first()
     }
 
     suspend fun setMacMiniBaseUrl(url: String?) {

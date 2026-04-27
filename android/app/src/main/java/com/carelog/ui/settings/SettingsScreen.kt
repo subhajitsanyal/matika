@@ -43,6 +43,9 @@ fun SettingsScreen(
     val signOutState by viewModel.signOutState.collectAsState()
     val deletePatientState by viewModel.deletePatientState.collectAsState()
     var showDeletePatientDialog by remember { mutableStateOf(false) }
+    var showDeviceIpDialog by remember { mutableStateOf(false) }
+    var deviceIpInput by remember { mutableStateOf("") }
+    val savedDeviceUrl by viewModel.macMiniUrl.collectAsState()
 
     LaunchedEffect(signOutState) {
         if (signOutState is SignOutState.Success) {
@@ -160,6 +163,68 @@ fun SettingsScreen(
                         )
                     }
                 }
+            }
+
+            // CareLog Device settings
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "CareLog Device",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    if (savedDeviceUrl != null) {
+                        Text(
+                            text = "Connected: $savedDeviceUrl",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    } else {
+                        Text(
+                            text = "Not connected. Set the IP address of your CareLog device.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedButton(onClick = { showDeviceIpDialog = true }) {
+                        Text(if (savedDeviceUrl != null) "Change Device IP" else "Set Device IP")
+                    }
+                }
+            }
+
+            if (showDeviceIpDialog) {
+                AlertDialog(
+                    onDismissRequest = { showDeviceIpDialog = false },
+                    title = { Text("CareLog Device IP") },
+                    text = {
+                        Column {
+                            Text("Enter the IP address of your CareLog device (e.g. 192.168.1.100)")
+                            Spacer(modifier = Modifier.height(8.dp))
+                            OutlinedTextField(
+                                value = deviceIpInput,
+                                onValueChange = { deviceIpInput = it },
+                                label = { Text("IP Address") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        Button(onClick = {
+                            val ip = deviceIpInput.trim()
+                            if (ip.isNotEmpty()) {
+                                val url = if (ip.startsWith("http")) ip else "http://$ip:8000"
+                                viewModel.setMacMiniUrl(url)
+                            }
+                            showDeviceIpDialog = false
+                        }) { Text("Save") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showDeviceIpDialog = false }) { Text("Cancel") }
+                    }
+                )
             }
 
             // Sign out
@@ -417,10 +482,18 @@ sealed class DeletePatientState {
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val authRepository: AuthRepository,
-    private val apiService: RelativeApiService
+    private val apiService: RelativeApiService,
+    private val appSettings: com.carelog.core.config.AppSettings
 ) : ViewModel() {
 
     val currentUser: StateFlow<CareLogUser?> = authRepository.currentUser
+    val macMiniUrl = appSettings.macMiniBaseUrl
+
+    fun setMacMiniUrl(url: String) {
+        viewModelScope.launch {
+            appSettings.setMacMiniBaseUrl(url)
+        }
+    }
 
     private val _signOutState = MutableStateFlow<SignOutState>(SignOutState.Idle)
     val signOutState: StateFlow<SignOutState> = _signOutState.asStateFlow()

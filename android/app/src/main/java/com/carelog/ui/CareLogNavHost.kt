@@ -628,8 +628,10 @@ fun CareLogNavHost() {
         composable(CareLogRoutes.PATIENT_HOME) {
             PatientHomeScreen(
                 onStartConversation = {
-                    // TODO: Replace "self" with actual patient ID from auth state
                     navController.navigate(CareLogRoutes.conversation("self"))
+                },
+                onNavigateToSettings = {
+                    navController.navigate(CareLogRoutes.SETTINGS)
                 }
             )
         }

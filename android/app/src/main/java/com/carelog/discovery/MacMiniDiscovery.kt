@@ -51,7 +51,6 @@ class MacMiniDiscovery @Inject constructor(
         private const val SERVICE_TYPE = "_carelog._tcp."
         private const val RETRY_DELAY_MS = 5000L
         private const val FALLBACK_DELAY_MS = 6000L
-        private const val FALLBACK_URL = "http://10.0.0.200:8000"
     }
 
     /**
@@ -124,25 +123,28 @@ class MacMiniDiscovery @Inject constructor(
         scope.launch {
             delay(FALLBACK_DELAY_MS)
             if (_macMiniUrl.value == null) {
-                Log.i(TAG, "mDNS not resolved, trying fallback: $FALLBACK_URL")
-                try {
-                    val url = java.net.URL("$FALLBACK_URL/health")
-                    val conn = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                        (url.openConnection() as java.net.HttpURLConnection).apply {
-                            connectTimeout = 3000
-                            readTimeout = 3000
-                            requestMethod = "GET"
+                // Try previously saved URL from settings
+                val savedUrl = appSettings.getMacMiniBaseUrl()
+                if (savedUrl != null) {
+                    Log.i(TAG, "mDNS not resolved, trying saved URL: $savedUrl")
+                    try {
+                        val url = java.net.URL("$savedUrl/health")
+                        val conn = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            (url.openConnection() as java.net.HttpURLConnection).apply {
+                                connectTimeout = 3000
+                                readTimeout = 3000
+                                requestMethod = "GET"
+                            }
                         }
+                        if (conn.responseCode == 200) {
+                            Log.i(TAG, "Saved URL reachable, using $savedUrl")
+                            _macMiniUrl.value = savedUrl
+                            _discoveryState.value = DiscoveryState.RESOLVED
+                        }
+                        conn.disconnect()
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Saved URL not reachable: ${e.message}")
                     }
-                    if (conn.responseCode == 200) {
-                        Log.i(TAG, "Fallback URL reachable, using $FALLBACK_URL")
-                        _macMiniUrl.value = FALLBACK_URL
-                        _discoveryState.value = DiscoveryState.RESOLVED
-                        appSettings.setMacMiniBaseUrl(FALLBACK_URL)
-                    }
-                    conn.disconnect()
-                } catch (e: Exception) {
-                    Log.w(TAG, "Fallback URL not reachable: ${e.message}")
                 }
             }
         }

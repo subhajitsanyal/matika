@@ -20,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -27,10 +28,14 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import com.carelog.discovery.OverallStatus
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -79,6 +84,7 @@ data class LastSessionSummary(
 @Composable
 fun PatientHomeScreen(
     onStartConversation: () -> Unit = {},
+    onNavigateToSettings: () -> Unit = {},
     modifier: Modifier = Modifier,
     viewModel: PatientHomeViewModel = hiltViewModel()
 ) {
@@ -87,8 +93,20 @@ fun PatientHomeScreen(
     val isRefreshing by viewModel.isRefreshing.collectAsState()
 
     val degradation = computeDegradationState(healthStatus)
+    val isOffline = healthStatus.overallStatus == OverallStatus.OFFLINE
 
-    Scaffold { paddingValues ->
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("CareLog") },
+                actions = {
+                    IconButton(onClick = onNavigateToSettings) {
+                        Icon(Icons.Default.Settings, contentDescription = "Settings")
+                    }
+                }
+            )
+        }
+    ) { paddingValues ->
         PullToRefreshBox(
             isRefreshing = isRefreshing,
             onRefresh = { viewModel.onRefresh() },
@@ -103,8 +121,10 @@ fun PatientHomeScreen(
                 verticalArrangement = Arrangement.Top,
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Model status banner at top
-                ModelStatusBanner(healthStatus = healthStatus)
+                // Model status banner at top (only when not offline)
+                if (!isOffline) {
+                    ModelStatusBanner(healthStatus = healthStatus)
+                }
 
                 Spacer(modifier = Modifier.height(24.dp))
 
@@ -119,11 +139,24 @@ fun PatientHomeScreen(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Text(
-                    text = "Tap below to start your daily health check-in",
+                    text = if (isOffline) {
+                        "Set up your CareLog device in Settings to start voice check-ins"
+                    } else {
+                        "Tap below to start your daily health check-in"
+                    },
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center
                 )
+
+                if (isOffline) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    OutlinedButton(onClick = onNavigateToSettings) {
+                        Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.size(8.dp))
+                        Text("Open Settings")
+                    }
+                }
 
                 Spacer(modifier = Modifier.height(24.dp))
 
