@@ -170,7 +170,7 @@ private fun dashboardRouteForPersona(persona: PersonaType): String = when (perso
     // Legacy values — map to caregiver dashboard
     PersonaType.RELATIVE -> CareLogRoutes.CAREGIVER_DASHBOARD
     PersonaType.ATTENDANT -> CareLogRoutes.CAREGIVER_DASHBOARD
-    PersonaType.PATIENT -> CareLogRoutes.PATIENT_DASHBOARD
+    PersonaType.PATIENT -> CareLogRoutes.PATIENT_HOME
     PersonaType.DOCTOR -> CareLogRoutes.PATIENT_DASHBOARD // fallback
 }
 
