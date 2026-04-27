@@ -73,7 +73,17 @@ echo "Waiting 60s for SQS deletion to propagate..."
 sleep 60
 ```
 
-### 3c: Force-delete Secrets Manager and CloudWatch logs
+### 3c: Delete orphaned RDS subnet/parameter groups
+
+```bash
+REGION="ap-south-1"
+aws rds delete-db-subnet-group --db-subnet-group-name carelog-dev-db-subnet-group --region $REGION 2>/dev/null
+aws rds delete-db-parameter-group --db-parameter-group-name carelog-dev-pg-params --region $REGION 2>/dev/null
+```
+
+> **Note:** These will fail if an RDS instance still references them. Wait for the RDS instance to be fully deleted by `terraform destroy` first (5-15 minutes).
+
+### 3d: Force-delete Secrets Manager and CloudWatch logs
 
 ```bash
 REGION="ap-south-1"

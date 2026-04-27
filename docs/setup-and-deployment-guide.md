@@ -698,6 +698,123 @@ When `terraform apply` fails because a resource already exists in AWS but isn't 
 3. Import: `terraform import '<address>' '<id>'`
 4. Re-apply: `terraform apply`
 
+### 5.8 Nuclear Clean Slate (avoid all "already exists" errors)
+
+If you want a guaranteed clean deploy with zero orphaned resources, run this **before** `terraform apply`. This is more thorough than `terraform destroy` alone, which can leave orphans.
+
+```bash
+REGION="ap-south-1"
+
+# 1. Destroy Terraform-managed resources
+cd infrastructure/terraform/environments/dev
+terraform destroy -auto-approve 2>/dev/null || true
+
+# 2. Delete orphaned Lambda functions (from CLI deployments)
+for fn in $(aws lambda list-functions --region $REGION \
+    --query 'Functions[?starts_with(FunctionName, `carelog`)].FunctionName' --output text 2>/dev/null); do
+    aws lambda delete-function --function-name "$fn" --region $REGION
+done
+
+# 3. Delete EventBridge rules (must remove targets first)
+for rule in $(aws events list-rules --name-prefix carelog --region $REGION \
+    --query 'Rules[].Name' --output text 2>/dev/null); do
+    for target in $(aws events list-targets-by-rule --rule "$rule" --region $REGION \
+        --query 'Targets[].Id' --output text 2>/dev/null); do
+        aws events remove-targets --rule "$rule" --ids "$target" --region $REGION
+    done
+    aws events delete-rule --name "$rule" --region $REGION
+done
+
+# 4. Delete SQS queues (take 60s to propagate)
+for url in $(aws sqs list-queues --queue-name-prefix carelog --region $REGION \
+    --query 'QueueUrls[]' --output text 2>/dev/null); do
+    aws sqs delete-queue --queue-url "$url" --region $REGION
+done
+
+# 5. Delete KMS aliases (keys themselves are retained)
+for alias in $(aws kms list-aliases --region $REGION \
+    --query 'Aliases[?contains(AliasName, `carelog`)].AliasName' --output text 2>/dev/null); do
+    aws kms delete-alias --alias-name "$alias" --region $REGION
+done
+
+# 6. Force-delete Secrets Manager
+aws secretsmanager delete-secret --secret-id carelog-dev-db-password \
+    --force-delete-without-recovery --region $REGION 2>/dev/null
+
+# 7. Delete CloudWatch log groups
+for prefix in /aws/vpc/carelog-dev /aws/apigateway/carelog-dev /aws/api-gateway/carelog-dev /aws/lambda/carelog-dev; do
+    for lg in $(aws logs describe-log-groups --log-group-name-prefix "$prefix" \
+        --query 'logGroups[].logGroupName' --output text --region $REGION 2>/dev/null); do
+        aws logs delete-log-group --log-group-name "$lg" --region $REGION
+    done
+done
+
+# 8. Delete Cognito (users, domain, pool)
+POOL_ID=$(aws cognito-idp list-user-pools --max-results 20 --region $REGION \
+    --query 'UserPools[?contains(Name, `carelog`)].Id' --output text 2>/dev/null)
+if [ -n "$POOL_ID" ]; then
+    aws cognito-idp list-users --user-pool-id $POOL_ID --region $REGION \
+        --query 'Users[].Username' --output json | \
+        python3 -c "
+import json, sys, subprocess
+for u in json.load(sys.stdin):
+    subprocess.run(['aws','cognito-idp','admin-delete-user',
+        '--user-pool-id','$POOL_ID','--username',u,'--region','$REGION'], capture_output=True)
+"
+    DOMAIN=$(aws cognito-idp describe-user-pool --user-pool-id $POOL_ID \
+        --region $REGION --query 'UserPool.Domain' --output text 2>/dev/null)
+    [ -n "$DOMAIN" ] && [ "$DOMAIN" != "None" ] && \
+        aws cognito-idp delete-user-pool-domain --user-pool-id $POOL_ID --domain "$DOMAIN" --region $REGION
+    aws cognito-idp delete-user-pool --user-pool-id $POOL_ID --region $REGION 2>/dev/null
+fi
+
+# 9. Delete S3 buckets
+for bucket in $(aws s3 ls | grep carelog | awk '{print $3}'); do
+    aws s3 rb "s3://$bucket" --force --region $REGION
+done
+
+# 10. Delete IAM roles
+for role in $(aws iam list-roles --query 'Roles[?contains(RoleName, `carelog`)].RoleName' --output text); do
+    for policy in $(aws iam list-attached-role-policies --role-name $role --query 'AttachedPolicies[].PolicyArn' --output text); do
+        aws iam detach-role-policy --role-name $role --policy-arn $policy
+    done
+    for policy in $(aws iam list-role-policies --role-name $role --query 'PolicyNames[]' --output text); do
+        aws iam delete-role-policy --role-name $role --policy-name $policy
+    done
+    for profile in $(aws iam list-instance-profiles-for-role --role-name $role --query 'InstanceProfiles[].InstanceProfileName' --output text); do
+        aws iam remove-role-from-instance-profile --instance-profile-name $profile --role-name $role
+        aws iam delete-instance-profile --instance-profile-name $profile
+    done
+    aws iam delete-role --role-name $role
+done
+
+# 11. Delete RDS subnet groups and parameter groups
+aws rds delete-db-subnet-group --db-subnet-group-name carelog-dev-db-subnet-group --region $REGION 2>/dev/null
+aws rds delete-db-parameter-group --db-parameter-group-name carelog-dev-pg-params --region $REGION 2>/dev/null
+
+# 12. Wait for SQS propagation + reset state
+echo "Waiting 60s for SQS queue deletion to propagate..."
+sleep 60
+rm -rf .terraform terraform.tfstate terraform.tfstate.backup tfplan .terraform.lock.hcl
+
+# 13. Verify
+echo "=== Verify clean ==="
+aws lambda list-functions --region $REGION --query 'Functions[?starts_with(FunctionName, `carelog`)].FunctionName' --output text
+aws sqs list-queues --queue-name-prefix carelog --region $REGION --output text 2>/dev/null
+aws kms list-aliases --region $REGION --query 'Aliases[?contains(AliasName, `carelog`)].AliasName' --output text
+aws s3 ls 2>/dev/null | grep carelog
+aws cognito-idp list-user-pools --max-results 20 --region $REGION --query 'UserPools[?contains(Name, `carelog`)].Id' --output text
+echo "(all should be empty)"
+```
+
+After this, a fresh deploy will succeed without any import issues:
+
+```bash
+terraform init
+terraform plan -out=tfplan
+terraform apply tfplan
+```
+
 ---
 
 ## 6. Database Setup
