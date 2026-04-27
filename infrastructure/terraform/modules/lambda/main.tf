@@ -260,7 +260,10 @@ resource "aws_iam_role_policy" "rds_sqs_inline" {
         Effect = "Allow"
         Action = [
           "sqs:SendMessage",
-          "sqs:GetQueueAttributes"
+          "sqs:ReceiveMessage",
+          "sqs:DeleteMessage",
+          "sqs:GetQueueAttributes",
+          "sqs:GetQueueUrl"
         ]
         Resource = [var.alerts_queue_arn]
       },
