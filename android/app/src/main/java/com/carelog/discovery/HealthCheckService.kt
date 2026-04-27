@@ -13,10 +13,12 @@ import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
+import com.carelog.core.config.AppSettings
 import com.carelog.core.di.MacMiniApi
 import com.carelog.network.MacMiniApiService
 import com.carelog.network.HealthResponse
 import com.carelog.network.ServiceStatusResponse
+import kotlinx.coroutines.flow.combine
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -36,6 +38,7 @@ import javax.inject.Singleton
 @Singleton
 class HealthCheckService @Inject constructor(
     private val macMiniDiscovery: MacMiniDiscovery,
+    private val appSettings: AppSettings,
     @MacMiniApi private val macMiniOkHttpClient: OkHttpClient
 ) {
 
@@ -64,7 +67,13 @@ class HealthCheckService @Inject constructor(
         isPolling = true
 
         pollingJob = scope.launch {
-            macMiniDiscovery.macMiniUrl.collect { url ->
+            // Use mDNS-discovered URL or manually saved URL, whichever is available
+            combine(
+                macMiniDiscovery.macMiniUrl,
+                appSettings.macMiniBaseUrl
+            ) { discoveredUrl, savedUrl ->
+                discoveredUrl ?: savedUrl
+            }.collect { url ->
                 if (url != null) {
                     pollLoop(url)
                 } else {
