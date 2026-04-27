@@ -22,7 +22,33 @@ pkill -f "aws ssm start-session" 2>/dev/null
 
 ---
 
-## Step 2: Destroy Terraform Infrastructure
+## Step 2: Remove Resources That Block `terraform destroy`
+
+EventBridge rules with targets and Lambda SQS event source mappings cause `terraform destroy` to hang or fail. Remove them first:
+
+```bash
+REGION="ap-south-1"
+
+# Remove EventBridge rule targets, then delete rules
+for rule in $(aws events list-rules --name-prefix carelog --region $REGION \
+    --query 'Rules[].Name' --output text 2>/dev/null); do
+    for target in $(aws events list-targets-by-rule --rule "$rule" --region $REGION \
+        --query 'Targets[].Id' --output text 2>/dev/null); do
+        aws events remove-targets --rule "$rule" --ids "$target" --region $REGION
+    done
+    aws events delete-rule --name "$rule" --region $REGION
+done
+
+# Remove Lambda SQS event source mappings
+for uuid in $(aws lambda list-event-source-mappings --region $REGION \
+    --query 'EventSourceMappings[?contains(FunctionArn, `carelog`)].UUID' --output text 2>/dev/null); do
+    aws lambda delete-event-source-mapping --uuid "$uuid" --region $REGION 2>/dev/null
+done
+```
+
+---
+
+## Step 3: Destroy Terraform Infrastructure
 
 ```bash
 cd infrastructure/terraform/environments/dev
@@ -30,38 +56,59 @@ terraform init
 terraform destroy
 ```
 
-This removes: VPC, Cognito, API Gateway, RDS, S3 buckets, SQS queues, SNS topics, bastion, EventBridge rules, CloudWatch alarms/dashboard. RDS deletion takes 5-15 minutes.
-
-> **Note:** Lambdas that were deployed or updated via `aws lambda update-function-code` (AWS CLI) may survive `terraform destroy` because their state drifted from Terraform. Step 3 handles these.
+This removes: VPC, Cognito, API Gateway, Lambdas, RDS, S3 buckets, SQS queues, SNS topics, bastion, CloudWatch alarms/dashboard. RDS deletion takes 5-15 minutes.
 
 ---
 
-## Step 3: Clean Up Resources That Survive `terraform destroy`
+## Step 4: Wait for RDS Deletion
 
-### 3a: Delete orphaned Lambda functions
+The RDS instance takes 5-15 minutes to fully delete. Its subnet group and parameter group cannot be removed until it's gone.
+
+```bash
+REGION="ap-south-1"
+echo "Waiting for RDS instance to be deleted..."
+while aws rds describe-db-instances --db-instance-identifier carelog-dev --region $REGION \
+    --query 'DBInstances[0].DBInstanceStatus' --output text 2>/dev/null | grep -qv "^$"; do
+    echo "  RDS still deleting... (checking every 30s)"
+    sleep 30
+done
+echo "RDS deleted."
+
+# Now safe to delete subnet/parameter groups
+aws rds delete-db-subnet-group --db-subnet-group-name carelog-dev-db-subnet-group --region $REGION 2>/dev/null
+aws rds delete-db-parameter-group --db-parameter-group-name carelog-dev-pg-params --region $REGION 2>/dev/null
+```
+
+---
+
+## Step 5: Delete Orphaned Resources
+
+These resources can survive `terraform destroy` due to state drift.
+
+### 5a: Lambda functions
 
 ```bash
 REGION="ap-south-1"
 for fn in $(aws lambda list-functions --region $REGION \
-    --query 'Functions[?starts_with(FunctionName, `carelog`)].FunctionName' --output text); do
+    --query 'Functions[?starts_with(FunctionName, `carelog`)].FunctionName' --output text 2>/dev/null); do
     echo "Deleting: $fn"
     aws lambda delete-function --function-name "$fn" --region $REGION
 done
 ```
 
-### 3b: Delete orphaned SQS queues and KMS aliases
+### 5b: SQS queues and KMS aliases
 
 ```bash
 REGION="ap-south-1"
 
-# Delete KMS aliases
+# KMS aliases
 for alias in $(aws kms list-aliases --region $REGION \
-    --query 'Aliases[?contains(AliasName, `carelog`)].AliasName' --output text); do
+    --query 'Aliases[?contains(AliasName, `carelog`)].AliasName' --output text 2>/dev/null); do
     echo "Deleting KMS alias: $alias"
     aws kms delete-alias --alias-name "$alias" --region $REGION
 done
 
-# Delete SQS queues
+# SQS queues
 for url in $(aws sqs list-queues --queue-name-prefix carelog --region $REGION \
     --query 'QueueUrls[]' --output text 2>/dev/null); do
     echo "Deleting SQS queue: $url"
@@ -73,17 +120,7 @@ echo "Waiting 60s for SQS deletion to propagate..."
 sleep 60
 ```
 
-### 3c: Delete orphaned RDS subnet/parameter groups
-
-```bash
-REGION="ap-south-1"
-aws rds delete-db-subnet-group --db-subnet-group-name carelog-dev-db-subnet-group --region $REGION 2>/dev/null
-aws rds delete-db-parameter-group --db-parameter-group-name carelog-dev-pg-params --region $REGION 2>/dev/null
-```
-
-> **Note:** These will fail if an RDS instance still references them. Wait for the RDS instance to be fully deleted by `terraform destroy` first (5-15 minutes).
-
-### 3d: Force-delete Secrets Manager and CloudWatch logs
+### 5c: Secrets Manager and CloudWatch logs
 
 ```bash
 REGION="ap-south-1"
@@ -93,7 +130,7 @@ aws secretsmanager delete-secret --secret-id carelog-dev-db-password \
     --force-delete-without-recovery --region $REGION 2>/dev/null
 
 # Delete leftover CloudWatch log groups
-for prefix in /aws/vpc/carelog-dev /aws/apigateway/carelog-dev /aws/lambda/carelog-dev; do
+for prefix in /aws/vpc/carelog-dev /aws/apigateway/carelog-dev /aws/api-gateway/carelog-dev /aws/lambda/carelog-dev; do
     for lg in $(aws logs describe-log-groups --log-group-name-prefix "$prefix" \
         --query 'logGroups[].logGroupName' --output text --region $REGION 2>/dev/null); do
         echo "Deleting $lg"
@@ -104,7 +141,7 @@ done
 
 ---
 
-## Step 4: Clean Up Cognito
+## Step 6: Clean Up Cognito
 
 ```bash
 REGION="ap-south-1"
@@ -141,7 +178,18 @@ fi
 
 ---
 
-## Step 5: Clean Up IAM Roles
+## Step 7: Clean Up S3
+
+```bash
+for bucket in $(aws s3 ls | grep carelog | awk '{print $3}'); do
+    echo "Emptying and deleting: $bucket"
+    aws s3 rb "s3://$bucket" --force --region ap-south-1
+done
+```
+
+---
+
+## Step 8: Clean Up IAM Roles
 
 ```bash
 for role in $(aws iam list-roles --query 'Roles[?contains(RoleName, `carelog`)].RoleName' --output text); do
@@ -162,18 +210,7 @@ done
 
 ---
 
-## Step 6: Clean Up S3 (if buckets survived)
-
-```bash
-for bucket in $(aws s3 ls | grep carelog | awk '{print $3}'); do
-    echo "Emptying and deleting: $bucket"
-    aws s3 rb "s3://$bucket" --force --region ap-south-1
-done
-```
-
----
-
-## Step 7: Reset Local Terraform State
+## Step 9: Reset Local Terraform State
 
 ```bash
 cd infrastructure/terraform/environments/dev
@@ -182,7 +219,7 @@ rm -rf .terraform terraform.tfstate terraform.tfstate.backup tfplan .terraform.l
 
 ---
 
-## Step 8: Clean Up Local Mac Mini Provisioning
+## Step 10: Clean Up Local Mac Mini Provisioning
 
 ```bash
 # Remove model directory and all service data
@@ -197,7 +234,7 @@ crontab -l 2>/dev/null | grep -v carelog | crontab -
 
 ---
 
-## Step 9: Clean Android Build Artifacts
+## Step 11: Clean Android Build Artifacts
 
 ```bash
 cd android
@@ -207,7 +244,7 @@ rm -rf app/build .gradle
 
 ---
 
-## Step 10: Clean Web Portal Build
+## Step 12: Clean Web Portal Build
 
 ```bash
 cd web-portal
@@ -216,7 +253,7 @@ rm -rf dist node_modules
 
 ---
 
-## Step 11: Clean Backend Lambda node_modules
+## Step 13: Clean Backend Lambda node_modules
 
 ```bash
 cd backend/lambdas
@@ -227,7 +264,7 @@ done
 
 ---
 
-## Step 12: Clean Flyway Config (contains password)
+## Step 14: Clean Flyway Config (contains password)
 
 ```bash
 rm -f backend/database/flyway.conf
@@ -235,7 +272,7 @@ rm -f backend/database/flyway.conf
 
 ---
 
-## Step 13: Verify Clean State
+## Step 15: Verify Clean State
 
 ```bash
 REGION="ap-south-1"
@@ -258,9 +295,24 @@ echo "=== Secrets ==="
 aws secretsmanager list-secrets --region $REGION \
     --query 'SecretList[?contains(Name, `carelog`)].Name' --output text
 
+echo "=== SQS ==="
+aws sqs list-queues --queue-name-prefix carelog --region $REGION --output text 2>/dev/null
+
+echo "=== KMS ==="
+aws kms list-aliases --region $REGION \
+    --query 'Aliases[?contains(AliasName, `carelog`)].AliasName' --output text
+
 echo "=== CloudWatch ==="
 aws logs describe-log-groups --log-group-name-prefix /aws/lambda/carelog-dev \
     --query 'logGroups[].logGroupName' --output text --region $REGION
+
+echo "=== RDS ==="
+aws rds describe-db-instances --region $REGION \
+    --query 'DBInstances[?starts_with(DBInstanceIdentifier, `carelog`)].DBInstanceIdentifier' --output text
+
+echo "=== RDS Subnet Groups ==="
+aws rds describe-db-subnet-groups --region $REGION \
+    --query 'DBSubnetGroups[?contains(DBSubnetGroupName, `carelog`)].DBSubnetGroupName' --output text
 ```
 
 All should return empty. You are now ready for a clean deployment:

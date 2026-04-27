@@ -704,18 +704,14 @@ If you want a guaranteed clean deploy with zero orphaned resources, run this **b
 
 ```bash
 REGION="ap-south-1"
-
-# 1. Destroy Terraform-managed resources
 cd infrastructure/terraform/environments/dev
-terraform destroy -auto-approve 2>/dev/null || true
 
-# 2. Delete orphaned Lambda functions (from CLI deployments)
-for fn in $(aws lambda list-functions --region $REGION \
-    --query 'Functions[?starts_with(FunctionName, `carelog`)].FunctionName' --output text 2>/dev/null); do
-    aws lambda delete-function --function-name "$fn" --region $REGION
-done
+# ---------------------------------------------------------------
+# Phase 1: Remove resources that block terraform destroy
+# (EventBridge targets, SQS event source mappings)
+# ---------------------------------------------------------------
 
-# 3. Delete EventBridge rules (must remove targets first)
+# Delete EventBridge rules (must remove targets first, else destroy hangs)
 for rule in $(aws events list-rules --name-prefix carelog --region $REGION \
     --query 'Rules[].Name' --output text 2>/dev/null); do
     for target in $(aws events list-targets-by-rule --rule "$rule" --region $REGION \
@@ -725,23 +721,56 @@ for rule in $(aws events list-rules --name-prefix carelog --region $REGION \
     aws events delete-rule --name "$rule" --region $REGION
 done
 
-# 4. Delete SQS queues (take 60s to propagate)
+# Delete Lambda event source mappings (SQS triggers that block destroy)
+for uuid in $(aws lambda list-event-source-mappings --region $REGION \
+    --query 'EventSourceMappings[?contains(FunctionArn, `carelog`)].UUID' --output text 2>/dev/null); do
+    aws lambda delete-event-source-mapping --uuid "$uuid" --region $REGION 2>/dev/null
+done
+
+# ---------------------------------------------------------------
+# Phase 2: Terraform destroy (now unblocked)
+# ---------------------------------------------------------------
+terraform destroy -auto-approve 2>/dev/null || true
+
+# ---------------------------------------------------------------
+# Phase 3: Wait for RDS to fully delete (5-15 min)
+# RDS must be gone before we can delete its subnet/parameter groups
+# ---------------------------------------------------------------
+echo "Waiting for RDS instance to be deleted..."
+while aws rds describe-db-instances --db-instance-identifier carelog-dev --region $REGION \
+    --query 'DBInstances[0].DBInstanceStatus' --output text 2>/dev/null | grep -qv "^$"; do
+    echo "  RDS still deleting... (checking every 30s)"
+    sleep 30
+done
+echo "RDS deleted."
+
+# ---------------------------------------------------------------
+# Phase 4: Delete all orphaned resources
+# ---------------------------------------------------------------
+
+# Lambda functions (from CLI deployments)
+for fn in $(aws lambda list-functions --region $REGION \
+    --query 'Functions[?starts_with(FunctionName, `carelog`)].FunctionName' --output text 2>/dev/null); do
+    aws lambda delete-function --function-name "$fn" --region $REGION
+done
+
+# SQS queues
 for url in $(aws sqs list-queues --queue-name-prefix carelog --region $REGION \
     --query 'QueueUrls[]' --output text 2>/dev/null); do
     aws sqs delete-queue --queue-url "$url" --region $REGION
 done
 
-# 5. Delete KMS aliases (keys themselves are retained)
+# KMS aliases
 for alias in $(aws kms list-aliases --region $REGION \
     --query 'Aliases[?contains(AliasName, `carelog`)].AliasName' --output text 2>/dev/null); do
     aws kms delete-alias --alias-name "$alias" --region $REGION
 done
 
-# 6. Force-delete Secrets Manager
+# Secrets Manager
 aws secretsmanager delete-secret --secret-id carelog-dev-db-password \
     --force-delete-without-recovery --region $REGION 2>/dev/null
 
-# 7. Delete CloudWatch log groups
+# CloudWatch log groups
 for prefix in /aws/vpc/carelog-dev /aws/apigateway/carelog-dev /aws/api-gateway/carelog-dev /aws/lambda/carelog-dev; do
     for lg in $(aws logs describe-log-groups --log-group-name-prefix "$prefix" \
         --query 'logGroups[].logGroupName' --output text --region $REGION 2>/dev/null); do
@@ -749,7 +778,7 @@ for prefix in /aws/vpc/carelog-dev /aws/apigateway/carelog-dev /aws/api-gateway/
     done
 done
 
-# 8. Delete Cognito (users, domain, pool)
+# Cognito (users, domain, pool)
 POOL_ID=$(aws cognito-idp list-user-pools --max-results 20 --region $REGION \
     --query 'UserPools[?contains(Name, `carelog`)].Id' --output text 2>/dev/null)
 if [ -n "$POOL_ID" ]; then
@@ -768,12 +797,12 @@ for u in json.load(sys.stdin):
     aws cognito-idp delete-user-pool --user-pool-id $POOL_ID --region $REGION 2>/dev/null
 fi
 
-# 9. Delete S3 buckets
+# S3 buckets
 for bucket in $(aws s3 ls | grep carelog | awk '{print $3}'); do
     aws s3 rb "s3://$bucket" --force --region $REGION
 done
 
-# 10. Delete IAM roles
+# IAM roles
 for role in $(aws iam list-roles --query 'Roles[?contains(RoleName, `carelog`)].RoleName' --output text); do
     for policy in $(aws iam list-attached-role-policies --role-name $role --query 'AttachedPolicies[].PolicyArn' --output text); do
         aws iam detach-role-policy --role-name $role --policy-arn $policy
@@ -788,11 +817,13 @@ for role in $(aws iam list-roles --query 'Roles[?contains(RoleName, `carelog`)].
     aws iam delete-role --role-name $role
 done
 
-# 11. Delete RDS subnet groups and parameter groups
+# RDS subnet groups and parameter groups (only after RDS is deleted)
 aws rds delete-db-subnet-group --db-subnet-group-name carelog-dev-db-subnet-group --region $REGION 2>/dev/null
 aws rds delete-db-parameter-group --db-parameter-group-name carelog-dev-pg-params --region $REGION 2>/dev/null
 
-# 12. Wait for SQS propagation + reset state
+# ---------------------------------------------------------------
+# Phase 5: Wait for SQS propagation + reset local state
+# ---------------------------------------------------------------
 echo "Waiting 60s for SQS queue deletion to propagate..."
 sleep 60
 rm -rf .terraform terraform.tfstate terraform.tfstate.backup tfplan .terraform.lock.hcl
