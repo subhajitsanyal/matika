@@ -45,7 +45,7 @@ fun SettingsScreen(
     var showDeletePatientDialog by remember { mutableStateOf(false) }
     var showDeviceIpDialog by remember { mutableStateOf(false) }
     var deviceIpInput by remember { mutableStateOf("") }
-    val savedDeviceUrl by viewModel.macMiniUrl.collectAsState()
+    val savedDeviceUrl by viewModel.macMiniUrl.collectAsState(initial = null)
 
     LaunchedEffect(signOutState) {
         if (signOutState is SignOutState.Success) {
