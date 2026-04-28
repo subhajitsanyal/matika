@@ -626,9 +626,11 @@ fun CareLogNavHost() {
 
         // ── Patient Home with Conversation (P1) ────────────────
         composable(CareLogRoutes.PATIENT_HOME) {
+            val authRepo = hiltViewModel<PatientHomeNavHelper>().authRepository
             PatientHomeScreen(
                 onStartConversation = {
-                    navController.navigate(CareLogRoutes.conversation("self"))
+                    val patientId = authRepo.currentUser.value?.linkedPatientId ?: "self"
+                    navController.navigate(CareLogRoutes.conversation(patientId))
                 },
                 onNavigateToSettings = {
                     navController.navigate(CareLogRoutes.SETTINGS)
@@ -714,6 +716,11 @@ class SplashViewModel @Inject constructor(
         }
     }
 }
+
+@HiltViewModel
+class PatientHomeNavHelper @Inject constructor(
+    val authRepository: AuthRepository
+) : ViewModel()
 
 @Composable
 private fun SplashScreen(navController: NavController) {
