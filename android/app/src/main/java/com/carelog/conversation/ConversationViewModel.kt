@@ -65,6 +65,9 @@ class ConversationViewModel @Inject constructor(
     /** Audio playback state for UI indicators. */
     val isPlaying: StateFlow<Boolean> = audioPlayerManager.isPlaying
 
+    /** Live health status from HealthCheckService. */
+    val liveHealthStatus = healthCheckService.healthStatus
+
     init {
         // Observe health status changes
         viewModelScope.launch {

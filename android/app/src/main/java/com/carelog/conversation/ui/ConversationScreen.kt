@@ -29,6 +29,9 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import android.Manifest
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -82,6 +85,18 @@ fun ConversationScreen(
 
     val snackbarHostState = remember { SnackbarHostState() }
     var textInput by remember { mutableStateOf("") }
+    var hasAudioPermission by remember { mutableStateOf(false) }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        hasAudioPermission = granted
+    }
+
+    // Request mic permission on first load
+    LaunchedEffect(Unit) {
+        permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+    }
 
     // Compute degradation state from current model status
     val degradation = remember(uiState.modelStatus) {
@@ -143,11 +158,14 @@ fun ConversationScreen(
                 .padding(paddingValues)
                 .imePadding()
         ) {
-            // 1. Model status banner (focus order: first)
-            ModelStatusBanner(
-                healthStatus = uiState.modelStatus,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-            )
+            // 1. Model status banner - use live health, not stale uiState
+            val liveHealth by viewModel.liveHealthStatus.collectAsState()
+            if (liveHealth.overallStatus != com.carelog.discovery.OverallStatus.OFFLINE) {
+                ModelStatusBanner(
+                    healthStatus = liveHealth,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                )
+            }
 
             // 2. Transcript view (takes available space)
             TranscriptView(
