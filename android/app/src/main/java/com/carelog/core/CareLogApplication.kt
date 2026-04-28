@@ -8,6 +8,8 @@ import com.amplifyframework.AmplifyException
 import com.amplifyframework.auth.cognito.AWSCognitoAuthPlugin
 import com.amplifyframework.core.Amplify
 // import com.amplifyframework.storage.s3.AWSS3StoragePlugin
+import com.carelog.discovery.HealthCheckService
+import com.carelog.discovery.MacMiniDiscovery
 import com.carelog.sync.SyncManager
 import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
@@ -29,6 +31,12 @@ class CareLogApplication : Application(), Configuration.Provider {
     @Inject
     lateinit var syncManager: SyncManager
 
+    @Inject
+    lateinit var macMiniDiscovery: MacMiniDiscovery
+
+    @Inject
+    lateinit var healthCheckService: HealthCheckService
+
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
             .setWorkerFactory(workerFactory)
@@ -40,6 +48,8 @@ class CareLogApplication : Application(), Configuration.Provider {
         instance = this
         initializeAmplify()
         syncManager.initialize()
+        macMiniDiscovery.startDiscovery()
+        healthCheckService.startPolling()
     }
 
     private fun initializeAmplify() {
