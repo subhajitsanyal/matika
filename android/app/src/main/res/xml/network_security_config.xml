@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!-- Base configuration - HTTPS only -->
-    <base-config cleartextTrafficPermitted="false">
+    <!-- Base configuration - allow cleartext for LAN Mac Mini communication.
+         All API calls use HTTPS via domain-config below. -->
+    <base-config cleartextTrafficPermitted="true">
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>
@@ -27,12 +28,11 @@
     </domain-config>
 
     <!-- Allow cleartext (HTTP) traffic to local network for Mac Mini communication.
-         The Mac Mini runs model services on LAN without TLS. -->
+         The Mac Mini runs model services on LAN without TLS.
+         Android domain-config does not support CIDR ranges, so we permit
+         cleartext globally in base-config and rely on the app only making
+         HTTP calls to LAN addresses. HTTPS is still used for all API calls. -->
     <domain-config cleartextTrafficPermitted="true">
-        <!-- Private IPv4 ranges (RFC 1918) -->
-        <domain includeSubdomains="false">10.0.0.0/8</domain>
-        <domain includeSubdomains="false">172.16.0.0/12</domain>
-        <domain includeSubdomains="false">192.168.0.0/16</domain>
         <!-- mDNS .local hostnames -->
         <domain includeSubdomains="true">local</domain>
         <!-- Localhost for development -->
