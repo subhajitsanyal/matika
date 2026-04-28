@@ -97,11 +97,29 @@ object DualNetworkModule {
     @Provides
     @Singleton
     @MacMiniApi
-    fun provideMacMiniOkHttpClient(): OkHttpClient {
+    fun provideMacMiniOkHttpClient(
+        macMiniUrlProvider: MacMiniUrlProvider
+    ): OkHttpClient {
         val builder = OkHttpClient.Builder()
             .connectTimeout(MAC_MINI_CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .readTimeout(MAC_MINI_READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .writeTimeout(MAC_MINI_WRITE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            // Rewrite base URL to the dynamically discovered Mac Mini URL
+            .addInterceptor { chain ->
+                val currentUrl = macMiniUrlProvider.currentUrl
+                if (currentUrl != null) {
+                    val original = chain.request()
+                    val targetUrl = okhttp3.HttpUrl.parse(currentUrl) ?: return@addInterceptor chain.proceed(original)
+                    val newUrl = original.url.newBuilder()
+                        .scheme(targetUrl.scheme)
+                        .host(targetUrl.host)
+                        .port(targetUrl.port)
+                        .build()
+                    chain.proceed(original.newBuilder().url(newUrl).build())
+                } else {
+                    chain.proceed(chain.request())
+                }
+            }
 
         if (com.carelog.BuildConfig.DEBUG) {
             val loggingInterceptor = HttpLoggingInterceptor().apply {
