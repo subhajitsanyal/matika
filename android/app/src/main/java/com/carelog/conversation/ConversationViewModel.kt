@@ -127,15 +127,22 @@ class ConversationViewModel @Inject constructor(
         if (uiState.value.isProcessing || uiState.value.isPlayingAudio) return
 
         viewModelScope.launch {
-            val audioMode = appSettings.audioMode.first()
-            val language = appSettings.language.first().code
+            try {
+                val audioMode = appSettings.audioMode.first()
+                val language = appSettings.language.first().code
 
-            sessionManager.setRecording(true)
+                Log.i(TAG, "Record pressed, mode=$audioMode, language=$language")
+                sessionManager.setRecording(true)
 
-            if (audioMode == AudioMode.STREAMING) {
-                startStreamingCapture(language)
-            } else {
-                startBatchCapture(language)
+                if (audioMode == AudioMode.STREAMING) {
+                    startStreamingCapture(language)
+                } else {
+                    startBatchCapture(language)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Recording failed", e)
+                sessionManager.setRecording(false)
+                sessionManager.showError("Recording failed: ${e.message}")
             }
         }
     }
@@ -271,7 +278,8 @@ class ConversationViewModel @Inject constructor(
         if (audioData != null && audioData.isNotEmpty()) {
             sessionManager.processUtterance(audioData, language)
         } else {
-            Log.w(TAG, "Batch recording returned no audio")
+            Log.w(TAG, "Batch recording returned no audio — check RECORD_AUDIO permission")
+            sessionManager.showError("Could not record audio. Please check microphone permission in Settings.")
         }
     }
 

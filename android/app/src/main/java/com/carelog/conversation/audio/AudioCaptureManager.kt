@@ -117,7 +117,8 @@ class AudioCaptureManager @Inject constructor() {
         }
 
         val audio = outputStream.toByteArray()
-        return if (audio.isNotEmpty() && utteranceComplete) audio else null
+        // Return audio if we have any — either VAD detected silence or user pressed stop
+        return if (audio.isNotEmpty()) audio else null
     }
 
     /**

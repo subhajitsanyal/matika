@@ -362,6 +362,10 @@ class SessionManager @Inject constructor(
         _uiState.update { it.copy(errorMessage = null) }
     }
 
+    fun showError(message: String) {
+        _uiState.update { it.copy(errorMessage = message) }
+    }
+
     // ── Private Helpers ─────────────────────────────────────────
 
     private fun handleLlmResponse(result: ConversationTurn) {
