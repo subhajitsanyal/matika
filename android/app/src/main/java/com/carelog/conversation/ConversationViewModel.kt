@@ -126,7 +126,7 @@ class ConversationViewModel @Inject constructor(
         if (uiState.value.sessionPhase != SessionPhase.ACTIVE) return
         if (uiState.value.isProcessing || uiState.value.isPlayingAudio) return
 
-        viewModelScope.launch {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 val audioMode = appSettings.audioMode.first()
                 val language = appSettings.language.first().code
