@@ -105,16 +105,27 @@ object DualNetworkModule {
             .connectTimeout(MAC_MINI_CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .readTimeout(MAC_MINI_READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .writeTimeout(MAC_MINI_WRITE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            // Rewrite base URL to the dynamically discovered Mac Mini URL
+            // Rewrite base URL to the dynamically discovered Mac Mini URL.
+            // Route to correct port based on the API path:
+            //   /health -> 8000, /transcribe -> 8001, /sessions -> 8002,
+            //   /synthesize -> 8003, /vision -> 8004
             .addInterceptor { chain ->
                 val currentUrl = macMiniUrlProvider.currentUrl
                 if (currentUrl != null) {
                     val original = chain.request()
                     val targetUrl = currentUrl.toHttpUrlOrNull() ?: return@addInterceptor chain.proceed(original)
+                    val path = original.url.encodedPath
+                    val port = when {
+                        path.startsWith("/transcribe") || path.startsWith("/stt") -> 8001
+                        path.startsWith("/sessions") -> 8002
+                        path.startsWith("/synthesize") || path.startsWith("/tts") -> 8003
+                        path.startsWith("/vision") || path.startsWith("/extract") -> 8004
+                        else -> targetUrl.port
+                    }
                     val newUrl = original.url.newBuilder()
                         .scheme(targetUrl.scheme)
                         .host(targetUrl.host)
-                        .port(targetUrl.port)
+                        .port(port)
                         .build()
                     chain.proceed(original.newBuilder().url(newUrl).build())
                 } else {
