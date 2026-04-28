@@ -13,6 +13,7 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import okhttp3.CertificatePinner
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
@@ -109,7 +110,7 @@ object DualNetworkModule {
                 val currentUrl = macMiniUrlProvider.currentUrl
                 if (currentUrl != null) {
                     val original = chain.request()
-                    val targetUrl = okhttp3.HttpUrl.parse(currentUrl) ?: return@addInterceptor chain.proceed(original)
+                    val targetUrl = currentUrl.toHttpUrlOrNull() ?: return@addInterceptor chain.proceed(original)
                     val newUrl = original.url.newBuilder()
                         .scheme(targetUrl.scheme)
                         .host(targetUrl.host)
