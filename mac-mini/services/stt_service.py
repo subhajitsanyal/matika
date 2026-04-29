@@ -61,19 +61,8 @@ def _load_model() -> bool:
         return False
 
     try:
-        # ------------------------------------------------------------------
-        # Production implementation would be:
-        #   import torch
-        #   from transformers import pipeline
-        #   _model = pipeline(
-        #       "automatic-speech-recognition",
-        #       model=str(STT_MODEL_PATH),
-        #       device="mps",           # Apple Silicon GPU
-        #       torch_dtype=torch.float16,
-        #   )
-        # ------------------------------------------------------------------
-        # Placeholder: mark model as loaded if the directory exists
-        _model = "loaded"
+        from faster_whisper import WhisperModel
+        _model = WhisperModel(str(STT_MODEL_PATH), device="cpu", compute_type="int8")
         logger.info("STT model loaded from %s", STT_MODEL_PATH)
         return True
     except Exception:
@@ -145,27 +134,33 @@ def _transcribe_audio(audio_bytes: bytes, sample_rate: int, language: str) -> Tr
     num_samples = len(audio_bytes) // 2
     duration_ms = int(num_samples / sample_rate * 1000) if sample_rate else 0
 
-    # --- Production code would go here ---
-    # import numpy as np
-    # audio_np = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32) / 32768.0
-    # result = _model(audio_np, generate_kwargs={"language": language})
-    # text = result["text"]
-    # -----------------------------------------
+    import numpy as np
+    audio_np = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+    whisper_segments, info = _model.transcribe(audio_np, language=language, beam_size=1)
 
-    text = ""  # placeholder — real model fills this in
-    segments = [
-        TranscribeSegment(
-            start_ms=0,
-            end_ms=duration_ms,
-            text=text,
-            confidence=0.0,
+    text_parts = []
+    result_segments = []
+    for seg in whisper_segments:
+        text_parts.append(seg.text)
+        result_segments.append(
+            TranscribeSegment(
+                start_ms=int(seg.start * 1000),
+                end_ms=int(seg.end * 1000),
+                text=seg.text.strip(),
+                confidence=seg.avg_logprob,
+            )
         )
-    ]
+
+    text = " ".join(text_parts).strip()
+    if not result_segments:
+        result_segments = [TranscribeSegment(start_ms=0, end_ms=duration_ms, text="", confidence=0.0)]
+
+    logger.info("Transcribed %d ms audio: '%s'", duration_ms, text[:80])
     return TranscribeResponse(
         text=text,
         language=language,
         duration_ms=duration_ms,
-        segments=segments,
+        segments=result_segments,
     )
 
 

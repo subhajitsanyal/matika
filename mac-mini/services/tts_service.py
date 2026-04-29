@@ -92,12 +92,8 @@ def _load_models() -> bool:
             continue
 
         try:
-            # ------------------------------------------------------------------
-            # Production implementation:
-            #   from piper import PiperVoice
-            #   _models[lang] = PiperVoice.load(str(model_path))
-            # ------------------------------------------------------------------
-            _models[lang] = "loaded"
+            from piper import PiperVoice
+            _models[lang] = PiperVoice.load(str(model_path))
             loaded_any = True
             logger.info("TTS model loaded for '%s' from %s", lang, model_path)
         except Exception:
@@ -117,31 +113,38 @@ def _model_ready() -> bool:
 # ---------------------------------------------------------------------------
 
 def _synthesize(text: str, language: str, sample_rate: int = 16000) -> tuple[bytes, int]:
-    """Run TTS inference and return (pcm_bytes, duration_ms).
+    """Run TTS inference and return (pcm_bytes, duration_ms)."""
+    model = _models.get(language)
+    if model is None:
+        # Fallback to English if requested language model not available
+        model = _models.get("en")
+    if model is None:
+        logger.warning("No TTS model available for language '%s'", language)
+        num_samples = sample_rate // 10
+        pcm_bytes = struct.pack(f"<{num_samples}h", *([0] * num_samples))
+        return pcm_bytes, int(num_samples / sample_rate * 1000)
 
-    In production this calls the Piper voice model.  Placeholder returns
-    silence so the endpoint schema is exercisable.
-    """
-    # --- Production code ---
-    # model = _models[language]
-    # audio_data = model.synthesize(text, sample_rate=sample_rate)
-    # pcm_bytes = audio_data.tobytes()
-    # duration_ms = int(len(pcm_bytes) / (sample_rate * 2) * 1000)
-    # -----------------------
+    # Synthesize using Piper — collect all audio chunks
+    raw_audio = b""
+    for chunk in model.synthesize(text):
+        raw_audio += chunk.audio_int16_bytes
 
-    # P4 optimisation: shorter text -> shorter silence (proportional to text length)
-    # This simulates the real behaviour where short phrases synthesize faster
-    text_len = len(text.strip())
-    if text_len <= _SHORT_TEXT_THRESHOLD:
-        # Short text: 50-100ms of audio
-        num_samples = max(sample_rate // 20, sample_rate * text_len // 500)
-    else:
-        # Longer text: proportional
-        num_samples = sample_rate // 10  # 100ms base
+    # Piper outputs at model.config.sample_rate (22050 typically)
+    # Resample to requested sample_rate if different
+    model_sr = model.config.sample_rate
+    if model_sr != sample_rate and len(raw_audio) > 0:
+        import numpy as np
+        audio_np = np.frombuffer(raw_audio, dtype=np.int16).astype(np.float32)
+        # Simple linear interpolation resampling
+        ratio = sample_rate / model_sr
+        new_length = int(len(audio_np) * ratio)
+        indices = np.linspace(0, len(audio_np) - 1, new_length)
+        resampled = np.interp(indices, np.arange(len(audio_np)), audio_np)
+        raw_audio = resampled.astype(np.int16).tobytes()
 
-    pcm_bytes = struct.pack(f"<{num_samples}h", *([0] * num_samples))
-    duration_ms = int(num_samples / sample_rate * 1000)
-    return pcm_bytes, duration_ms
+    duration_ms = int(len(raw_audio) / (sample_rate * 2) * 1000)
+    logger.info("Synthesized %d ms audio for '%s' (%s)", duration_ms, text[:40], language)
+    return raw_audio, duration_ms
 
 
 # ---------------------------------------------------------------------------

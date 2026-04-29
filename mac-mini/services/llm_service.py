@@ -521,21 +521,32 @@ def _load_model() -> bool:
         return False
 
     try:
-        # ------------------------------------------------------------------
-        # Production implementation:
-        #   from llama_cpp import Llama
-        #   _model = Llama(
-        #       model_path=str(LLM_MODEL_PATH / "model.gguf"),
-        #       n_ctx=4096,
-        #       n_gpu_layers=-1,
-        #   )
-        # ------------------------------------------------------------------
-        _model = "loaded"
-        logger.info("LLM model loaded from %s", LLM_MODEL_PATH)
+        from llama_cpp import Llama
+        # LLM_MODEL_PATH is a symlink; resolve to actual GGUF file
+        model_path = LLM_MODEL_PATH
+        if model_path.is_dir():
+            # Look for .gguf file in directory
+            gguf_files = list(model_path.glob("*.gguf"))
+            if gguf_files:
+                model_path = gguf_files[0]
+            else:
+                model_path = model_path / "model.gguf"
+        elif not model_path.suffix == ".gguf":
+            # It's a symlink to a .gguf file directly
+            pass
+
+        _model = Llama(
+            model_path=str(model_path),
+            n_ctx=4096,
+            n_gpu_layers=0,  # CPU only for now
+            verbose=False,
+        )
+        logger.info("LLM model loaded from %s", model_path)
         return True
     except Exception:
-        logger.exception("Failed to load LLM model")
-        return False
+        logger.exception("Failed to load LLM model — falling back to rule-based responses")
+        _model = "rule-based"  # Mark as available but use rule-based fallback
+        return True
 
 
 def _model_ready() -> bool:
@@ -804,19 +815,20 @@ def _generate_llm_response(session: SessionState, utterance_text: str) -> dict[s
     """
     messages = _build_messages_array(session)
 
-    # ------------------------------------------------------------------
-    # Production implementation:
-    #   response = _model.create_chat_completion(
-    #       messages=messages,
-    #       response_format={"type": "json_object"},
-    #       max_tokens=512,
-    #       temperature=0.7,
-    #   )
-    #   content = response["choices"][0]["message"]["content"]
-    #   return json.loads(content)
-    # ------------------------------------------------------------------
+    # Use real LLM if loaded, otherwise fall back to rule-based
+    if _model is not None and _model != "rule-based":
+        try:
+            response = _model.create_chat_completion(
+                messages=messages,
+                response_format={"type": "json_object"},
+                max_tokens=512,
+                temperature=0.7,
+            )
+            content = response["choices"][0]["message"]["content"]
+            return json.loads(content)
+        except Exception as e:
+            logger.warning("LLM inference failed, using rule-based fallback: %s", e)
 
-    # Mock implementation: use rule-based logic to simulate LLM output
     return _rule_based_response(session, utterance_text)
 
 
