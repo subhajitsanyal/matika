@@ -197,9 +197,11 @@ class ConversationViewModel @Inject constructor(
      */
     fun onTextSubmitted(text: String) {
         if (text.isBlank()) return
+        if (uiState.value.isProcessing) return
 
-        viewModelScope.launch {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             val language = appSettings.language.first().code
+            Log.i(TAG, "Text submitted: '$text', sending to LLM...")
             sessionManager.processTextInput(text.trim(), language)
         }
     }

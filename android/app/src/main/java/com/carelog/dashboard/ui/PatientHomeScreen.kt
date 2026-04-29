@@ -352,9 +352,15 @@ private fun LastSessionCard(
 
 @HiltViewModel
 class PatientHomeViewModel @Inject constructor(
-    private val healthCheckService: HealthCheckService
+    private val healthCheckService: HealthCheckService,
+    private val sessionManager: com.carelog.conversation.session.SessionManager
 ) : ViewModel() {
     val healthStatus = healthCheckService.healthStatus
+
+    init {
+        // Reset session state when returning to home (ensures button is re-enabled)
+        sessionManager.resetSession()
+    }
 
     private val _lastSessionSummary = MutableStateFlow<LastSessionSummary?>(null)
     val lastSessionSummary: StateFlow<LastSessionSummary?> = _lastSessionSummary.asStateFlow()

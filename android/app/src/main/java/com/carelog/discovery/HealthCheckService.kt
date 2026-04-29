@@ -101,6 +101,8 @@ class HealthCheckService @Inject constructor(
             try {
                 val response = apiService.getHealth()
                 _healthStatus.value = mapHealthResponse(response)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e // Don't catch cancellation
             } catch (e: Exception) {
                 Log.w(TAG, "Health check failed for $baseUrl", e)
                 _healthStatus.value = ModelHealthStatus.OFFLINE
