@@ -807,17 +807,29 @@ def _build_messages_array(session: SessionState) -> list[dict[str, str]]:
 
 
 def _generate_llm_response(session: SessionState, utterance_text: str) -> dict[str, Any]:
-    """Call the loaded LLM model and return parsed response.
+    """Generate a response combining deterministic state management with LLM phrasing.
 
-    In production this calls llama-cpp-python or similar. For now it returns
-    a structured mock response that implements the state machine logic,
-    allowing the full conversation flow to work without a real model.
+    State transitions (pending<->confirmed) are handled by the rule-based engine to
+    guarantee correctness; the LLM is used only as a value-extraction backup when
+    rule-based regex patterns miss a parameter.
     """
-    messages = _build_messages_array(session)
+    name = session.config.patient_name or "Patient"
+    language = session.language
 
-    # Use real LLM if loaded, otherwise fall back to rule-based
+    # Confirmation/denial flow: always deterministic. The real LLM cannot be
+    # trusted to track which values have moved from pending to confirmed.
+    if session.pending_confirmation:
+        return _handle_confirmation(session, utterance_text, name, language)
+
+    # No pending values — try rule-based extraction first (pure, no state mutation)
+    rule_extracted = _try_extract_values(session, utterance_text)
+    if rule_extracted:
+        return _rule_based_response(session, utterance_text)
+
+    # Rule-based didn't find values. Try LLM as a backup extractor.
     if _model is not None and _model != "rule-based":
         try:
+            messages = _build_messages_array(session)
             response = _model.create_chat_completion(
                 messages=messages,
                 response_format={"type": "json_object"},
@@ -825,10 +837,15 @@ def _generate_llm_response(session: SessionState, utterance_text: str) -> dict[s
                 temperature=0.7,
             )
             content = response["choices"][0]["message"]["content"]
-            return json.loads(content)
-        except Exception as e:
-            logger.warning("LLM inference failed, using rule-based fallback: %s", e)
+            llm_result = json.loads(content)
 
+            if llm_result.get("extracted_values"):
+                return llm_result
+        except Exception as e:
+            logger.warning("LLM inference failed, using rule-based response: %s", e)
+
+    # Nothing extracted — defer to rule-based, which increments consecutive_failures
+    # and asks for the next parameter.
     return _rule_based_response(session, utterance_text)
 
 
