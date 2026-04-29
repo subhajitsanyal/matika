@@ -659,10 +659,17 @@ fun CareLogNavHost() {
         composable(CareLogRoutes.SESSION_SUMMARY) {
             SessionSummaryScreen(
                 onDoneClicked = {
-                    navController.popBackStack(
-                        route = CareLogRoutes.PATIENT_DASHBOARD,
+                    // Try PATIENT_HOME first (voice flow), fall back to PATIENT_DASHBOARD (legacy)
+                    val popped = navController.popBackStack(
+                        route = CareLogRoutes.PATIENT_HOME,
                         inclusive = false
                     )
+                    if (!popped) {
+                        navController.popBackStack(
+                            route = CareLogRoutes.PATIENT_DASHBOARD,
+                            inclusive = false
+                        )
+                    }
                 }
             )
         }

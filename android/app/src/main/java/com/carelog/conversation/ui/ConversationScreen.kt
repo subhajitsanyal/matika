@@ -203,9 +203,8 @@ fun ConversationScreen(
                 }
             }
 
-            // 5. Text input (shown in fallback mode, or always in text-only mode when TTS is down)
-            val showTextBar = uiState.sessionPhase == SessionPhase.ACTIVE &&
-                (uiState.showTextInput || !degradation.ttsAvailable)
+            // 5. Text input (always shown during active session as fallback for voice)
+            val showTextBar = uiState.sessionPhase == SessionPhase.ACTIVE
 
             if (showTextBar) {
                 TextInputBar(
