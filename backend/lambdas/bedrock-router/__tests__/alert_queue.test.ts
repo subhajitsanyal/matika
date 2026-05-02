@@ -1,4 +1,4 @@
-import { buildEmergencyAlert, AlertTrigger } from '../src/alert_queue';
+import { buildEmergencyAlert, buildRateLimitAlert, AlertTrigger } from '../src/alert_queue';
 
 describe('buildEmergencyAlert', () => {
   it('produces a complete alert message', () => {
@@ -101,5 +101,53 @@ describe('buildEmergencyAlert', () => {
     const ts = new Date(alert.timestamp).getTime();
     expect(ts).toBeGreaterThanOrEqual(before);
     expect(ts).toBeLessThanOrEqual(after);
+  });
+});
+
+describe('buildRateLimitAlert', () => {
+  it('produces a complete rate-limit alert message', () => {
+    const fixedDate = new Date('2026-05-02T18:00:00Z');
+    const alert = buildRateLimitAlert({
+      patientId: 'p1',
+      callsToday: 500,
+      hardLimit: 500,
+      now: () => fixedDate,
+    });
+    expect(alert).toEqual({
+      alertType: 'rate_limit',
+      patientId: 'p1',
+      callsToday: 500,
+      hardLimit: 500,
+      timestamp: '2026-05-02T18:00:00.000Z',
+    });
+  });
+
+  it('throws on negative callsToday', () => {
+    expect(() =>
+      buildRateLimitAlert({ patientId: 'p', callsToday: -1, hardLimit: 500 }),
+    ).toThrow(/negative/);
+  });
+
+  it('throws on non-positive hardLimit', () => {
+    expect(() =>
+      buildRateLimitAlert({ patientId: 'p', callsToday: 0, hardLimit: 0 }),
+    ).toThrow(/positive/);
+    expect(() =>
+      buildRateLimitAlert({ patientId: 'p', callsToday: 0, hardLimit: -10 }),
+    ).toThrow(/positive/);
+  });
+
+  it('uses Date.now() when no clock provided', () => {
+    const before = Date.now();
+    const alert = buildRateLimitAlert({ patientId: 'p', callsToday: 100, hardLimit: 500 });
+    const after = Date.now();
+    const ts = new Date(alert.timestamp).getTime();
+    expect(ts).toBeGreaterThanOrEqual(before);
+    expect(ts).toBeLessThanOrEqual(after);
+  });
+
+  it('alertType is always "rate_limit"', () => {
+    const alert = buildRateLimitAlert({ patientId: 'p', callsToday: 0, hardLimit: 500 });
+    expect(alert.alertType).toBe('rate_limit');
   });
 });

@@ -20,6 +20,7 @@ import {
 } from './db';
 import { SqsAlertEnqueuer } from './alert_queue';
 import { HaikuSummarizer } from './summarizer';
+import { PgRateLimiter } from './rate_limiter';
 
 // Cold-start: build deps once, reuse across warm invocations.
 let _deps: HandlerDeps | null = null;
@@ -57,6 +58,10 @@ function buildDeps(): HandlerDeps {
     resolvePath(__dirname, '..', 'prompts', 'summarize.md'),
   );
 
+  const softLimit = parseInt(process.env.SOFT_RATE_LIMIT_PER_PATIENT ?? '100', 10);
+  const hardLimit = parseInt(process.env.HARD_RATE_LIMIT_PER_PATIENT ?? '500', 10);
+  const rateLimiter = new PgRateLimiter(pool, { softLimit, hardLimit });
+
   const deps: HandlerDeps = {
     bedrock,
     patientLoader: new PgPatientContextLoader(pool),
@@ -65,6 +70,7 @@ function buildDeps(): HandlerDeps {
     modelCallRecorder: new PgModelCallRecorder(pool),
     alertEnqueuer,
     summarizer,
+    rateLimiter,
     config: {
       haikuModelId,
       sonnetModelId: requiredEnv('BEDROCK_SONNET_MODEL_ID'),
@@ -74,6 +80,7 @@ function buildDeps(): HandlerDeps {
       maxTokens: parseInt(process.env.BEDROCK_MAX_TOKENS ?? '1024', 10),
       systemPromptPath: resolvePath(__dirname, '..', 'prompts', 'system_v2.md'),
       escalationSubpromptDir: resolvePath(__dirname, '..', 'escalation_subprompts'),
+      hardRateLimitPerPatient: hardLimit,
     },
   };
   _deps = deps;

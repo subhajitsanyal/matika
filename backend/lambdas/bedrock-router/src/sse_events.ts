@@ -64,6 +64,7 @@ export interface TelemetryEvent {
     guardrailBlocked: boolean;
     inferenceRegion: string;
     escalationReason: EscalationSignal | null;
+    softCapReached: boolean;
   };
 }
 

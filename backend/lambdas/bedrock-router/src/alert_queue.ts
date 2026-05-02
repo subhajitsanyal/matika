@@ -24,8 +24,17 @@ export interface EmergencyAlertMessage {
   timestamp: string; // ISO-8601
 }
 
+export interface RateLimitAlertMessage {
+  alertType: 'rate_limit';
+  patientId: string;
+  callsToday: number;
+  hardLimit: number;
+  timestamp: string; // ISO-8601
+}
+
 export interface AlertEnqueuer {
   enqueueEmergency(message: EmergencyAlertMessage): Promise<void>;
+  enqueueRateLimit(message: RateLimitAlertMessage): Promise<void>;
 }
 
 export class SqsAlertEnqueuer implements AlertEnqueuer {
@@ -35,6 +44,14 @@ export class SqsAlertEnqueuer implements AlertEnqueuer {
   ) {}
 
   async enqueueEmergency(message: EmergencyAlertMessage): Promise<void> {
+    await this.send(message, message.patientId);
+  }
+
+  async enqueueRateLimit(message: RateLimitAlertMessage): Promise<void> {
+    await this.send(message, message.patientId);
+  }
+
+  private async send(message: object, groupId: string): Promise<void> {
     await this.client.send(
       new SendMessageCommand({
         QueueUrl: this.queueUrl,
@@ -42,7 +59,7 @@ export class SqsAlertEnqueuer implements AlertEnqueuer {
         // Group ordering by patient so the consumer processes a single
         // patient's alerts in arrival order (relevant for FIFO queues; for
         // standard queues the attribute is ignored).
-        MessageGroupId: message.patientId,
+        MessageGroupId: groupId,
       }),
     );
   }
@@ -70,6 +87,25 @@ export function buildEmergencyAlert(input: BuildEmergencyAlertInput): EmergencyA
     triggers: input.triggers,
     transcript: input.transcript,
     language: input.language,
+    timestamp: (input.now?.() ?? new Date()).toISOString(),
+  };
+}
+
+export interface BuildRateLimitAlertInput {
+  patientId: string;
+  callsToday: number;
+  hardLimit: number;
+  now?: () => Date;
+}
+
+export function buildRateLimitAlert(input: BuildRateLimitAlertInput): RateLimitAlertMessage {
+  if (input.callsToday < 0) throw new Error('callsToday cannot be negative');
+  if (input.hardLimit <= 0) throw new Error('hardLimit must be positive');
+  return {
+    alertType: 'rate_limit',
+    patientId: input.patientId,
+    callsToday: input.callsToday,
+    hardLimit: input.hardLimit,
     timestamp: (input.now?.() ?? new Date()).toISOString(),
   };
 }

@@ -22,9 +22,10 @@ import type {
   StreamUsage,
 } from './bedrock_client';
 import type { AlertEnqueuer, AlertTrigger } from './alert_queue';
-import { buildEmergencyAlert } from './alert_queue';
+import { buildEmergencyAlert, buildRateLimitAlert } from './alert_queue';
 import type { ModelCallRecorder, SessionPersister } from './db';
 import type { Summarizer } from './summarizer';
+import type { RateLimiter } from './rate_limiter';
 import type {
   PatientContextLoader,
   TurnContextLoader,
@@ -79,6 +80,7 @@ export interface TurnResponseBody {
     guardrailBlocked: boolean;
     inferenceRegion: string;
     escalationReason: EscalationSignal | null;
+    softCapReached: boolean; // true when rate limit's soft cap reached (warn but allow)
   };
 }
 
@@ -98,6 +100,7 @@ export interface HandlerConfig {
   maxTokens: number;
   systemPromptPath: string; // resolved path to prompts/system_v2.md
   escalationSubpromptDir: string; // resolved path to escalation_subprompts/
+  hardRateLimitPerPatient: number; // surfaced into RateLimitAlertMessage
 }
 
 export interface HandlerDeps {
@@ -108,6 +111,7 @@ export interface HandlerDeps {
   modelCallRecorder: ModelCallRecorder;
   alertEnqueuer?: AlertEnqueuer; // optional — handler still works without SQS
   summarizer?: Summarizer; // optional — overflow summarization is skipped if not provided
+  rateLimiter?: RateLimiter; // optional — rate limit is skipped if not provided
   config: HandlerConfig;
   // Pluggable clock for tests; defaults to Date.now
   now?: () => number;
@@ -120,6 +124,9 @@ export async function handleTurn(event: TurnRequest, deps: HandlerDeps): Promise
   const t0 = now();
 
   validateRequest(event);
+
+  // 0.5. Rate limit check (spec §11.6) — fail fast before any expensive work.
+  const softCapReached = await checkRateLimit(event.patientId, deps, now);
 
   // 1. Load contexts in parallel.
   const [patientCtx, turnCtx] = await Promise.all([
@@ -283,6 +290,7 @@ export async function handleTurn(event: TurnRequest, deps: HandlerDeps): Promise
       guardrailBlocked: result.guardrailBlocked,
       inferenceRegion: result.inferenceRegion,
       escalationReason: routing.reason,
+      softCapReached,
     },
   };
 
@@ -436,6 +444,38 @@ const SUBPROMPT_FILENAME_BY_REASON: Partial<Record<EscalationSignal, string>> = 
   implausible_value: 'implausible_value.md',
 };
 
+// Rate limit check (spec §11.6). On hard-cap reached: enqueues caregiver
+// alert (best-effort) and throws HandlerError(429). On soft cap reached:
+// returns true so the caller can flag softCapReached in response telemetry.
+// On allowed-and-under-soft: returns false. No-op (returns false) if no
+// rate limiter is wired in deps.
+async function checkRateLimit(
+  patientId: string,
+  deps: HandlerDeps,
+  now: () => number,
+): Promise<boolean> {
+  if (!deps.rateLimiter) return false;
+  const decision = await deps.rateLimiter.check(patientId);
+  if (!decision.allowed) {
+    if (deps.alertEnqueuer) {
+      await deps.alertEnqueuer.enqueueRateLimit(
+        buildRateLimitAlert({
+          patientId,
+          callsToday: decision.callsToday,
+          hardLimit: deps.config.hardRateLimitPerPatient,
+          now: () => new Date(now()),
+        }),
+      );
+    }
+    throw new HandlerError(
+      429,
+      'rate_limit_exceeded',
+      `Patient has reached daily call limit (${decision.callsToday} of ${deps.config.hardRateLimitPerPatient}). Lock will release at next UTC midnight.`,
+    );
+  }
+  return decision.softCapReached;
+}
+
 // Returns the list of emergency triggers that fired this turn. Conservative —
 // any of three paths fires the alert. Empty array means no alert.
 export function detectEmergencyTriggers(
@@ -580,6 +620,9 @@ export async function handleTurnStream(
 
   try {
     validateRequest(event);
+
+    // Rate limit check before context load — same as handleTurn.
+    const softCapReached = await checkRateLimit(event.patientId, deps, now);
 
     const [patientCtx, turnCtx] = await Promise.all([
       deps.patientLoader.load(event.patientId),
@@ -758,6 +801,7 @@ export async function handleTurnStream(
         guardrailBlocked,
         inferenceRegion,
         escalationReason: routing.reason,
+        softCapReached,
       },
     });
 

@@ -8,7 +8,7 @@ import {
   _resetSystemPromptCache,
 } from '../src/handler';
 import { CollectingSseEmitter } from '../src/sse_events';
-import type { AlertEnqueuer, EmergencyAlertMessage } from '../src/alert_queue';
+import type { AlertEnqueuer, EmergencyAlertMessage, RateLimitAlertMessage } from '../src/alert_queue';
 import type { BedrockInvoker, InvokeInput, InvokeResult, StreamChunk } from '../src/bedrock_client';
 import type {
   PatientContextLoader,
@@ -127,6 +127,7 @@ interface CapturedCalls {
   persisterUpdates: Array<{ sessionId: string; patch: SessionUpdate }>;
   modelCallRecords: ModelCallRecord[];
   alertsEnqueued: EmergencyAlertMessage[];
+  rateLimitAlertsEnqueued: RateLimitAlertMessage[];
 }
 
 function makeDeps(opts: {
@@ -147,6 +148,7 @@ function makeDeps(opts: {
     persisterUpdates: [],
     modelCallRecords: [],
     alertsEnqueued: [],
+    rateLimitAlertsEnqueued: [],
   };
 
   const bedrock: BedrockInvoker = {
@@ -196,6 +198,9 @@ function makeDeps(opts: {
           async enqueueEmergency(message) {
             calls.alertsEnqueued.push(message);
           },
+          async enqueueRateLimit(message) {
+            calls.rateLimitAlertsEnqueued.push(message);
+          },
         };
 
   let nowIdx = 0;
@@ -224,6 +229,7 @@ function makeDeps(opts: {
         maxTokens: 1024,
         systemPromptPath: SYSTEM_PROMPT_PATH,
         escalationSubpromptDir: ESCALATION_SUBPROMPT_DIR,
+        hardRateLimitPerPatient: 500,
       },
       now,
     },
@@ -521,6 +527,7 @@ describe('handleTurn — parser retry on parse failure', () => {
       persisterUpdates: [],
       modelCallRecords: [],
       alertsEnqueued: [],
+      rateLimitAlertsEnqueued: [],
     };
     let invokeCount = 0;
     const bedrock: BedrockInvoker = {
@@ -557,6 +564,7 @@ describe('handleTurn — parser retry on parse failure', () => {
         maxTokens: 1024,
         systemPromptPath: SYSTEM_PROMPT_PATH,
         escalationSubpromptDir: ESCALATION_SUBPROMPT_DIR,
+        hardRateLimitPerPatient: 500,
       },
     };
     return { deps, calls };
@@ -1153,5 +1161,159 @@ describe('handleTurn — sliding window summarization', () => {
     // Only the conversational model_call, no summarizer record
     expect(calls.modelCallRecords).toHaveLength(1);
     expect(calls.modelCallRecords[0].escalationReason).not.toBe('summarizer_overflow');
+  });
+});
+
+// ---------- Per-patient rate limit (spec §11.6) ----------
+
+describe('handleTurn — per-patient rate limit', () => {
+  function rateLimitDeps(
+    decision: {
+      allowed: boolean;
+      softCapReached: boolean;
+      callsToday: number;
+      remainingHard: number;
+    },
+  ): { deps: HandlerDeps; calls: CapturedCalls; rateLimiterCalls: string[] } {
+    const built = makeDeps();
+    const rateLimiterCalls: string[] = [];
+    built.deps.rateLimiter = {
+      async check(patientId) {
+        rateLimiterCalls.push(patientId);
+        return decision;
+      },
+    };
+    return { ...built, rateLimiterCalls };
+  }
+
+  it('proceeds normally when under soft cap', async () => {
+    const { deps, calls, rateLimiterCalls } = rateLimitDeps({
+      allowed: true,
+      softCapReached: false,
+      callsToday: 50,
+      remainingHard: 450,
+    });
+    const result = await handleTurn(baseRequest, deps);
+    expect(result.statusCode).toBe(200);
+    expect(rateLimiterCalls).toEqual(['patient-1']);
+    const body = JSON.parse(result.body);
+    expect(body.telemetry.softCapReached).toBe(false);
+    expect(calls.rateLimitAlertsEnqueued).toEqual([]);
+  });
+
+  it('proceeds with softCapReached=true in telemetry between soft and hard', async () => {
+    const { deps, calls } = rateLimitDeps({
+      allowed: true,
+      softCapReached: true,
+      callsToday: 250,
+      remainingHard: 250,
+    });
+    const result = await handleTurn(baseRequest, deps);
+    expect(result.statusCode).toBe(200);
+    const body = JSON.parse(result.body);
+    expect(body.telemetry.softCapReached).toBe(true);
+    expect(calls.rateLimitAlertsEnqueued).toEqual([]); // no alert until hard cap
+  });
+
+  it('throws HandlerError(429) at hard cap', async () => {
+    const { deps } = rateLimitDeps({
+      allowed: false,
+      softCapReached: true,
+      callsToday: 500,
+      remainingHard: 0,
+    });
+    await expect(handleTurn(baseRequest, deps)).rejects.toThrow(HandlerError);
+    try {
+      await handleTurn(baseRequest, deps);
+    } catch (e) {
+      if (e instanceof HandlerError) {
+        expect(e.statusCode).toBe(429);
+        expect(e.code).toBe('rate_limit_exceeded');
+      }
+    }
+  });
+
+  it('enqueues a rate_limit alert at hard cap', async () => {
+    const { deps, calls } = rateLimitDeps({
+      allowed: false,
+      softCapReached: true,
+      callsToday: 500,
+      remainingHard: 0,
+    });
+    await expect(handleTurn(baseRequest, deps)).rejects.toThrow(HandlerError);
+    expect(calls.rateLimitAlertsEnqueued).toHaveLength(1);
+    const alert = calls.rateLimitAlertsEnqueued[0];
+    expect(alert.alertType).toBe('rate_limit');
+    expect(alert.patientId).toBe('patient-1');
+    expect(alert.callsToday).toBe(500);
+    expect(alert.hardLimit).toBe(500);
+  });
+
+  it('skips Bedrock invocation entirely on hard-cap rejection', async () => {
+    const { deps, calls } = rateLimitDeps({
+      allowed: false,
+      softCapReached: true,
+      callsToday: 600,
+      remainingHard: 0,
+    });
+    await expect(handleTurn(baseRequest, deps)).rejects.toThrow(HandlerError);
+    expect(calls.invokeCalls).toEqual([]);
+    expect(calls.modelCallRecords).toEqual([]);
+    // Not even patient/turn context loaded
+    expect(calls.patientLoadCalls).toEqual([]);
+  });
+
+  it('handles missing rateLimiter as graceful no-op (allowed)', async () => {
+    const { deps } = makeDeps();
+    deps.rateLimiter = undefined;
+    const result = await handleTurn(baseRequest, deps);
+    expect(result.statusCode).toBe(200);
+    const body = JSON.parse(result.body);
+    expect(body.telemetry.softCapReached).toBe(false);
+  });
+
+  it('still throws 429 even when alertEnqueuer is undefined (no silent acceptance)', async () => {
+    const { deps } = rateLimitDeps({
+      allowed: false,
+      softCapReached: true,
+      callsToday: 500,
+      remainingHard: 0,
+    });
+    deps.alertEnqueuer = undefined;
+    await expect(handleTurn(baseRequest, deps)).rejects.toThrow(HandlerError);
+  });
+});
+
+describe('handleTurnStream — per-patient rate limit', () => {
+  it('emits error event and throws on hard-cap rejection', async () => {
+    const { deps } = makeDeps();
+    deps.rateLimiter = {
+      async check() {
+        return { allowed: false, softCapReached: true, callsToday: 500, remainingHard: 0 };
+      },
+    };
+    const emitter = new CollectingSseEmitter();
+    await expect(handleTurnStream(baseRequest, deps, emitter)).rejects.toThrow(HandlerError);
+    const errorEvent = emitter.events.find((e) => e.type === 'error');
+    expect(errorEvent).toBeDefined();
+    if (errorEvent && errorEvent.type === 'error') {
+      expect(errorEvent.data.code).toBe('rate_limit_exceeded');
+    }
+  });
+
+  it('telemetry event carries softCapReached=true between soft and hard', async () => {
+    const { deps } = makeDeps();
+    deps.rateLimiter = {
+      async check() {
+        return { allowed: true, softCapReached: true, callsToday: 250, remainingHard: 250 };
+      },
+    };
+    const emitter = new CollectingSseEmitter();
+    await handleTurnStream(baseRequest, deps, emitter);
+    const telemetry = emitter.events.find((e) => e.type === 'telemetry');
+    expect(telemetry).toBeDefined();
+    if (telemetry && telemetry.type === 'telemetry') {
+      expect(telemetry.data.softCapReached).toBe(true);
+    }
   });
 });
