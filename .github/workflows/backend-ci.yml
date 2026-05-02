@@ -125,6 +125,7 @@ jobs:
           - bedrock-router
           - bedrock-vision
           - health-check
+          - cost-telemetry-rollup
 
     steps:
       - name: Checkout code
