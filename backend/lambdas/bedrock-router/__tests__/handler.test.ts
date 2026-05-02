@@ -1012,3 +1012,146 @@ describe('handleTurnStream — emergency alert', () => {
     expect(calls.alertsEnqueued).toEqual([]);
   });
 });
+
+// ---------- Sliding-window summarization (T-V2-102 follow-on) ----------
+
+describe('handleTurn — sliding window summarization', () => {
+  function manyTurns(n: number): Array<{ role: 'patient' | 'system'; text: string; timestamp: Date }> {
+    const turns: Array<{ role: 'patient' | 'system'; text: string; timestamp: Date }> = [];
+    for (let i = 0; i < n; i++) {
+      turns.push({
+        role: i % 2 === 0 ? 'patient' : 'system',
+        text: `turn ${i}`,
+        timestamp: new Date(2026, 4, 2, 10, i, 0),
+      });
+    }
+    return turns;
+  }
+
+  it('does NOT call summarizer when history fits in the window', async () => {
+    let summarizerCalls = 0;
+    const turnCtx = baseTurnCtx();
+    turnCtx.recentTurns = manyTurns(2); // small history
+    const { deps } = makeDeps({ turnCtx });
+    deps.summarizer = {
+      async summarize() {
+        summarizerCalls++;
+        return {
+          summary: 'should not be called',
+          usage: { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 },
+          latencyMs: 0,
+          guardrailBlocked: false,
+          inferenceRegion: 'ap-southeast-1',
+        };
+      },
+    };
+    await handleTurn(baseRequest, deps);
+    expect(summarizerCalls).toBe(0);
+  });
+
+  it('calls summarizer when history overflows the window', async () => {
+    let summarizerCalls = 0;
+    let observedOverflowCount = 0;
+    let observedExistingSummary: string | null = null;
+    const turnCtx = baseTurnCtx();
+    turnCtx.recentTurns = manyTurns(8); // >6, will overflow when we append 2 new turns
+    turnCtx.conversationSummary = 'Earlier: patient confirmed BP 132/84.';
+    const { deps, calls } = makeDeps({ turnCtx });
+    deps.summarizer = {
+      async summarize(input) {
+        summarizerCalls++;
+        observedOverflowCount = input.overflowTurns.length;
+        observedExistingSummary = input.existingSummary;
+        return {
+          summary: 'Patient confirmed multiple readings; deferred glucose check.',
+          usage: { inputTokens: 320, cachedInputTokens: 250, outputTokens: 14 },
+          latencyMs: 200,
+          guardrailBlocked: false,
+          inferenceRegion: 'ap-southeast-1',
+        };
+      },
+    };
+    await handleTurn(baseRequest, deps);
+    expect(summarizerCalls).toBe(1);
+    expect(observedOverflowCount).toBeGreaterThan(0);
+    expect(observedExistingSummary).toBe('Earlier: patient confirmed BP 132/84.');
+
+    // Persisted history should be trimmed to window size
+    expect(calls.persisterUpdates).toHaveLength(1);
+    expect(calls.persisterUpdates[0].patch.transcriptHistory).toHaveLength(6);
+    // New summary persisted
+    expect(calls.persisterUpdates[0].patch.conversationSummary).toBe(
+      'Patient confirmed multiple readings; deferred glucose check.',
+    );
+  });
+
+  it('passes existing conversationSummary through when no overflow occurs', async () => {
+    const turnCtx = baseTurnCtx();
+    turnCtx.recentTurns = manyTurns(2);
+    turnCtx.conversationSummary = 'Existing summary value.';
+    const { deps, calls } = makeDeps({ turnCtx });
+    await handleTurn(baseRequest, deps);
+    // Summary is unchanged (passes through)
+    expect(calls.persisterUpdates[0].patch.conversationSummary).toBe('Existing summary value.');
+  });
+
+  it('is a no-op when summarizer is undefined (graceful degradation)', async () => {
+    const turnCtx = baseTurnCtx();
+    turnCtx.recentTurns = manyTurns(8); // would overflow
+    turnCtx.conversationSummary = 'pre-existing';
+    const { deps, calls } = makeDeps({ turnCtx });
+    deps.summarizer = undefined;
+    const result = await handleTurn(baseRequest, deps);
+    expect(result.statusCode).toBe(200); // still succeeds
+    // History is NOT trimmed (no summarizer to compress overflow)
+    expect(calls.persisterUpdates[0].patch.transcriptHistory.length).toBeGreaterThan(6);
+    // Summary unchanged
+    expect(calls.persisterUpdates[0].patch.conversationSummary).toBe('pre-existing');
+  });
+
+  it('records a model_call telemetry row for the summarizer call', async () => {
+    const turnCtx = baseTurnCtx();
+    turnCtx.recentTurns = manyTurns(8);
+    const { deps, calls } = makeDeps({ turnCtx });
+    deps.summarizer = {
+      async summarize() {
+        return {
+          summary: 'summarized',
+          usage: { inputTokens: 320, cachedInputTokens: 250, outputTokens: 14 },
+          latencyMs: 200,
+          guardrailBlocked: false,
+          inferenceRegion: 'ap-southeast-1',
+        };
+      },
+    };
+    await handleTurn(baseRequest, deps);
+    // Two model_call records: one for the conversational invocation, one for
+    // the summarizer.
+    expect(calls.modelCallRecords).toHaveLength(2);
+    const summarizerRecord = calls.modelCallRecords.find(
+      (r) => r.escalationReason === 'summarizer_overflow',
+    );
+    expect(summarizerRecord).toBeDefined();
+    expect(summarizerRecord!.tier).toBe('T2');
+    expect(summarizerRecord!.streamed).toBe(false);
+    expect(summarizerRecord!.inputTokens).toBe(320);
+    expect(summarizerRecord!.cachedInputTokens).toBe(250);
+    expect(summarizerRecord!.outputTokens).toBe(14);
+    expect(summarizerRecord!.latencyMs).toBe(200);
+  });
+
+  it('does NOT record summarizer telemetry when no overflow occurred', async () => {
+    const turnCtx = baseTurnCtx();
+    turnCtx.recentTurns = manyTurns(2);
+    const { deps, calls } = makeDeps({ turnCtx });
+    deps.summarizer = {
+      async summarize() {
+        throw new Error('should not be called');
+      },
+    };
+    await handleTurn(baseRequest, deps);
+    // Only the conversational model_call, no summarizer record
+    expect(calls.modelCallRecords).toHaveLength(1);
+    expect(calls.modelCallRecords[0].escalationReason).not.toBe('summarizer_overflow');
+  });
+});

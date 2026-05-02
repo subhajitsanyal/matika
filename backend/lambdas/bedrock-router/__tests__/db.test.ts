@@ -216,9 +216,11 @@ describe('PgSessionPersister', () => {
       escalationsTriggered: ['emergency'],
       inferenceRegion: 'ap-southeast-1',
       streamingUsed: false,
+      conversationSummary: 'Earlier patient confirmed BP 132/84.',
     });
     expect(calls).toHaveLength(1);
     expect(calls[0].text).toContain('UPDATE interaction_session');
+    expect(calls[0].text).toContain('conversation_summary = $10');
     expect(calls[0].params).toBeDefined();
     const params = calls[0].params as unknown[];
     expect(params[0]).toBe('session-1');
@@ -226,6 +228,24 @@ describe('PgSessionPersister', () => {
     expect(params[6]).toBe('["emergency"]');
     expect(params[7]).toBe('ap-southeast-1');
     expect(params[8]).toBe(false);
+    expect(params[9]).toBe('Earlier patient confirmed BP 132/84.');
+  });
+
+  it('writes null conversationSummary when no summary exists', async () => {
+    const { client, calls } = stubClient(new Map());
+    await new PgSessionPersister(client).update('s', {
+      fsmState: 'EXTRACTING',
+      capturedThisSession: [],
+      pendingConfirmation: [],
+      stillNeeded: [],
+      transcriptHistory: [],
+      escalationsTriggered: [],
+      inferenceRegion: 'ap-southeast-1',
+      streamingUsed: false,
+      conversationSummary: null,
+    });
+    const params = calls[0].params as unknown[];
+    expect(params[9]).toBeNull();
   });
 
   it('serializes transcript history with ISO timestamps', async () => {
@@ -241,6 +261,7 @@ describe('PgSessionPersister', () => {
       escalationsTriggered: [],
       inferenceRegion: 'ap-southeast-1',
       streamingUsed: false,
+      conversationSummary: null,
     });
     const params = calls[0].params as unknown[];
     const historyJson = params[5] as string;

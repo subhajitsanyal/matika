@@ -19,6 +19,7 @@ import {
   PgModelCallRecorder,
 } from './db';
 import { SqsAlertEnqueuer } from './alert_queue';
+import { HaikuSummarizer } from './summarizer';
 
 // Cold-start: build deps once, reuse across warm invocations.
 let _deps: HandlerDeps | null = null;
@@ -48,6 +49,14 @@ function buildDeps(): HandlerDeps {
     ? new SqsAlertEnqueuer(new SQSClient({ region: awsRegion }), alertQueueUrl)
     : undefined;
 
+  const haikuModelId = requiredEnv('BEDROCK_HAIKU_MODEL_ID');
+  const summarizer = new HaikuSummarizer(
+    bedrock,
+    haikuModelId,
+    inferenceRegion,
+    resolvePath(__dirname, '..', 'prompts', 'summarize.md'),
+  );
+
   const deps: HandlerDeps = {
     bedrock,
     patientLoader: new PgPatientContextLoader(pool),
@@ -55,8 +64,9 @@ function buildDeps(): HandlerDeps {
     sessionPersister: new PgSessionPersister(pool),
     modelCallRecorder: new PgModelCallRecorder(pool),
     alertEnqueuer,
+    summarizer,
     config: {
-      haikuModelId: requiredEnv('BEDROCK_HAIKU_MODEL_ID'),
+      haikuModelId,
       sonnetModelId: requiredEnv('BEDROCK_SONNET_MODEL_ID'),
       guardrailId: process.env.BEDROCK_GUARDRAIL_ID,
       guardrailVersion: process.env.BEDROCK_GUARDRAIL_VERSION,

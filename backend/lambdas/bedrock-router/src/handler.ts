@@ -24,6 +24,7 @@ import type {
 import type { AlertEnqueuer, AlertTrigger } from './alert_queue';
 import { buildEmergencyAlert } from './alert_queue';
 import type { ModelCallRecorder, SessionPersister } from './db';
+import type { Summarizer } from './summarizer';
 import type {
   PatientContextLoader,
   TurnContextLoader,
@@ -35,7 +36,7 @@ import type {
 import { detectEscalation, EscalationSignal, SessionContext as SignalSessionContext } from '../escalation/signal_detectors';
 import { extractPreModelHints } from './pre_model_hints';
 import { renderPatientContext } from './context/per_patient';
-import { renderTurnContext } from './context/per_turn';
+import { renderTurnContext, applySlidingWindow } from './context/per_turn';
 import { buildBedrockBody, BedrockBody } from './prompt_builder';
 import { parseStructuredOutput, ExtractedValue, StructuredOutput, StructuredOutputParseError } from './parser';
 import { applyTransition } from './state_machine';
@@ -106,6 +107,7 @@ export interface HandlerDeps {
   sessionPersister: SessionPersister;
   modelCallRecorder: ModelCallRecorder;
   alertEnqueuer?: AlertEnqueuer; // optional — handler still works without SQS
+  summarizer?: Summarizer; // optional — overflow summarization is skipped if not provided
   config: HandlerConfig;
   // Pluggable clock for tests; defaults to Date.now
   now?: () => number;
@@ -182,6 +184,16 @@ export async function handleTurn(event: TurnRequest, deps: HandlerDeps): Promise
     new Date(now()),
   );
 
+  // 8b. Sliding-window summarization (spec §6.7). If history overflows the
+  //     window AND a summarizer is wired up, compress the overflow into the
+  //     conversationSummary and trim the persisted history to the window.
+  const { trimmedHistory, newConversationSummary, summarizerTelemetry } =
+    await maybeSummarizeOverflow(
+      newHistory,
+      turnCtx.conversationSummary,
+      deps.summarizer,
+    );
+
   // 9. Persist session, record telemetry, and (if emergency) enqueue caregiver
   //    alert — all in parallel.
   const emergencyTriggers = detectEmergencyTriggers(routing.reason, parsed.escalationReason, result.guardrailBlocked);
@@ -206,10 +218,11 @@ export async function handleTurn(event: TurnRequest, deps: HandlerDeps): Promise
       capturedThisSession: mergedCaptured,
       pendingConfirmation: newPending,
       stillNeeded: newStillNeeded,
-      transcriptHistory: newHistory,
+      transcriptHistory: trimmedHistory,
       escalationsTriggered,
       inferenceRegion: result.inferenceRegion,
       streamingUsed: false,
+      conversationSummary: newConversationSummary,
     }),
     deps.modelCallRecorder.record(
       buildModelCallRecord({
@@ -229,6 +242,22 @@ export async function handleTurn(event: TurnRequest, deps: HandlerDeps): Promise
         escalationReason: routing.reason,
       }),
     ),
+    summarizerTelemetry
+      ? deps.modelCallRecorder.record(
+          buildModelCallRecord({
+            sessionId: event.sessionId,
+            patientId: event.patientId,
+            tier: 'T2',
+            model: deps.config.haikuModelId,
+            streamed: false,
+            guardrailBlocked: summarizerTelemetry.guardrailBlocked,
+            usage: summarizerTelemetry.usage,
+            latencyMs: summarizerTelemetry.latencyMs,
+            inferenceRegion: summarizerTelemetry.inferenceRegion,
+            escalationReason: 'summarizer_overflow',
+          }),
+        )
+      : Promise.resolve(),
     alertPromise,
   ]);
 
@@ -484,6 +513,56 @@ function appendToHistory(
   ];
 }
 
+// Sliding-window overflow → summary. If the new history exceeds the window
+// size and a summarizer is available, compress the overflow into the
+// conversationSummary and trim the persisted history. Returns:
+//   - trimmedHistory: what to write back to transcript_history
+//   - newConversationSummary: what to write back to conversation_summary
+//     (string when summarized, existing summary when not, null only if
+//     existing was null and no summarization happened)
+//   - summarizerTelemetry: token usage and latency from the summarizer call,
+//     so the caller can record it as a model_call row
+//
+// If no summarizer is provided OR there's no overflow, this is a no-op
+// pass-through.
+async function maybeSummarizeOverflow(
+  newHistory: Turn[],
+  existingSummary: string | null,
+  summarizer: Summarizer | undefined,
+): Promise<{
+  trimmedHistory: Turn[];
+  newConversationSummary: string | null;
+  summarizerTelemetry: {
+    usage: { inputTokens: number; cachedInputTokens: number; outputTokens: number };
+    latencyMs: number;
+    guardrailBlocked: boolean;
+    inferenceRegion: string;
+  } | null;
+}> {
+  const split = applySlidingWindow(newHistory);
+  if (split.overflow.length === 0 || !summarizer) {
+    return {
+      trimmedHistory: newHistory,
+      newConversationSummary: existingSummary,
+      summarizerTelemetry: null,
+    };
+  }
+  const result = await summarizer.summarize({
+    existingSummary,
+    overflowTurns: split.overflow,
+  });
+  return {
+    trimmedHistory: split.window,
+    newConversationSummary: result.summary,
+    summarizerTelemetry: {
+      usage: result.usage,
+      latencyMs: result.latencyMs,
+      guardrailBlocked: result.guardrailBlocked,
+      inferenceRegion: result.inferenceRegion,
+    },
+  };
+}
+
 // ---------- Streaming handler ----------
 //
 // SSE-based variant. Architecture is in place; events emit AFTER the full
@@ -590,6 +669,15 @@ export async function handleTurnStream(
       parsed.responseText,
       new Date(now()),
     );
+
+    // Sliding-window summarization (spec §6.7) — same flow as handleTurn.
+    const { trimmedHistory, newConversationSummary, summarizerTelemetry } =
+      await maybeSummarizeOverflow(
+        newHistory,
+        turnCtx.conversationSummary,
+        deps.summarizer,
+      );
+
     const escalationsTriggered = routing.reason ? [routing.reason] : [];
     const guardrailBlocked = meta.stopReason === 'guardrail_intervened';
     const inferenceRegion = deps.config.inferenceRegion;
@@ -614,10 +702,11 @@ export async function handleTurnStream(
         capturedThisSession: mergedCaptured,
         pendingConfirmation: newPending,
         stillNeeded: newStillNeeded,
-        transcriptHistory: newHistory,
+        transcriptHistory: trimmedHistory,
         escalationsTriggered,
         inferenceRegion,
         streamingUsed: true,
+        conversationSummary: newConversationSummary,
       }),
       deps.modelCallRecorder.record(
         buildModelCallRecord({
@@ -633,6 +722,22 @@ export async function handleTurnStream(
           escalationReason: routing.reason,
         }),
       ),
+      summarizerTelemetry
+        ? deps.modelCallRecorder.record(
+            buildModelCallRecord({
+              sessionId: event.sessionId,
+              patientId: event.patientId,
+              tier: 'T2',
+              model: deps.config.haikuModelId,
+              streamed: false,
+              guardrailBlocked: summarizerTelemetry.guardrailBlocked,
+              usage: summarizerTelemetry.usage,
+              latencyMs: summarizerTelemetry.latencyMs,
+              inferenceRegion: summarizerTelemetry.inferenceRegion,
+              escalationReason: 'summarizer_overflow',
+            }),
+          )
+        : Promise.resolve(),
       alertPromise,
     ]);
 

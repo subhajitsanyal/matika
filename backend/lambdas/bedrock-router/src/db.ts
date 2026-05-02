@@ -260,6 +260,7 @@ export interface SessionUpdate {
   escalationsTriggered: string[];
   inferenceRegion: string;
   streamingUsed: boolean;
+  conversationSummary: string | null;
 }
 
 export interface SessionPersister {
@@ -279,7 +280,8 @@ export class PgSessionPersister implements SessionPersister {
            transcript_history = $6,
            escalations_triggered = $7,
            inference_region = $8,
-           streaming_used = $9
+           streaming_used = $9,
+           conversation_summary = $10
        WHERE id = $1`,
       [
         sessionId,
@@ -297,6 +299,7 @@ export class PgSessionPersister implements SessionPersister {
         JSON.stringify(patch.escalationsTriggered),
         patch.inferenceRegion,
         patch.streamingUsed,
+        patch.conversationSummary,
       ],
     );
   }

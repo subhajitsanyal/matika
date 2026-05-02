@@ -7,6 +7,11 @@
 import { Tier, pricingForTier, ModelPricing } from './pricing';
 import type { EscalationSignal } from '../escalation/signal_detectors';
 
+// Backend-only escalation_reason markers used for telemetry on Bedrock calls
+// that aren't conversation-routing escalations. Stored in the same VARCHAR(64)
+// column as EscalationSignal values, so the cost rollup can analyze them.
+export type TelemetryOnlyReason = 'summarizer_overflow';
+
 export interface TokenUsage {
   inputTokens: number;
   cachedInputTokens: number;
@@ -54,7 +59,10 @@ export interface ModelCallRecord {
   outputTokens: number;
   latencyMs: number;
   inferenceRegion: string;
-  escalationReason: EscalationSignal | null;
+  // Backend-side telemetry-only reasons (not part of the escalation routing
+  // signal set) extend this with markers like 'summarizer_overflow' for
+  // out-of-band Bedrock calls (summarizer, future internal callers).
+  escalationReason: EscalationSignal | TelemetryOnlyReason | null;
   costUsd: number;
 }
 
@@ -68,7 +76,10 @@ export interface BuildRecordInput {
   usage: TokenUsage;
   latencyMs: number;
   inferenceRegion: string;
-  escalationReason: EscalationSignal | null;
+  // Backend-side telemetry-only reasons (not part of the escalation routing
+  // signal set) extend this with markers like 'summarizer_overflow' for
+  // out-of-band Bedrock calls (summarizer, future internal callers).
+  escalationReason: EscalationSignal | TelemetryOnlyReason | null;
 }
 
 // Pure factory — produces the row to insert. Doesn't write anything.
