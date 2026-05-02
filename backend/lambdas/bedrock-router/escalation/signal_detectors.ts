@@ -106,10 +106,16 @@ export function detectEscalation(input: EscalationInput): RoutingDecision {
     }
   }
 
-  // 3. Caregiver-config session with protocol-design content → Sonnet.
+  // 3. Caregiver session — always default to Sonnet (T-V2-300). Caregiver
+  // turns are higher-stakes, longer, and more nuanced than patient-logging
+  // turns; the latency cost is acceptable because caregivers tolerate it
+  // and these conversations are infrequent. The protocolDesignTurn flag
+  // is preserved for telemetry — when set, we know the turn specifically
+  // involves protocol-design content (vs general caregiver chat) and a
+  // future increment may load a different sub-prompt for that case.
   if (
-    (context.sessionType === 'caregiver_config' || context.sessionType === 'caregiver_onboarding') &&
-    context.protocolDesignTurn
+    context.sessionType === 'caregiver_config' ||
+    context.sessionType === 'caregiver_onboarding'
   ) {
     return { tier: 'T3', reason: 'caregiver_protocol_design' };
   }

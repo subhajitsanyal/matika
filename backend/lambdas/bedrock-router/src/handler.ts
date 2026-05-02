@@ -31,6 +31,7 @@ import type {
   TurnContextLoader,
   PatientContext,
   SessionState,
+  SessionType,
   Turn,
 } from './context/types';
 
@@ -98,7 +99,8 @@ export interface HandlerConfig {
   guardrailVersion?: string;
   inferenceRegion: string;
   maxTokens: number;
-  systemPromptPath: string; // resolved path to prompts/system_v2.md
+  systemPromptPath: string; // resolved path to prompts/system_v2.md (default for patient_logging + caregiver_config)
+  caregiverOnboardingPromptPath?: string; // optional — resolved path to prompts/system_v2_caregiver_onboarding.md
   escalationSubpromptDir: string; // resolved path to escalation_subprompts/
   hardRateLimitPerPatient: number; // surfaced into RateLimitAlertMessage
 }
@@ -147,7 +149,9 @@ export async function handleTurn(event: TurnRequest, deps: HandlerDeps): Promise
   // 4. Build prompt. If a routing escalation reason has a matching sub-prompt,
   //    prepend it to the per-turn block so the model gets a focused directive
   //    (challenge implausibility, handle emergency safety-first, etc.).
-  const systemPrompt = loadSystemPrompt(deps.config.systemPromptPath);
+  const systemPrompt = loadSystemPrompt(
+    selectSystemPromptPath(turnCtx.sessionState.sessionType, deps.config),
+  );
   const perPatientBlock = renderPatientContext(patientCtx);
   const baseTurnBlock = renderTurnContext(turnCtx);
   const subprompt = routing.reason
@@ -410,6 +414,21 @@ export function _resetSystemPromptCache(): void {
   _cachedEscalationSubprompts.clear();
 }
 
+// Picks the right system prompt for this turn's session type. Caregiver
+// onboarding gets a dedicated prompt (T-V2-301) when configured; everything
+// else falls back to the default system_v2.md (which has a "Caregiver mode"
+// section that handles caregiver_config sessions adequately for pilot —
+// caregiver_config gets its own dedicated prompt in a future increment).
+function selectSystemPromptPath(
+  sessionType: SessionType,
+  config: HandlerConfig,
+): string {
+  if (sessionType === 'caregiver_onboarding' && config.caregiverOnboardingPromptPath) {
+    return config.caregiverOnboardingPromptPath;
+  }
+  return config.systemPromptPath;
+}
+
 // Loads an escalation-specific sub-prompt from disk, cached after first read.
 // Returns null if no sub-prompt file exists for the given reason — that's
 // intentional; only some escalation reasons (emergency, implausible_value)
@@ -646,7 +665,9 @@ export async function handleTurnStream(
       data: { sessionId: event.sessionId, tier, model: modelId, streamId },
     });
 
-    const systemPrompt = loadSystemPrompt(deps.config.systemPromptPath);
+    const systemPrompt = loadSystemPrompt(
+      selectSystemPromptPath(turnCtx.sessionState.sessionType, deps.config),
+    );
     const perPatientBlock = renderPatientContext(patientCtx);
     const baseTurnBlock = renderTurnContext(turnCtx);
     const subprompt = routing.reason

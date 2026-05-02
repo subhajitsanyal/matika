@@ -1317,3 +1317,125 @@ describe('handleTurnStream — per-patient rate limit', () => {
     }
   });
 });
+
+// ---------- Caregiver session routing (T-V2-300, T-V2-301) ----------
+
+describe('handleTurn — caregiver session routing', () => {
+  function caregiverInvokeResult(): InvokeResult {
+    return makeInvokeResult({
+      responseText: `<output>
+{
+  "responseText": "Of course. What's the patient's name?",
+  "ttsHints": { "language": "en-IN", "spellOutNumbers": false },
+  "extractedValues": [],
+  "actions": [],
+  "stateTransition": "GREETING -> EXTRACTING",
+  "escalationReason": "caregiver_protocol_design"
+}
+</output>`,
+    });
+  }
+
+  it('routes caregiver_config to Sonnet (tier T3)', async () => {
+    const turnCtx = baseTurnCtx();
+    turnCtx.sessionState.sessionType = 'caregiver_config';
+    turnCtx.sessionState.fsmState = 'GREETING';
+    const { deps, calls } = makeDeps({
+      turnCtx,
+      invokeResult: caregiverInvokeResult(),
+    });
+    const result = await handleTurn(baseRequest, deps);
+    expect(result.statusCode).toBe(200);
+    const body = JSON.parse(result.body);
+    expect(body.telemetry.tier).toBe('T3');
+    expect(body.telemetry.model).toBe('apac.anthropic.claude-sonnet-4-x-v1:0');
+    expect(body.telemetry.escalationReason).toBe('caregiver_protocol_design');
+    expect(calls.invokeCalls[0].modelId).toBe('apac.anthropic.claude-sonnet-4-x-v1:0');
+  });
+
+  it('routes caregiver_onboarding to Sonnet (tier T3)', async () => {
+    const turnCtx = baseTurnCtx();
+    turnCtx.sessionState.sessionType = 'caregiver_onboarding';
+    turnCtx.sessionState.fsmState = 'GREETING';
+    const { deps, calls } = makeDeps({
+      turnCtx,
+      invokeResult: caregiverInvokeResult(),
+    });
+    await handleTurn(baseRequest, deps);
+    expect(calls.invokeCalls[0].modelId).toBe('apac.anthropic.claude-sonnet-4-x-v1:0');
+    const record = calls.modelCallRecords[0];
+    expect(record.tier).toBe('T3');
+    expect(record.escalationReason).toBe('caregiver_protocol_design');
+  });
+
+  it('uses caregiver_onboarding prompt when path configured AND session type matches', async () => {
+    const turnCtx = baseTurnCtx();
+    turnCtx.sessionState.sessionType = 'caregiver_onboarding';
+    turnCtx.sessionState.fsmState = 'GREETING';
+    const { deps, calls } = makeDeps({
+      turnCtx,
+      invokeResult: caregiverInvokeResult(),
+    });
+    deps.config.caregiverOnboardingPromptPath = resolve(
+      __dirname,
+      '..',
+      'prompts',
+      'system_v2_caregiver_onboarding.md',
+    );
+    await handleTurn(baseRequest, deps);
+    const systemPrompt = calls.invokeCalls[0].body.system[0].text;
+    expect(systemPrompt).toContain('onboarding assistant talking to the **caregiver**');
+    expect(systemPrompt).toContain('Stage 1');
+  });
+
+  it('falls back to default system_v2.md when no caregiver onboarding path configured', async () => {
+    const turnCtx = baseTurnCtx();
+    turnCtx.sessionState.sessionType = 'caregiver_onboarding';
+    turnCtx.sessionState.fsmState = 'GREETING';
+    const { deps, calls } = makeDeps({
+      turnCtx,
+      invokeResult: caregiverInvokeResult(),
+    });
+    deps.config.caregiverOnboardingPromptPath = undefined;
+    await handleTurn(baseRequest, deps);
+    const systemPrompt = calls.invokeCalls[0].body.system[0].text;
+    // The default prompt's identity line, not the onboarding one
+    expect(systemPrompt).toContain('You are Matika, a warm, patient health companion');
+    expect(systemPrompt).not.toContain('Stage 1');
+  });
+
+  it('uses default system prompt for caregiver_config (no dedicated prompt yet)', async () => {
+    const turnCtx = baseTurnCtx();
+    turnCtx.sessionState.sessionType = 'caregiver_config';
+    turnCtx.sessionState.fsmState = 'GREETING';
+    const { deps, calls } = makeDeps({
+      turnCtx,
+      invokeResult: caregiverInvokeResult(),
+    });
+    deps.config.caregiverOnboardingPromptPath = resolve(
+      __dirname,
+      '..',
+      'prompts',
+      'system_v2_caregiver_onboarding.md',
+    );
+    await handleTurn(baseRequest, deps);
+    const systemPrompt = calls.invokeCalls[0].body.system[0].text;
+    // Default prompt with caregiver-mode addendum; not the onboarding-specific one
+    expect(systemPrompt).toContain('You are Matika, a warm, patient health companion');
+    expect(systemPrompt).toContain('# Caregiver mode');
+    expect(systemPrompt).not.toContain('## Stage 1 — Patient identity');
+  });
+
+  it('patient_logging session uses default prompt regardless of caregiver path being set', async () => {
+    const { deps, calls } = makeDeps();
+    deps.config.caregiverOnboardingPromptPath = resolve(
+      __dirname,
+      '..',
+      'prompts',
+      'system_v2_caregiver_onboarding.md',
+    );
+    await handleTurn(baseRequest, deps);
+    const systemPrompt = calls.invokeCalls[0].body.system[0].text;
+    expect(systemPrompt).not.toContain('Stage 1');
+  });
+});

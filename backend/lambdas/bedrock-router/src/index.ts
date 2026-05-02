@@ -79,6 +79,12 @@ function buildDeps(): HandlerDeps {
       inferenceRegion,
       maxTokens: parseInt(process.env.BEDROCK_MAX_TOKENS ?? '1024', 10),
       systemPromptPath: resolvePath(__dirname, '..', 'prompts', 'system_v2.md'),
+      caregiverOnboardingPromptPath: resolvePath(
+        __dirname,
+        '..',
+        'prompts',
+        'system_v2_caregiver_onboarding.md',
+      ),
       escalationSubpromptDir: resolvePath(__dirname, '..', 'escalation_subprompts'),
       hardRateLimitPerPatient: hardLimit,
     },

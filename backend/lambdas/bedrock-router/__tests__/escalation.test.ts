@@ -92,11 +92,21 @@ describe('detectEscalation', () => {
     expect(result).toEqual({ tier: 'T3', reason: 'caregiver_protocol_design' });
   });
 
-  it('does NOT escalate caregiver_config without protocolDesignTurn', () => {
+  it('escalates caregiver_config to Sonnet by default (T-V2-300)', () => {
+    // Caregiver sessions always default to Sonnet regardless of
+    // protocolDesignTurn. The flag is preserved for telemetry / future
+    // sub-prompt selection but no longer gates the routing.
     const result = detectEscalation(input({
       context: { sessionType: 'caregiver_config', protocolDesignTurn: false },
     }));
-    expect(result.tier).toBe('T2');
+    expect(result).toEqual({ tier: 'T3', reason: 'caregiver_protocol_design' });
+  });
+
+  it('escalates caregiver_onboarding to Sonnet by default (T-V2-300)', () => {
+    const result = detectEscalation(input({
+      context: { sessionType: 'caregiver_onboarding', protocolDesignTurn: false },
+    }));
+    expect(result).toEqual({ tier: 'T3', reason: 'caregiver_protocol_design' });
   });
 
   it('escalates when pending recommendations require gentle introduction', () => {
