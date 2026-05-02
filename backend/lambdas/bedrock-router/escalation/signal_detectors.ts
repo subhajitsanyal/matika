@@ -47,7 +47,7 @@ const HARD_RANGES: Record<string, { min: number; max: number }> = {
   body_weight: { min: 5, max: 400 },
 };
 
-// Emergency keywords ported from v1 mac-mini/services/llm_service.py.
+// Emergency keywords — en/hi/bn dictionary ported from the v1 patient-logging engine.
 const EMERGENCY_KEYWORDS: Record<SupportedLanguage, string[]> = {
   'en-IN': [
     'chest pain', "can't breathe", 'cannot breathe', 'cant breathe', 'falling',

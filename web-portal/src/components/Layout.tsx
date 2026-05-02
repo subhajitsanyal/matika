@@ -33,7 +33,7 @@ export default function Layout() {
                     />
                   </svg>
                 </div>
-                <span className="text-xl font-bold text-gray-900">CareLog</span>
+                <span className="text-xl font-bold text-gray-900">Matika</span>
               </Link>
 
               {/* Navigation */}

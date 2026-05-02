@@ -1,7 +1,9 @@
-# CareLog Setup and Deployment Guide
+# Matika Setup and Deployment Guide
 
-**Version:** 3.1
-**Last Updated:** April 2026
+**Version:** 3.2
+**Last Updated:** May 2026
+
+> **v2.0 note:** v1's Mac Mini per-household inference setup is removed. Inference now runs on AWS Bedrock (cross-region). Section 6 documents the Bedrock provisioning steps that replace the v1 Mac Mini setup. Existing AWS resource names (`carelog-*`) and Android packages (`com.carelog.*`) are deliberately retained until the v2.1 rename pass — see `docs/matika_v2_migration.md`.
 
 ---
 
@@ -14,7 +16,7 @@ If you just want to get everything running, follow these steps in order:
 3. Install Lambda deps, deploy infra, run migrations (section 3)
 4. Update app configs and build Android/iOS (section 4)
 5. Distribute to testers (section 5)
-6. (Optional) Set up Mac Mini AI services (section 6)
+6. Provision AWS Bedrock — model access, inference profiles, Guardrails (section 6)
 
 ---
 
@@ -71,7 +73,7 @@ Add to `infrastructure/terraform/environments/dev/terraform.tfvars` (gitignored)
 
 ```hcl
 ses_email_arn  = "arn:aws:ses:ap-south-1:YOUR_ACCOUNT_ID:identity/YOUR_EMAIL@yourdomain.com"
-ses_from_email = "CareLog <YOUR_EMAIL@yourdomain.com>"
+ses_from_email = "Matika <YOUR_EMAIL@yourdomain.com>"
 ```
 
 ---
@@ -247,34 +249,61 @@ aws s3 sync dist/ s3://carelog-dev-web-portal/ --delete --region ap-south-1
 
 ---
 
-## 6. Mac Mini AI Services (Optional)
+## 6. AWS Bedrock Provisioning (v2)
 
-The Mac Mini runs 5 FastAPI services for voice conversation (STT, LLM, TTS, Vision, Health Aggregator). The app works without it — conversation features will be disabled.
+v2 replaces the per-household Mac Mini inference stack with AWS Bedrock. Three pieces of provisioning are needed before the conversational system can run end-to-end.
 
-### 6.1 Download Models (~13 GB)
+### 6.1 Confirm AWS BAA Covers Bedrock Cross-Region Inference
 
-```bash
-cd mac-mini/scripts
-sudo mkdir -p /opt/carelog/models
-./download-models.sh
+Verify with your AWS account team that the existing Business Associate Addendum covers Bedrock invocations across the `ap-south-1` (storage) and the cross-region inference profile regions (typically `ap-southeast-1` and `us-east-1`). If not, escalate to the AWS healthcare team. **All downstream Bedrock work is blocked until this is confirmed.**
+
+### 6.2 Request Bedrock Model Access (1–3 day SLA)
+
+Submit access requests via the Bedrock console for the two foundation models Matika v2 uses:
+
+```
+anthropic.claude-haiku-4-5-v1:0
+anthropic.claude-sonnet-4-x-v1:0
 ```
 
-Downloads from Hugging Face: Whisper Large V3 (STT), Qwen 2.5 7B (LLM), Qwen2-VL 7B (Vision), Piper voices (TTS English + Hindi).
+Request both in `ap-southeast-1` (primary) and `us-east-1` (fallback) — these are the regions the cross-region inference profiles route to. Approval typically takes 1–2 business days; submit early.
 
-### 6.2 Provision (Production)
+### 6.3 Create Cross-Region Inference Profiles
 
-```bash
-cd mac-mini/deploy
-sudo ./provision.sh
-```
-
-### 6.3 Verify
+Once model access is granted, the `infrastructure/terraform/modules/bedrock/` module provisions the inference profiles. Resources are commented out until model access is confirmed; uncomment in `inference_profiles.tf` and `guardrail.tf`, then:
 
 ```bash
-curl http://localhost:8000/health
+cd infrastructure/terraform/environments/dev
+terraform plan -var-file=dev.tfvars -target=module.bedrock
+terraform apply -var-file=dev.tfvars -target=module.bedrock
 ```
 
-All 5 services should report `healthy`. See `mac-mini/deploy/` for launchd management, model updates, and security hardening.
+This creates the Haiku and Sonnet inference profiles plus the Matika Guardrail (PHI redaction, denied medical-advice topics, custom emergency triggers per `docs/matika_spec_v2.md` §11.5).
+
+### 6.4 Submit Bedrock Quota Increase Requests
+
+Default Bedrock quotas are typically sufficient for a 10-patient pilot, but request increases early (1–3 day SLA) to avoid blocking later phases. Target via Service Quotas console:
+
+- Haiku: 50 RPM on each inference profile region
+- Sonnet: 10 RPM on each inference profile region
+
+### 6.5 Verify
+
+```bash
+# 1-token Bedrock smoke test against the Haiku inference profile
+aws bedrock-runtime invoke-model \
+  --model-id apac.anthropic.claude-haiku-4-5-v1:0 \
+  --body '{"messages":[{"role":"user","content":"hi"}],"max_tokens":1,"anthropic_version":"bedrock-2023-05-31"}' \
+  --content-type application/json \
+  --region ap-south-1 /tmp/bedrock-test.json && cat /tmp/bedrock-test.json
+
+# Health-check Lambda end-to-end
+TOKEN=$(...)  # admin Cognito token
+curl -H "Authorization: Bearer $TOKEN" \
+  "https://${API_ID}.execute-api.ap-south-1.amazonaws.com/dev/health"
+```
+
+The `/health` response should show `bedrock: "up"` and a populated `bedrock_inference_region`.
 
 ---
 
@@ -503,9 +532,10 @@ Web Portal (Doctor)
 
 | Date | Changes |
 |------|---------|
+| 2026-05-02 | v3.2: Brand rename to Matika; replaced Mac Mini section with Bedrock provisioning section |
 | 2026-04-26 | v3.1: Restructured guide into linear deployment flow; moved troubleshooting and reference to end |
 | 2026-04-25 | v3.0: Added Mac Mini services, conversational system, 28 Lambdas, model download script, emulator DNS fix, nuclear cleanup |
 
 ---
 
-*CareLog Setup and Deployment Guide v3.1 — April 2026*
+*Matika Setup and Deployment Guide v3.2 — May 2026*

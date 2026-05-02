@@ -1,8 +1,10 @@
-# CareLog
+# Matika
 
 **Health monitoring for you and your loved ones**
 
-CareLog is a healthcare monitoring platform designed for elderly patients and their care teams. It enables caregivers (family members) to create patient profiles, invite attendants, and monitor vitals — while attendants and patients can log daily health readings with offline-first reliability.
+Matika is a conversational, voice-first health monitoring platform for elderly patients, their family caregivers, and attending physicians. Patients log vitals through natural conversation in English, Hindi, or Bengali — extraction, validation, and FHIR-compliant storage happen automatically. Caregivers configure monitoring protocols by talking; doctors review structured longitudinal data via a web portal.
+
+> **Note:** v2.0 (May 2026) replaces the v1 Mac Mini-based inference architecture with AWS Bedrock (Claude Haiku 4.5 + Sonnet 4.x cross-region) and Android on-device STT/TTS. See `docs/matika_prd_v2.md`.
 
 ## Key Features
 

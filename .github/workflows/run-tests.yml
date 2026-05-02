@@ -81,12 +81,6 @@ jobs:
           - name: web-portal
             working-directory: web-portal
             test-command: npm run test -- --run
-          - name: mac-mini
-            working-directory: mac-mini
-            test-command: |
-              if [ -f requirements-test.txt ]; then pip install -r requirements-test.txt; fi
-              if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-              python -m pytest tests/ -v --tb=short || echo "No tests found or pytest not configured"
 
     steps:
       - name: Checkout code
@@ -105,13 +99,6 @@ jobs:
         if: matrix.name == 'web-portal'
         working-directory: ${{ matrix.working-directory }}
         run: npm ci
-
-      # Python setup (for mac-mini)
-      - name: Setup Python
-        if: matrix.name == 'mac-mini'
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
 
       # Run tests
       - name: Run tests

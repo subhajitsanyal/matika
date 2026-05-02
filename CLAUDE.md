@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**CareLog** is a healthcare monitoring platform for elderly patients, caregivers, and physicians. It consists of three client apps (Android, iOS, web portal), a serverless backend (AWS Lambda), and Terraform infrastructure — all in a single repository.
+**Matika** is a conversational, voice-first health monitoring platform for elderly patients, family caregivers, and attending physicians. It consists of three client apps (Android, iOS, web portal), a serverless AWS backend, and Terraform infrastructure — all in a single repository. v2.0 (May 2026) uses AWS Bedrock for inference (Claude Haiku 4.5 + Sonnet 4.x cross-region) and Android on-device STT/TTS, replacing the v1 Mac Mini-based architecture. Authoritative v2 docs live at `docs/matika_prd_v2.md` and `docs/matika_spec_v2.md`. Resource and package names (`carelog-*`, `com.carelog.*`) are kept until the v2.1 rename pass — do not rename them in v2.0 work.
 
 ## Build & Run Commands
 
