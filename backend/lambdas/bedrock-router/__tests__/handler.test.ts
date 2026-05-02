@@ -8,6 +8,7 @@ import {
   _resetSystemPromptCache,
 } from '../src/handler';
 import { CollectingSseEmitter } from '../src/sse_events';
+import type { AlertEnqueuer, EmergencyAlertMessage } from '../src/alert_queue';
 import type { BedrockInvoker, InvokeInput, InvokeResult, StreamChunk } from '../src/bedrock_client';
 import type {
   PatientContextLoader,
@@ -19,6 +20,7 @@ import type { SessionPersister, ModelCallRecorder, SessionUpdate } from '../src/
 import type { ModelCallRecord } from '../src/telemetry';
 
 const SYSTEM_PROMPT_PATH = resolve(__dirname, '..', 'prompts', 'system_v2.md');
+const ESCALATION_SUBPROMPT_DIR = resolve(__dirname, '..', 'escalation_subprompts');
 
 // ---------- Test fixtures ----------
 
@@ -124,6 +126,7 @@ interface CapturedCalls {
   turnLoadCalls: Array<{ sessionId: string; transcript: string }>;
   persisterUpdates: Array<{ sessionId: string; patch: SessionUpdate }>;
   modelCallRecords: ModelCallRecord[];
+  alertsEnqueued: EmergencyAlertMessage[];
 }
 
 function makeDeps(opts: {
@@ -135,6 +138,7 @@ function makeDeps(opts: {
   patientLoadError?: Error;
   turnLoadError?: Error;
   nowSequence?: number[];
+  withAlertEnqueuer?: boolean; // defaults to true
 } = {}): { deps: HandlerDeps; calls: CapturedCalls } {
   const calls: CapturedCalls = {
     invokeCalls: [],
@@ -142,6 +146,7 @@ function makeDeps(opts: {
     turnLoadCalls: [],
     persisterUpdates: [],
     modelCallRecords: [],
+    alertsEnqueued: [],
   };
 
   const bedrock: BedrockInvoker = {
@@ -184,6 +189,14 @@ function makeDeps(opts: {
       calls.modelCallRecords.push(record);
     },
   };
+  const alertEnqueuer: AlertEnqueuer | undefined =
+    opts.withAlertEnqueuer === false
+      ? undefined
+      : {
+          async enqueueEmergency(message) {
+            calls.alertsEnqueued.push(message);
+          },
+        };
 
   let nowIdx = 0;
   const nowSeq = opts.nowSequence;
@@ -201,6 +214,7 @@ function makeDeps(opts: {
       turnLoader,
       sessionPersister,
       modelCallRecorder,
+      alertEnqueuer,
       config: {
         haikuModelId: 'apac.anthropic.claude-haiku-4-5-v1:0',
         sonnetModelId: 'apac.anthropic.claude-sonnet-4-x-v1:0',
@@ -209,6 +223,7 @@ function makeDeps(opts: {
         inferenceRegion: 'ap-southeast-1',
         maxTokens: 1024,
         systemPromptPath: SYSTEM_PROMPT_PATH,
+        escalationSubpromptDir: ESCALATION_SUBPROMPT_DIR,
       },
       now,
     },
@@ -505,6 +520,7 @@ describe('handleTurn — parser retry on parse failure', () => {
       turnLoadCalls: [],
       persisterUpdates: [],
       modelCallRecords: [],
+      alertsEnqueued: [],
     };
     let invokeCount = 0;
     const bedrock: BedrockInvoker = {
@@ -540,6 +556,7 @@ describe('handleTurn — parser retry on parse failure', () => {
         inferenceRegion: 'ap-southeast-1',
         maxTokens: 1024,
         systemPromptPath: SYSTEM_PROMPT_PATH,
+        escalationSubpromptDir: ESCALATION_SUBPROMPT_DIR,
       },
     };
     return { deps, calls };
@@ -739,5 +756,259 @@ describe('handleTurnStream', () => {
     if (sentence?.type === 'sentence') {
       expect(sentence.data.text).toContain('one thirty');
     }
+  });
+});
+
+// ---------- Emergency alert enqueueing ----------
+
+describe('handleTurn — emergency alert (T-V2-222)', () => {
+  it('enqueues an alert when emergency_keyword routing reason fires', async () => {
+    const { deps, calls } = makeDeps({
+      invokeResult: makeInvokeResult({
+        responseText: `<output>
+{"responseText":"Please contact your caregiver immediately.","ttsHints":{"language":"en-IN","spellOutNumbers":false},"extractedValues":[],"actions":[{"type":"escalate_emergency","reason":"chest_pain"}],"stateTransition":"EXTRACTING -> EMERGENCY","escalationReason":"emergency"}
+</output>`,
+      }),
+    });
+    await handleTurn({ ...baseRequest, transcript: 'I have chest pain' }, deps);
+    expect(calls.alertsEnqueued).toHaveLength(1);
+    const alert = calls.alertsEnqueued[0];
+    expect(alert.alertType).toBe('emergency');
+    expect(alert.patientId).toBe('patient-1');
+    expect(alert.sessionId).toBe('session-1');
+    expect(alert.transcript).toBe('I have chest pain');
+    expect(alert.language).toBe('en-IN');
+    // Both transcript_keyword (router-side) and llm_classification (LLM
+    // returned escalationReason: emergency) fire on this turn.
+    expect(alert.triggers).toEqual(expect.arrayContaining(['transcript_keyword', 'llm_classification']));
+  });
+
+  it('enqueues an alert with only llm_classification when LLM flags emergency unprompted', async () => {
+    const { deps, calls } = makeDeps({
+      invokeResult: makeInvokeResult({
+        responseText: `<output>
+{"responseText":"Something seems off — please call.","ttsHints":{"language":"en-IN","spellOutNumbers":false},"extractedValues":[],"actions":[],"stateTransition":"EXTRACTING -> EMERGENCY","escalationReason":"emergency"}
+</output>`,
+      }),
+    });
+    // Transcript has no emergency keyword
+    await handleTurn({ ...baseRequest, transcript: 'I feel a bit tired today' }, deps);
+    expect(calls.alertsEnqueued).toHaveLength(1);
+    expect(calls.alertsEnqueued[0].triggers).toEqual(['llm_classification']);
+  });
+
+  it('enqueues an alert with guardrail_block when Guardrails fires', async () => {
+    const { deps, calls } = makeDeps({
+      invokeResult: makeInvokeResult({
+        responseText: `<output>
+{"responseText":"I cannot help with that. Please reach out to your caregiver.","ttsHints":{"language":"en-IN","spellOutNumbers":false},"extractedValues":[],"actions":[],"stateTransition":"EXTRACTING -> EXTRACTING","escalationReason":null}
+</output>`,
+        guardrailBlocked: true,
+      }),
+    });
+    await handleTurn(baseRequest, deps);
+    expect(calls.alertsEnqueued).toHaveLength(1);
+    expect(calls.alertsEnqueued[0].triggers).toEqual(['guardrail_block']);
+  });
+
+  it('combines multiple triggers in a single alert when several fire', async () => {
+    const { deps, calls } = makeDeps({
+      invokeResult: makeInvokeResult({
+        responseText: `<output>
+{"responseText":"Please contact your caregiver immediately.","ttsHints":{"language":"en-IN","spellOutNumbers":false},"extractedValues":[],"actions":[],"stateTransition":"EXTRACTING -> EMERGENCY","escalationReason":"emergency"}
+</output>`,
+        guardrailBlocked: true,
+      }),
+    });
+    await handleTurn({ ...baseRequest, transcript: 'I have chest pain' }, deps);
+    expect(calls.alertsEnqueued).toHaveLength(1);
+    expect(calls.alertsEnqueued[0].triggers).toEqual(
+      expect.arrayContaining(['transcript_keyword', 'llm_classification', 'guardrail_block']),
+    );
+  });
+
+  it('does NOT enqueue an alert on a non-emergency turn', async () => {
+    const { deps, calls } = makeDeps();
+    await handleTurn(baseRequest, deps);
+    expect(calls.alertsEnqueued).toEqual([]);
+  });
+
+  it('does NOT enqueue an alert when implausible_value escalation fires (not an emergency)', async () => {
+    const { deps, calls } = makeDeps({
+      invokeResult: makeInvokeResult({
+        responseText: `<output>
+{"responseText":"That seems unusual.","ttsHints":{"language":"en-IN","spellOutNumbers":false},"extractedValues":[],"actions":[],"stateTransition":"EXTRACTING -> PLAUSIBILITY_CHALLENGE","escalationReason":"implausible_value"}
+</output>`,
+      }),
+    });
+    await handleTurn({ ...baseRequest, transcript: 'My BP is 350 over 200' }, deps);
+    expect(calls.alertsEnqueued).toEqual([]);
+  });
+
+  it('still works when alertEnqueuer is undefined (graceful no-op)', async () => {
+    const { deps, calls } = makeDeps({
+      withAlertEnqueuer: false,
+      invokeResult: makeInvokeResult({
+        responseText: `<output>
+{"responseText":"Please contact your caregiver immediately.","ttsHints":{"language":"en-IN","spellOutNumbers":false},"extractedValues":[],"actions":[],"stateTransition":"EXTRACTING -> EMERGENCY","escalationReason":"emergency"}
+</output>`,
+      }),
+    });
+    const result = await handleTurn({ ...baseRequest, transcript: 'I have chest pain' }, deps);
+    expect(result.statusCode).toBe(200); // Still succeeds
+    expect(calls.alertsEnqueued).toEqual([]); // Nothing enqueued
+  });
+});
+
+// ---------- Escalation sub-prompt loading (T-V2-220) ----------
+
+describe('handleTurn — escalation sub-prompts', () => {
+  it('prepends the implausible_value sub-prompt when that signal fires', async () => {
+    const { deps, calls } = makeDeps({
+      invokeResult: makeInvokeResult({
+        responseText: `<output>
+{"responseText":"That seems unusual.","ttsHints":{"language":"en-IN","spellOutNumbers":false},"extractedValues":[],"actions":[],"stateTransition":"EXTRACTING -> PLAUSIBILITY_CHALLENGE","escalationReason":"implausible_value"}
+</output>`,
+      }),
+    });
+    await handleTurn({ ...baseRequest, transcript: 'My BP is 350 over 200' }, deps);
+    const body = calls.invokeCalls[0].body;
+    const lastContent = body.messages[0].content[body.messages[0].content.length - 1];
+    expect(lastContent.text).toContain('PLAUSIBILITY CHALLENGE');
+    expect(lastContent.text).toContain('outside the physiological hard range');
+  });
+
+  it('prepends the emergency sub-prompt when emergency_keyword fires', async () => {
+    const { deps, calls } = makeDeps({
+      invokeResult: makeInvokeResult({
+        responseText: `<output>
+{"responseText":"Please call your caregiver.","ttsHints":{"language":"en-IN","spellOutNumbers":false},"extractedValues":[],"actions":[],"stateTransition":"EXTRACTING -> EMERGENCY","escalationReason":"emergency"}
+</output>`,
+      }),
+    });
+    await handleTurn({ ...baseRequest, transcript: 'I have chest pain' }, deps);
+    const body = calls.invokeCalls[0].body;
+    const lastContent = body.messages[0].content[body.messages[0].content.length - 1];
+    expect(lastContent.text).toContain('SAFETY ESCALATION');
+    expect(lastContent.text).toContain('possible medical emergency');
+  });
+
+  it('does NOT prepend a sub-prompt when no escalation reason set', async () => {
+    const { deps, calls } = makeDeps();
+    await handleTurn(baseRequest, deps);
+    const body = calls.invokeCalls[0].body;
+    const lastContent = body.messages[0].content[body.messages[0].content.length - 1];
+    expect(lastContent.text).not.toContain('PLAUSIBILITY CHALLENGE');
+    expect(lastContent.text).not.toContain('SAFETY ESCALATION');
+  });
+
+  it('does NOT prepend when escalation reason has no sub-prompt file (e.g. low_confidence)', async () => {
+    // Set up a turn where low_confidence_extraction fires (previous turn's
+    // confidence was low). The signal exists but no sub-prompt file is
+    // authored for it; handler should silently proceed without prepending.
+    const turnCtx = baseTurnCtx();
+    turnCtx.sessionState.pendingConfirmation = [
+      { parameter: 'blood_pressure_systolic', value: 130, unit: 'mmHg', loincCode: '8480-6', status: 'pending_confirmation', confidence: 0.55 },
+    ];
+    const { deps, calls } = makeDeps({ turnCtx });
+    await handleTurn(baseRequest, deps);
+    const body = calls.invokeCalls[0].body;
+    const lastContent = body.messages[0].content[body.messages[0].content.length - 1];
+    expect(lastContent.text).not.toContain('PLAUSIBILITY CHALLENGE');
+    expect(lastContent.text).not.toContain('SAFETY ESCALATION');
+  });
+
+  it('preserves the per-turn block content (sub-prompt is prepended, not replaced)', async () => {
+    const { deps, calls } = makeDeps({
+      invokeResult: makeInvokeResult({
+        responseText: `<output>
+{"responseText":"Please call.","ttsHints":{"language":"en-IN","spellOutNumbers":false},"extractedValues":[],"actions":[],"stateTransition":"EXTRACTING -> EMERGENCY","escalationReason":"emergency"}
+</output>`,
+      }),
+    });
+    await handleTurn({ ...baseRequest, transcript: 'I have chest pain' }, deps);
+    const body = calls.invokeCalls[0].body;
+    const lastContent = body.messages[0].content[body.messages[0].content.length - 1];
+    // Sub-prompt content is present
+    expect(lastContent.text).toContain('SAFETY ESCALATION');
+    // And the original per-turn content (Current session state, etc.) is also present
+    expect(lastContent.text).toContain('Current session state');
+    expect(lastContent.text).toContain('Current transcript');
+  });
+});
+
+// ---------- detectEmergencyTriggers (pure helper) ----------
+
+describe('detectEmergencyTriggers', () => {
+  // Re-import to test the exported helper directly.
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { detectEmergencyTriggers } = require('../src/handler');
+
+  it('returns empty for a clean turn', () => {
+    expect(detectEmergencyTriggers(null, null, false)).toEqual([]);
+  });
+
+  it('detects transcript_keyword from routing reason', () => {
+    expect(detectEmergencyTriggers('emergency_keyword', null, false)).toEqual(['transcript_keyword']);
+  });
+
+  it('detects llm_classification from LLM-returned escalation', () => {
+    expect(detectEmergencyTriggers(null, 'emergency', false)).toEqual(['llm_classification']);
+  });
+
+  it('detects guardrail_block', () => {
+    expect(detectEmergencyTriggers(null, null, true)).toEqual(['guardrail_block']);
+  });
+
+  it('returns multiple triggers in order when several fire', () => {
+    expect(detectEmergencyTriggers('emergency_keyword', 'emergency', true)).toEqual([
+      'transcript_keyword',
+      'llm_classification',
+      'guardrail_block',
+    ]);
+  });
+
+  it('does NOT trigger on non-emergency routing reasons', () => {
+    expect(detectEmergencyTriggers('implausible_value', null, false)).toEqual([]);
+    expect(detectEmergencyTriggers('caregiver_protocol_design', null, false)).toEqual([]);
+    expect(detectEmergencyTriggers('low_confidence_extraction', null, false)).toEqual([]);
+  });
+
+  it('does NOT trigger on non-emergency LLM escalation reasons', () => {
+    expect(detectEmergencyTriggers(null, 'implausible_value', false)).toEqual([]);
+    expect(detectEmergencyTriggers(null, 'long_response_expected', false)).toEqual([]);
+  });
+});
+
+// ---------- handleTurnStream emergency alert ----------
+
+describe('handleTurnStream — emergency alert', () => {
+  it('enqueues an alert on emergency turns', async () => {
+    const sonnetEmergency = `<output>
+{"responseText":"Please contact your caregiver.","ttsHints":{"language":"en-IN","spellOutNumbers":false},"extractedValues":[],"actions":[],"stateTransition":"EXTRACTING -> EMERGENCY","escalationReason":"emergency"}
+</output>`;
+    const { deps, calls } = makeDeps({
+      streamChunks: [
+        { type: 'text_delta', text: sonnetEmergency },
+        {
+          type: 'message_stop',
+          usage: { inputTokens: 2100, cachedInputTokens: 1420, outputTokens: 30 },
+          stopReason: 'end_turn',
+        },
+      ],
+    });
+    const emitter = new CollectingSseEmitter();
+    await handleTurnStream({ ...baseRequest, transcript: 'I have chest pain' }, deps, emitter);
+
+    expect(calls.alertsEnqueued).toHaveLength(1);
+    expect(calls.alertsEnqueued[0].triggers).toEqual(
+      expect.arrayContaining(['transcript_keyword', 'llm_classification']),
+    );
+  });
+
+  it('does not enqueue alert on a clean stream', async () => {
+    const { deps, calls } = makeDeps();
+    await handleTurnStream(baseRequest, deps, new CollectingSseEmitter());
+    expect(calls.alertsEnqueued).toEqual([]);
   });
 });

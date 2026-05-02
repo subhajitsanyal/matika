@@ -6,6 +6,7 @@
 // directly with their own mocks.
 
 import { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
+import { SQSClient } from '@aws-sdk/client-sqs';
 import { Pool } from 'pg';
 import { resolve as resolvePath } from 'node:path';
 
@@ -17,14 +18,16 @@ import {
   PgSessionPersister,
   PgModelCallRecorder,
 } from './db';
+import { SqsAlertEnqueuer } from './alert_queue';
 
 // Cold-start: build deps once, reuse across warm invocations.
 let _deps: HandlerDeps | null = null;
 
 function buildDeps(): HandlerDeps {
-  if (_deps) return _deps;
+  if (_deps !== null) return _deps;
 
   const inferenceRegion = process.env.INFERENCE_PROFILE_REGION ?? 'ap-southeast-1';
+  const awsRegion = process.env.AWS_REGION ?? 'ap-south-1';
 
   const bedrockClient = new BedrockRuntimeClient({ region: inferenceRegion });
   const bedrock = new AwsBedrockInvoker(bedrockClient);
@@ -37,12 +40,21 @@ function buildDeps(): HandlerDeps {
     max: 1, // Lambdas should keep a small pool — increment 5 will tune.
   });
 
-  _deps = {
+  // Alert queue — optional. Only wired when MATIKA_ALERT_QUEUE_URL is set.
+  // Without it, emergency triggers are detected but not enqueued (telemetry
+  // and session state still record the event, so nothing is silently lost).
+  const alertQueueUrl = process.env.MATIKA_ALERT_QUEUE_URL;
+  const alertEnqueuer = alertQueueUrl
+    ? new SqsAlertEnqueuer(new SQSClient({ region: awsRegion }), alertQueueUrl)
+    : undefined;
+
+  const deps: HandlerDeps = {
     bedrock,
     patientLoader: new PgPatientContextLoader(pool),
     turnLoader: new PgTurnContextLoader(pool),
     sessionPersister: new PgSessionPersister(pool),
     modelCallRecorder: new PgModelCallRecorder(pool),
+    alertEnqueuer,
     config: {
       haikuModelId: requiredEnv('BEDROCK_HAIKU_MODEL_ID'),
       sonnetModelId: requiredEnv('BEDROCK_SONNET_MODEL_ID'),
@@ -51,9 +63,11 @@ function buildDeps(): HandlerDeps {
       inferenceRegion,
       maxTokens: parseInt(process.env.BEDROCK_MAX_TOKENS ?? '1024', 10),
       systemPromptPath: resolvePath(__dirname, '..', 'prompts', 'system_v2.md'),
+      escalationSubpromptDir: resolvePath(__dirname, '..', 'escalation_subprompts'),
     },
   };
-  return _deps;
+  _deps = deps;
+  return deps;
 }
 
 function requiredEnv(name: string): string {

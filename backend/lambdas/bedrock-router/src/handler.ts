@@ -21,6 +21,8 @@ import type {
   BedrockInvoker,
   StreamUsage,
 } from './bedrock_client';
+import type { AlertEnqueuer, AlertTrigger } from './alert_queue';
+import { buildEmergencyAlert } from './alert_queue';
 import type { ModelCallRecorder, SessionPersister } from './db';
 import type {
   PatientContextLoader,
@@ -94,6 +96,7 @@ export interface HandlerConfig {
   inferenceRegion: string;
   maxTokens: number;
   systemPromptPath: string; // resolved path to prompts/system_v2.md
+  escalationSubpromptDir: string; // resolved path to escalation_subprompts/
 }
 
 export interface HandlerDeps {
@@ -102,6 +105,7 @@ export interface HandlerDeps {
   turnLoader: TurnContextLoader;
   sessionPersister: SessionPersister;
   modelCallRecorder: ModelCallRecorder;
+  alertEnqueuer?: AlertEnqueuer; // optional — handler still works without SQS
   config: HandlerConfig;
   // Pluggable clock for tests; defaults to Date.now
   now?: () => number;
@@ -131,10 +135,16 @@ export async function handleTurn(event: TurnRequest, deps: HandlerDeps): Promise
     context: deriveSignalContext(turnCtx.sessionState, patientCtx),
   });
 
-  // 4. Build prompt.
+  // 4. Build prompt. If a routing escalation reason has a matching sub-prompt,
+  //    prepend it to the per-turn block so the model gets a focused directive
+  //    (challenge implausibility, handle emergency safety-first, etc.).
   const systemPrompt = loadSystemPrompt(deps.config.systemPromptPath);
   const perPatientBlock = renderPatientContext(patientCtx);
-  const perTurnBlock = renderTurnContext(turnCtx);
+  const baseTurnBlock = renderTurnContext(turnCtx);
+  const subprompt = routing.reason
+    ? loadEscalationSubprompt(deps.config.escalationSubpromptDir, routing.reason)
+    : null;
+  const perTurnBlock = subprompt ? `${subprompt}\n\n${baseTurnBlock}` : baseTurnBlock;
   const body = buildBedrockBody({
     systemPrompt,
     perPatientBlock,
@@ -172,9 +182,24 @@ export async function handleTurn(event: TurnRequest, deps: HandlerDeps): Promise
     new Date(now()),
   );
 
-  // 9. Persist session and record telemetry in parallel — neither blocks the
-  //    response semantically; both must succeed for an audit-clean turn.
+  // 9. Persist session, record telemetry, and (if emergency) enqueue caregiver
+  //    alert — all in parallel.
+  const emergencyTriggers = detectEmergencyTriggers(routing.reason, parsed.escalationReason, result.guardrailBlocked);
   const escalationsTriggered = routing.reason ? [routing.reason] : [];
+  const alertPromise =
+    emergencyTriggers.length > 0 && deps.alertEnqueuer
+      ? deps.alertEnqueuer.enqueueEmergency(
+          buildEmergencyAlert({
+            patientId: event.patientId,
+            sessionId: event.sessionId,
+            triggers: emergencyTriggers,
+            transcript: event.transcript,
+            language: event.language,
+            now: () => new Date(now()),
+          }),
+        )
+      : Promise.resolve();
+
   await Promise.all([
     deps.sessionPersister.update(event.sessionId, {
       fsmState: newFsmState,
@@ -204,6 +229,7 @@ export async function handleTurn(event: TurnRequest, deps: HandlerDeps): Promise
         escalationReason: routing.reason,
       }),
     ),
+    alertPromise,
   ]);
 
   // 10. Build response.
@@ -344,6 +370,55 @@ function loadSystemPrompt(path: string): string {
 // Test-only escape hatch.
 export function _resetSystemPromptCache(): void {
   _cachedSystemPrompt = null;
+  _cachedEscalationSubprompts.clear();
+}
+
+// Loads an escalation-specific sub-prompt from disk, cached after first read.
+// Returns null if no sub-prompt file exists for the given reason — that's
+// intentional; only some escalation reasons (emergency, implausible_value)
+// have authored sub-prompts. Others use the default system prompt only.
+const _cachedEscalationSubprompts = new Map<string, string | null>();
+function loadEscalationSubprompt(dir: string, reason: EscalationSignal): string | null {
+  const cacheKey = `${dir}:${reason}`;
+  if (_cachedEscalationSubprompts.has(cacheKey)) {
+    return _cachedEscalationSubprompts.get(cacheKey)!;
+  }
+  // Map escalation signal names to filenames. Only the reasons we have
+  // authored content for resolve to a filename; others return null.
+  const filename = SUBPROMPT_FILENAME_BY_REASON[reason];
+  if (!filename) {
+    _cachedEscalationSubprompts.set(cacheKey, null);
+    return null;
+  }
+  try {
+    const content = readFileSync(resolvePath(dir, filename), 'utf-8');
+    _cachedEscalationSubprompts.set(cacheKey, content);
+    return content;
+  } catch {
+    // File missing is treated as "no sub-prompt" — not an error. Lets us add
+    // sub-prompts incrementally without breaking handler when one is absent.
+    _cachedEscalationSubprompts.set(cacheKey, null);
+    return null;
+  }
+}
+
+const SUBPROMPT_FILENAME_BY_REASON: Partial<Record<EscalationSignal, string>> = {
+  emergency_keyword: 'emergency.md',
+  implausible_value: 'implausible_value.md',
+};
+
+// Returns the list of emergency triggers that fired this turn. Conservative —
+// any of three paths fires the alert. Empty array means no alert.
+export function detectEmergencyTriggers(
+  routingReason: EscalationSignal | null,
+  llmEscalationReason: StructuredOutput['escalationReason'],
+  guardrailBlocked: boolean,
+): AlertTrigger[] {
+  const triggers: AlertTrigger[] = [];
+  if (routingReason === 'emergency_keyword') triggers.push('transcript_keyword');
+  if (llmEscalationReason === 'emergency') triggers.push('llm_classification');
+  if (guardrailBlocked) triggers.push('guardrail_block');
+  return triggers;
 }
 
 function deriveSignalContext(state: SessionState, patient: PatientContext): SignalSessionContext {
@@ -451,7 +526,11 @@ export async function handleTurnStream(
 
     const systemPrompt = loadSystemPrompt(deps.config.systemPromptPath);
     const perPatientBlock = renderPatientContext(patientCtx);
-    const perTurnBlock = renderTurnContext(turnCtx);
+    const baseTurnBlock = renderTurnContext(turnCtx);
+    const subprompt = routing.reason
+      ? loadEscalationSubprompt(deps.config.escalationSubpromptDir, routing.reason)
+      : null;
+    const perTurnBlock = subprompt ? `${subprompt}\n\n${baseTurnBlock}` : baseTurnBlock;
     const body = buildBedrockBody({
       systemPrompt,
       perPatientBlock,
@@ -514,6 +593,20 @@ export async function handleTurnStream(
     const escalationsTriggered = routing.reason ? [routing.reason] : [];
     const guardrailBlocked = meta.stopReason === 'guardrail_intervened';
     const inferenceRegion = deps.config.inferenceRegion;
+    const emergencyTriggers = detectEmergencyTriggers(routing.reason, parsed.escalationReason, guardrailBlocked);
+    const alertPromise =
+      emergencyTriggers.length > 0 && deps.alertEnqueuer
+        ? deps.alertEnqueuer.enqueueEmergency(
+            buildEmergencyAlert({
+              patientId: event.patientId,
+              sessionId: event.sessionId,
+              triggers: emergencyTriggers,
+              transcript: event.transcript,
+              language: event.language,
+              now: () => new Date(now()),
+            }),
+          )
+        : Promise.resolve();
 
     await Promise.all([
       deps.sessionPersister.update(event.sessionId, {
@@ -540,6 +633,7 @@ export async function handleTurnStream(
           escalationReason: routing.reason,
         }),
       ),
+      alertPromise,
     ]);
 
     // Emit content events (sentence + extracted + action), then telemetry,
