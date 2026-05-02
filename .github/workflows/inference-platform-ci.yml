@@ -1,0 +1,55 @@
+name: Inference Platform CI
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'inference-platform/**'
+      - 'backend/lambdas/bedrock-router/prompts/**'
+      - 'backend/lambdas/bedrock-router/output_schema.json'
+      - 'backend/lambdas/bedrock-router/escalation/**'
+      - 'backend/lambdas/bedrock-vision/prompts/**'
+      - '.github/workflows/inference-platform-ci.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'inference-platform/**'
+      - 'backend/lambdas/bedrock-router/prompts/**'
+      - 'backend/lambdas/bedrock-router/output_schema.json'
+      - 'backend/lambdas/bedrock-router/escalation/**'
+      - 'backend/lambdas/bedrock-vision/prompts/**'
+      - '.github/workflows/inference-platform-ci.yml'
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  evals:
+    name: Inference Platform Evals
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: inference-platform
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: inference-platform/package.json
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint --if-present
+
+      - name: Run evals
+        run: npm test

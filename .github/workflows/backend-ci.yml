@@ -17,7 +17,7 @@ on:
 env:
   AWS_REGION: ap-south-1
   TF_VERSION: '1.6.0'
-  NODE_VERSION: '18'
+  NODE_VERSION: '20'
 
 jobs:
   terraform-validate:
@@ -121,6 +121,10 @@ jobs:
           - invite-attendant
           - invite-doctor
           - accept-invite
+          # v2 TypeScript Lambdas
+          - bedrock-router
+          - bedrock-vision
+          - health-check
 
     steps:
       - name: Checkout code
@@ -135,15 +139,19 @@ jobs:
 
       - name: Install dependencies
         working-directory: backend/lambdas/${{ matrix.lambda }}
-        run: npm ci
+        run: npm install
 
-      - name: Run tests
+      - name: Typecheck (TS Lambdas only)
         working-directory: backend/lambdas/${{ matrix.lambda }}
-        run: npm test --if-present
+        run: npm run typecheck --if-present
 
       - name: Lint
         working-directory: backend/lambdas/${{ matrix.lambda }}
         run: npm run lint --if-present
+
+      - name: Run tests
+        working-directory: backend/lambdas/${{ matrix.lambda }}
+        run: npm test --if-present
 
   lambda-build:
     name: Build Lambda Packages
@@ -166,8 +174,17 @@ jobs:
             if [ -f "$dir/package.json" ]; then
               echo "Building $(basename $dir)..."
               cd "$dir"
-              npm ci --production
-              zip -r "../$(basename $dir).zip" .
+              # TS Lambdas: install all deps, build, then prune to production.
+              # JS Lambdas: install production deps directly.
+              if [ -f "tsconfig.json" ] && grep -q '"build"' package.json; then
+                npm ci
+                npm run build
+                npm prune --production
+                zip -r "../$(basename $dir).zip" dist node_modules package.json
+              else
+                npm ci --production
+                zip -r "../$(basename $dir).zip" .
+              fi
               cd -
             fi
           done
