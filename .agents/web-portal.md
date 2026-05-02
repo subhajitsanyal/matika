@@ -2,7 +2,7 @@
 
 ## Role
 
-You are the **Web Portal** agent. You extend the existing React/TypeScript doctor portal with new tabs and components for protocol management, recommendations, and interaction history.
+You are the **Web Portal** agent. You extend the existing React/TypeScript doctor portal with new tabs and components for protocol management, recommendations, interaction history, and (new in v2) cost & telemetry visibility for admins.
 
 ## Owned Directories
 
@@ -10,176 +10,148 @@ You are the **Web Portal** agent. You extend the existing React/TypeScript docto
 web-portal/src/
 ├── components/
 │   ├── PatientView/
-│   │   ├── ProtocolTab.tsx            # NEW — parameter config management
-│   │   ├── RecommendationsTab.tsx     # NEW — parameter recommendations
-│   │   ├── InteractionsTab.tsx        # NEW — conversation session history
-│   │   ├── ParameterConfigForm.tsx    # NEW — add/edit parameter form
-│   │   ├── ThresholdOverrideForm.tsx  # MODIFY — support parameter_configs table
-│   │   └── RecommendationForm.tsx     # NEW — create recommendation form
-│   └── ... (existing components — modify as needed for new tabs)
+│   │   ├── ProtocolTab.tsx                # parameter config management
+│   │   ├── RecommendationsTab.tsx         # parameter recommendations
+│   │   ├── InteractionsTab.tsx            # conversation session history
+│   │   ├── ParameterConfigForm.tsx
+│   │   ├── ThresholdOverrideForm.tsx
+│   │   └── RecommendationForm.tsx
+│   ├── Admin/                              # NEW in v2
+│   │   ├── CostTelemetryTab.tsx           # NEW — daily per-patient Bedrock cost dashboard
+│   │   ├── EscalationsTab.tsx             # NEW — escalation breakdown by reason and tier
+│   │   ├── LatencyTab.tsx                 # NEW — P50/P95/P99 by tier and language
+│   │   └── CostChart.tsx
+│   └── ... (existing components)
 ├── pages/
-│   └── PatientViewPage.tsx            # MODIFY — add tab navigation for new tabs
+│   ├── PatientViewPage.tsx                # tab navigation for protocol, recommendations, interactions
+│   └── AdminTelemetryPage.tsx             # NEW — admin-only entry to cost/escalations/latency tabs
 ├── services/
-│   └── api.ts                         # MODIFY — add new API endpoints
+│   ├── api.ts                              # API service client
+│   └── telemetry.ts                        # NEW — admin telemetry API client
 ├── types/
-│   └── index.ts                       # MODIFY — add new TypeScript interfaces
-└── ... (existing files — touch only as needed)
+│   └── index.ts                            # TypeScript interfaces
+└── ... (existing)
 ```
 
-You do NOT touch: `mac-mini/`, `android/`, `backend/lambdas/`, `infrastructure/terraform/`.
+You do NOT touch: `android/`, `backend/lambdas/`, `infrastructure/terraform/`, `inference-platform/`.
 
 ## Specifications
 
-Refer to `docs/carelog_spec.md`:
-- Section 9 — Web Portal Changes (your blueprint)
-  - 9.1 Delta From Existing Portal
-  - 9.2 New Components
-  - 9.3 New API Calls
-  - 9.4 Updated Data Models (TypeScript interfaces)
+Refer to `docs/matika_spec_v2.md`:
+- Section 9 — Web Portal Changes
+  - 9.1 Delta from v1 (Admin tab is new)
+  - 9.2 New API Calls (telemetry endpoints added)
 
 ## Phase Assignments
 
-### P3 — Doctor Portal (Weeks 13-15)
+### P3 — Doctor Portal (Weeks 9–11)
+- **[T-V2-330] (delta)** Existing v1 work — Protocol / Recommendations / Interactions tabs — proceeds unchanged.
+- Add small "Last session telemetry" card on patient detail page showing tier breakdown + region (read-only, doctor-visible).
 
-Epic 3.1: Protocol Management Tab
-- **3.1.1** Implement Protocol tab in PatientViewPage — list parameter configs with frequencies, thresholds, deadlines; add/remove/edit
-- **3.1.2** Implement ParameterConfigForm — form for adding new parameter or editing existing (parameter name, LOINC codes, unit, frequency_days, daily_deadline, threshold_min/max)
-- **3.1.3** Modify ThresholdOverrideForm — update to work with `parameter_configs` table; `threshold_set_by` shows doctor's ID
+### P4 — Integration & Polish (Weeks 12–14)
+- **[T-V2-421]** Admin "Cost & Telemetry" tab.
+- **[T-V2-422]** Latency dashboard tab.
+- Escalation breakdown tab.
 
-Epic 3.2: Recommendations Tab
-- **3.2.1** Implement Recommendations tab — list pending/accepted/rejected recommendations with source, rationale, status
-- **3.2.2** Implement RecommendationForm — doctor creates new recommendation with parameter_name, loinc_code, rationale, suggested_frequency_days
-
-Epic 3.3: Interactions Tab
-- **3.3.1** Implement Interactions tab — list past conversation sessions with metadata (date, duration, type, status, language, turn_count)
-- **3.3.2** Implement transcript viewer — click a session to view the full transcript (fetched from S3 via API)
-
-## New TypeScript Interfaces
+## New TypeScript Interfaces (additions in v2)
 
 Add to `web-portal/src/types/index.ts`:
 
 ```typescript
-interface ParameterConfig {
-  id: string;
-  patient_id: string;
-  parameter_name: string;
-  display_name: string;
-  loinc_codes: string[];
-  unit: string;
-  frequency_days: number;
-  daily_deadline: string; // "HH:MM"
-  timezone: string;
-  threshold_min: number[] | null;
-  threshold_max: number[] | null;
-  threshold_set_by: string | null;
-  active: boolean;
-  updated_at: string;
+interface CostTelemetry {
+  patientId: string;
+  day: string;             // ISO date
+  haikuCalls: number;
+  sonnetCalls: number;
+  visionHaikuCalls: number;
+  visionSonnetCalls: number;
+  ocrLocalCalls: number;
+  totalInputTokens: number;
+  totalCachedInputTokens: number;
+  totalOutputTokens: number;
+  totalCostUsd: number;
 }
 
-interface Recommendation {
+interface ModelCall {
   id: string;
-  patient_id: string;
-  source: 'analytics' | 'doctor';
-  source_doctor_id: string | null;
-  parameter_name: string;
-  loinc_code: string | null;
-  rationale: string;
-  suggested_frequency_days: number | null;
-  status: 'pending' | 'accepted' | 'rejected';
-  created_at: string;
-  resolved_at: string | null;
+  sessionId: string;
+  patientId: string;
+  tier: 'T2' | 'T3' | 'T2_VISION' | 'T3_VISION';
+  model: string;
+  streamed: boolean;
+  guardrailBlocked: boolean;
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  latencyMs: number;
+  inferenceRegion: string;
+  escalationReason: string | null;
+  costUsd: number;
+  createdAt: string;
 }
 
-interface InteractionSession {
-  id: string;
-  patient_id: string;
-  session_type: 'patient_logging' | 'caregiver_config' | 'caregiver_onboarding';
+interface EscalationSummary {
+  reason: string;          // e.g., 'implausible_value', 'emergency'
+  count: number;
+  costUsd: number;
+}
+
+interface LatencyPercentiles {
+  tier: 'T2' | 'T3' | 'T2_VISION' | 'T3_VISION';
   language: string;
-  status: 'complete' | 'incomplete';
-  turn_count: number;
-  duration_ms: number;
-  extracted_summary: Record<string, any>;
-  started_at: string;
-  ended_at: string;
-}
-
-interface TranscriptEntry {
-  turn: number;
-  role: 'patient' | 'caregiver' | 'system';
-  text: string;
-  timestamp: string;
+  p50: number;
+  p95: number;
+  p99: number;
+  sampleSize: number;
 }
 ```
 
-## New API Calls
+(All v1 interfaces — `ParameterConfig`, `Recommendation`, `InteractionSession`, etc. — remain unchanged.)
 
-Add to `web-portal/src/services/api.ts`:
+## New API Calls (additions in v2)
+
+Add to `web-portal/src/services/telemetry.ts`:
 
 ```typescript
-// Parameter Config
-getParameterConfigs(patientId: string): Promise<ParameterConfig[]>
-updateParameterConfig(patientId: string, configId: string, data: Partial<ParameterConfig>): Promise<void>
-createParameterConfig(patientId: string, data: CreateParameterConfig): Promise<ParameterConfig>
-deleteParameterConfig(patientId: string, configId: string): Promise<void>
-
-// Recommendations
-getRecommendations(patientId: string): Promise<Recommendation[]>
-createRecommendation(patientId: string, data: CreateRecommendation): Promise<Recommendation>
-
-// Interaction Sessions
-getInteractionSessions(patientId: string, params?: { limit?: number, offset?: number }): Promise<InteractionSession[]>
-getInteractionTranscript(patientId: string, sessionId: string): Promise<TranscriptEntry[]>
-
-// Prompts (admin/doctor)
-getPrompts(): Promise<ConversationPrompt[]>
-updatePrompt(promptType: string, data: { system_prompt: string }): Promise<void>
+getCostTelemetry(params: { patientId?: string; from: string; to: string }): Promise<CostTelemetry[]>
+getCostAggregate(params: { from: string; to: string }): Promise<{ totalCostUsd: number; perPatient: CostTelemetry[] }>
+getEscalations(params: { from: string; to: string }): Promise<EscalationSummary[]>
+getLatencyPercentiles(params: { from: string; to: string }): Promise<LatencyPercentiles[]>
 ```
+
+All admin endpoints require Cognito group `admins`.
 
 ## Key Design Decisions
 
-1. **New tabs, not new pages**: Protocol, Recommendations, and Interactions are tabs within the existing PatientViewPage, alongside existing Vitals Timeline, Files, and Care Plans tabs.
-2. **Path aliases**: Use `@/*` → `src/*` (already configured in tsconfig.json and vite.config.ts).
-3. **Auth**: All API calls use existing Amplify auth headers (Cognito JWT). Doctor must be in `doctors` Cognito group.
-4. **Charting**: Consider Chart.js or Recharts for threshold overlay lines on vitals charts (may enhance existing vitals tab too).
+1. **Admin tab is gated**: Cognito `admins` group required. The link only appears for users with that group claim.
+2. **No PHI in admin views**: Cost and telemetry views show patient IDs (UUIDs) by default; mapping to patient names is a separate authenticated lookup the admin must explicitly trigger.
+3. **Date range is the primary control**: All admin views default to "last 7 days". Charts are server-aggregated to keep client payloads small.
+4. **No real-time streaming**: Admin tabs are dashboards over `cost_telemetry` rollups; refreshed on user-triggered date-range change. No WebSocket / SSE in admin views.
+5. **Path aliases**: `@/*` → `src/*` already configured.
 
 ## Dependencies
 
 | What I need | From whom | When |
 |---|---|---|
-| Parameter config CRUD endpoints deployed | backend | P3 start |
-| Recommendations CRUD endpoints deployed | backend | P3 start |
-| Interaction list/detail endpoints deployed | backend | P3 start |
-| Prompts management endpoints deployed | backend | P3 start |
+| Admin telemetry API endpoints deployed | backend | P4 |
+| `cost_telemetry` and `model_call` tables populated | backend | P1+ |
+| Cognito `admins` group | devops | P4 |
 
 | What I provide | To whom | When |
 |---|---|---|
-| Doctor-facing protocol management UI | qa-testing (for E2E-7) | P3 end |
-| Doctor recommendation creation | qa-testing | P3 end |
-
-## Existing Portal Context
-
-Before modifying any existing files, read the current codebase:
-- `web-portal/src/pages/` — existing pages (LoginPage, PatientListPage, PatientViewPage, DoctorRegistrationPage)
-- `web-portal/src/services/api.ts` — existing API client
-- `web-portal/src/contexts/` — React Context for Cognito auth state
-- `web-portal/src/types/` — existing type definitions
-
-Follow existing patterns for:
-- API call structure (how existing calls are made in api.ts)
-- Component organization (how existing tabs/components are structured)
-- Auth header injection (how existing calls add Cognito tokens)
-- Error handling patterns
+| Doctor protocol management UI | qa-testing (E2E-7) | P3 end |
+| Admin cost/escalations/latency tabs | (PRD owner; pilot ops) | P4 end |
 
 ## Testing
 
-- Framework: Vitest + React Testing Library
-- Scope: Component rendering, API service mocking, state management
-- Test files colocated with components or in `__tests__/` directories
+- Framework: Vitest + React Testing Library.
+- Scope: component rendering, API service mocking, state management, admin gating.
+- Test that admin tabs are not rendered for non-admin users.
 
 ## Constraints
 
-- React + TypeScript + Vite
-- Follow existing code style and patterns
-- Path aliases: `@/*` → `src/*`
-- No PHI in console.log or error reporting
-- WCAG AA accessibility standards
+- React + TypeScript + Vite.
+- WCAG AA accessibility.
+- No PHI in `console.log` / error reporting.
+- Admin endpoints must check Cognito group claim — no client-side-only gating.
+- Charting library: Recharts (consistent with v1 vitals charts).

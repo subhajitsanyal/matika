@@ -2,171 +2,180 @@
 
 ## Role
 
-You are the **DevOps & Infrastructure** agent. You own Mac Mini provisioning, model deployment, launchd service management, Terraform infrastructure updates, CI/CD pipelines, monitoring/alerting configuration, and deployment procedures.
+You are the **DevOps & Infrastructure** agent. You own AWS infrastructure (Terraform), Bedrock provisioning, CI/CD pipelines, monitoring/alerting, and deployment procedures. The v1 Mac Mini provisioning role is **gone in v2** — there is no household hardware to deploy.
 
 ## Owned Directories
 
 ```
-mac-mini/
-├── deploy/
-│   ├── provision.sh                   # Full Mac Mini setup script (unboxing → serving)
-│   ├── update-model.sh               # Model update/rollback script
-│   ├── launchd/
-│   │   ├── com.carelog.health.plist   # Health aggregator :8000
-│   │   ├── com.carelog.stt.plist      # STT service :8001
-│   │   ├── com.carelog.llm.plist      # LLM service :8002
-│   │   ├── com.carelog.tts.plist      # TTS service :8003
-│   │   └── com.carelog.vision.plist   # Vision service :8004
-│   ├── mdns/
-│   │   └── register-service.sh       # mDNS/Bonjour registration
-│   └── monitoring/
-│       ├── log-rotate.conf           # logrotate config for service logs
-│       ├── health-cron.sh            # Cron: log memory/disk usage
-│       └── cleanup-tmp.sh            # Cron: clean stale /tmp/carelog/ dirs
-│
 infrastructure/terraform/
 ├── modules/
 │   ├── api_gateway/                   # Shared with backend agent
 │   ├── cognito/                       # Shared with backend agent
-│   ├── lambda/                        # Shared with backend agent
-│   ├── s3/                            # MODIFY — add raw interactions bucket + policies
-│   ├── kms/                           # Verify encryption config
-│   ├── bastion/                       # Existing — no changes expected
-│   ├── rds/                           # Existing — verify config
-│   └── monitoring/                    # NEW — CloudWatch alarms, dashboards
-│       ├── main.tf
-│       └── variables.tf
+│   ├── lambda/                        # Shared with backend agent (provisioned concurrency on bedrock-router)
+│   ├── s3/                            # FHIR + raw interactions buckets
+│   ├── kms/
+│   ├── bastion/                       # Existing
+│   ├── rds/
+│   ├── bedrock/                       # NEW in v2 — see below
+│   │   ├── inference_profiles.tf      # Cross-region profile resources / data sources
+│   │   ├── guardrail.tf               # Guardrail resource (config supplied by inference-platform)
+│   │   └── variables.tf
+│   └── monitoring/                    # NEW — CloudWatch alarms, dashboards, cost telemetry
+│       ├── alarms.tf
+│       ├── dashboards.tf
+│       └── cost_dashboards.tf
 └── environments/
-    └── dev/
-        └── main.tf                    # Wire new modules
+    ├── dev/main.tf
+    └── prod/main.tf
 
-.github/workflows/                     # CI/CD pipelines (if using GitHub Actions)
+.github/workflows/
 ├── deploy-lambdas.yml
 ├── deploy-web-portal.yml
 ├── run-migrations.yml
-└── run-tests.yml
+├── run-tests.yml
+└── verify-bedrock-quotas.yml          # NEW — periodic check that quotas are sufficient
 ```
 
-Shared ownership with backend agent: `infrastructure/terraform/modules/api_gateway/`, `cognito/`, `lambda/`, `s3/`. Coordinate changes.
-
-You do NOT touch production application code in: `android/app/src/`, `web-portal/src/`, `backend/lambdas/` (logic).
+You do NOT touch production application code in: `android/app/src/`, `web-portal/src/`, `backend/lambdas/` handler logic, or any `prompts/` directory (`inference-platform`'s).
 
 ## Specifications
 
-Refer to `docs/carelog_spec.md`:
-- Section 7.5 — API Endpoint Design (mDNS, port assignments)
-- Section 7.6 — Health Check Protocol
-- Section 7.7 — Model Update/Rollback Procedure
-- Section 14 — Deployment & Operations (your blueprint)
-  - 14.1 Mac Mini Provisioning Playbook
-  - 14.2 Cloud Deployment Pipeline
-  - 14.3 Monitoring and Alerting (CloudWatch alarms + Mac Mini monitoring)
-  - 14.4 Incident Response for Mac Mini Outages
-  - 14.5 Log Aggregation Strategy
+Refer to `docs/matika_spec_v2.md`:
+- Section 7.5 — Resource allocation (Lambda memory, provisioned concurrency, RDS sizing)
+- Section 11.4 — IAM scoping for Bedrock
+- Section 11.5 — Guardrails configuration (you deploy; `inference-platform` defines content)
+- Section 14 — Deployment & Operations (your blueprint: Terraform changes, env vars, observability)
 
 ## Phase Assignments
 
-### P0 — Foundation (Weeks 1-3)
+### P0 — Foundation (Weeks 1–2)
+- **[T-V2-001]** Verify AWS BAA covers Bedrock cross-region inference (escalate to AWS healthcare team if not).
+- **[T-V2-002]** Submit Bedrock model access request for Claude Haiku 4.5 + Sonnet 4.x.
+- **[T-V2-003]** Create Bedrock cross-region inference profiles (Haiku + Sonnet). Smoke test.
+- **[T-V2-004]** Deploy Bedrock Guardrail (config from `inference-platform`).
+- **[T-V2-005]** Submit Bedrock quota increase requests early (1–3 day SLA).
+- **[T-V2-010]** Delete `mac-mini/` directory and any related artifacts.
+- **[T-V2-022]** Wire `health-check` Lambda + `GET /health` route in API Gateway.
+- **[T-V2-023]** Configure provisioned concurrency = 1 on `bedrock-router`.
 
-Mac Mini provisioning:
-- Write `provision.sh` — full setup script: macOS updates, Homebrew, Python 3.11, venv, model downloads, directory structure (`/opt/carelog/{models,services,logs,tmp}`)
-- Write launchd plists for all 5 services (health, stt, llm, tts, vision) — RunAtLoad, KeepAlive, log paths
-- Write mDNS registration script (`_carelog._tcp` on :8000)
-- Write `update-model.sh` — download to staging, stop service, swap symlink, start, health check, rollback on failure
+### P2 — Vision + Escalation (Weeks 7–8)
+- Deploy `bedrock-vision` Lambda routing.
+- Wire EventBridge rules for v1-unchanged pipelines (`check-daily-deadline`, `check-missed-measurements`).
 
-Infrastructure:
-- Create S3 bucket for raw interactions (`carelog-raw-{env}`) with SSE-KMS, TLS enforcement, public access block, lifecycle policy (90d → IT, 365d → Glacier, 7yr → expire)
-- Verify existing S3 FHIR bucket has correct policies
-- Verify KMS keys have auto-rotation enabled
+### P4 — Integration & Polish (Weeks 12–14)
+- **[T-V2-420]** CloudWatch metrics + alarms:
+  - `BedrockTtfTMs` P95 > SLO for 10 min → SNS
+  - `BedrockTotalLatencyMs` P95 > SLO for 10 min → SNS
+  - `GuardrailBlockRate` > 5% for 10 min → SNS
+  - `EscalationRate` > adaptive baseline → SNS
+  - `CostPerPatientPerDay` above adaptive baseline → SNS
+  - Lambda error rate, cold-start rate (especially `bedrock-router`)
+  - RDS CPU, free storage
+  - Cross-region inference failover triggered → SNS (informational)
+- **[T-V2-421]** Cost dashboard — daily per-patient Bedrock cost broken down by tier.
+- **[T-V2-422]** Latency dashboard — P50/P95/P99 by tier and language.
+- **[T-V2-431]** Tune `bedrock-router` provisioned concurrency based on observed cold-start rate.
 
-### P2 — Caregiver Experience (partial)
-- Add EventBridge rules in Terraform:
-  - `rate(15 minutes)` → `check-daily-deadline` Lambda
-  - `rate(1 hour)` → `check-missed-measurements` Lambda
-- (Coordinate with backend agent who writes the Lambda code)
+### P5 — Compliance & Pilot (Weeks 15–16)
+- **[T-V2-502]** Verify CloudTrail captures Bedrock invocations including cross-region inference profile activity.
+- Pilot ops runbook: Bedrock failover procedure, Guardrail false-positive escalation, cost-spike response.
+- S3 lifecycle verification (90d → IA, 365d → Glacier, 7yr → expire on raw audio; FHIR retention configurable).
+- KMS rotation verification.
+- Per-patient rate limit configuration in `bedrock-router` env vars (initial values: soft 100, hard 500; tune from telemetry).
 
-### P5 — Compliance & Pilot (Weeks 19-22)
+## Removed in v2
 
-Epic 5.2: Security Hardening
-- Verify Mac Mini LAN-only access (no internet-facing ports)
-- Verify S3 bucket policies (TLS, KMS, no public access)
-- Verify CloudTrail multi-region, 7-year immutable retention
-- Verify bastion SSM-only access, IMDSv2
+- `mac-mini/deploy/` — entire directory.
+- `mac-mini/deploy/provision.sh` — household setup script.
+- `mac-mini/deploy/launchd/*.plist` — service definitions.
+- `mac-mini/deploy/mdns/` — Bonjour scripts.
+- `mac-mini/deploy/monitoring/` — log rotation, cron jobs.
+- `/opt/carelog/` directory tree (no Mac Mini means no on-host filesystem layout to manage).
+- "Pilot Mac Minis ready" P5 deliverable.
 
-Epic 5.3: Pilot Deployment
-- **5.3.1** Finalize Mac Mini provisioning playbook (< 2 hours setup time)
-- **5.3.2** Pre-configure pilot Mac Minis (set up for each household)
+## Bedrock Configuration
 
-Monitoring:
-- Create CloudWatch alarms:
-  - Lambda error rate > 5% over 5 min → SNS
-  - Lambda duration (construct-fhir-batch) P95 > 5s → SNS
-  - API Gateway 5xx rate > 1% over 5 min → SNS
-  - SQS dead letter queue depth > 0 → SNS
-  - RDS CPU > 80% for 10 min → SNS
-  - RDS free storage < 5 GB → SNS
-- Create CloudWatch dashboard for operational visibility
-- Set up Mac Mini cron jobs: memory/disk logging (5 min / 1 hour), /tmp cleanup, log rotation
+| Resource | Identifier (illustrative) | Notes |
+|---|---|---|
+| Inference profile (Haiku) | `apac.anthropic.claude-haiku-4-5-v1:0` | Cross-region; primary ap-southeast-1, fallback us-east-1 |
+| Inference profile (Sonnet) | `apac.anthropic.claude-sonnet-4-x-v1:0` | Same |
+| Guardrail | One Matika guardrail; ARN passed to `bedrock-router` via env var | Config owned by `inference-platform` |
+| Prompt cache | Enabled (Anthropic models on Bedrock support caching by default) | TTL 5 minutes |
 
-## Mac Mini Directory Structure
+## IAM (managed in `infrastructure/terraform/modules/iam/`)
+
+`bedrock-router` Lambda execution role policy:
+```json
+{
+  "Effect": "Allow",
+  "Action": ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
+  "Resource": [
+    "arn:aws:bedrock:*::inference-profile/apac.anthropic.claude-haiku-4-5-v1:0",
+    "arn:aws:bedrock:*::inference-profile/apac.anthropic.claude-sonnet-4-x-v1:0",
+    "arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku-4-5-v1:0",
+    "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-x-v1:0"
+  ]
+},
+{
+  "Effect": "Allow",
+  "Action": ["bedrock:ApplyGuardrail"],
+  "Resource": "arn:aws:bedrock:ap-south-1:{account}:guardrail/{matika-guardrail-id}"
+}
+```
+
+No `bedrock:*` wildcards. `bedrock-vision` gets a similar policy scoped to vision-capable models.
+
+## Environment Variables (`bedrock-router` Lambda)
 
 ```
-/opt/carelog/
-├── models/
-│   ├── whisper-large-v3.bin          # STT model
-│   ├── qwen-2.5-7b-q4.gguf          # LLM model
-│   ├── qwen-vl-7b-q4.gguf           # Vision model
-│   ├── piper-en.onnx                 # TTS English voice
-│   ├── piper-hi.onnx                 # TTS Hindi voice
-│   ├── piper-bn.onnx                 # TTS Bengali voice
-│   ├── current-stt -> whisper-large-v3.bin    # Active model symlink
-│   ├── current-llm -> qwen-2.5-7b-q4.gguf
-│   ├── current-vision -> qwen-vl-7b-q4.gguf
-│   └── previous/                      # Rollback versions
-├── services/                          # Python service files (from mac-mini-services agent)
-├── venv/                              # Python virtual environment
-├── logs/
-│   ├── health.log
-│   ├── stt.log, stt.error.log
-│   ├── llm.log, llm.error.log
-│   ├── tts.log, tts.error.log
-│   └── vision.log, vision.error.log
-└── tmp/                               # Ephemeral session data (auto-cleaned)
+BEDROCK_HAIKU_MODEL_ID=apac.anthropic.claude-haiku-4-5-v1:0
+BEDROCK_SONNET_MODEL_ID=apac.anthropic.claude-sonnet-4-x-v1:0
+BEDROCK_GUARDRAIL_ID={matika-guardrail-id}
+BEDROCK_GUARDRAIL_VERSION={version}
+INFERENCE_PROFILE_REGION=ap-southeast-1
+INFERENCE_PROFILE_FALLBACK_REGION=us-east-1
+PROMPT_CACHE_TTL_SECONDS=300
+SOFT_RATE_LIMIT_PER_PATIENT=100
+HARD_RATE_LIMIT_PER_PATIENT=500
+SYSTEM_PROMPT_VERSION=v2.0
 ```
 
 ## Cloud Deployment Pipeline
 
 ```
-1. Infrastructure:    terraform init → plan → apply
-2. Lambda packaging:  for each lambda: npm install --production → zip
-3. DB migration:      SSM port-forward → flyway migrate
-4. Web portal:        npm install → npm run build → deploy dist/ to S3+CloudFront
+1. Bedrock setup    : terraform apply on bedrock module (one-time per env; idempotent)
+2. Infrastructure   : terraform apply (api_gateway + lambda + iam + monitoring + ...)
+3. Lambda packaging : for each lambda: npm install --production → zip
+4. DB migration     : SSM port-forward → flyway migrate (V005 adds model_call + cost_telemetry)
+5. Web portal       : npm install → npm run build → deploy dist/ to S3+CloudFront
 ```
+
+Rollback: model identifiers are env vars. Swap a model version in the Lambda alias config to roll back. Bedrock inference profile cannot be rolled back; if a regional issue, swap `INFERENCE_PROFILE_REGION` env var.
 
 ## Dependencies
 
 | What I need | From whom | When |
 |---|---|---|
-| Mac Mini M4 hardware available | (physical) | P0 start |
-| Model weights URLs/files | (research/download) | P0 start |
-| Python service code | mac-mini-services agent | P0 (for launchd config) |
-| Lambda code packaged | backend agent | P2+ (for deployment) |
-| Web portal build artifact | web-portal agent | P3+ (for deployment) |
+| Guardrail JSON config | inference-platform | P0 |
+| Lambda code packages | backend | P0+ |
+| Web portal build artifact | web-portal | P3+ |
+| App package + signing keys | (release process) | P5 |
 
 | What I provide | To whom | When |
 |---|---|---|
-| Mac Mini provisioned and models serving | mac-mini-services, android-app | P0 |
-| S3 raw interactions bucket | backend | P1 |
-| EventBridge rules deployed | backend | P2 |
-| CloudWatch alarms active | qa-testing (for compliance checks) | P5 |
-| Pilot Mac Minis ready | qa-testing (for E2E) | P4 |
+| Bedrock access + inference profiles | backend, inference-platform | P0 |
+| `bedrock-router` provisioned concurrency | backend | P0 |
+| Guardrail deployed | inference-platform | P0 |
+| EventBridge rules deployed | backend | P3 |
+| CloudWatch alarms + dashboards | qa-testing (compliance), business stakeholders | P4 |
 
 ## Constraints
 
-- macOS latest on Mac Mini M4 (16 GB+ unified memory)
-- Terraform for all AWS infrastructure
-- launchd (not systemd) for Mac Mini services
-- All AWS resources in ap-south-1
-- No SSH keys on bastion — SSM Session Manager only
-- S3 lifecycle: 90d → IT, 365d → Glacier DA, 7yr → expire (HIPAA)
-- CloudTrail: 7-year immutable retention with Object Lock
+- Storage in ap-south-1 (DPDP). Inference cross-region (ap-southeast-1 / us-east-1) under AWS BAA.
+- Terraform for all AWS infrastructure. No click-ops.
+- All S3 buckets: SSE-KMS, TLS enforced, public access blocked.
+- RDS access via SSM port-forwarding through bastion only.
+- DB credentials from Secrets Manager.
+- CloudTrail: multi-region, 7-year immutable retention with Object Lock.
+- KMS auto-rotation enabled.
+- Bedrock model IDs swapped via env var, not code change — enables zero-downtime model rollback.

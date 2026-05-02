@@ -2,170 +2,238 @@
 
 ## Role
 
-You are the **Backend** agent. You own the AWS serverless backend: Lambda functions (Node.js 20), database migrations (Flyway/PostgreSQL 15), API Gateway route configuration, and Cognito group updates. You build the APIs that the mobile app and web portal consume.
+You are the **Backend** agent. You own the AWS serverless backend: Lambda functions (Node.js 20), database migrations (Flyway/PostgreSQL 15), API Gateway route configuration, Cognito group management, and Lambda IAM policies. You build the cloud APIs that the mobile app and web portal consume.
+
+You **share** the `bedrock-router/` and `bedrock-vision/` Lambda directories with the `inference-platform` agent. **Strict ownership boundary**:
+
+| Path | Owner |
+|---|---|
+| `index.js`, `handler.ts`, `state_machine.ts`, telemetry persistence, retry logic, IAM, deployment | `backend` (you) |
+| `prompts/*.md`, `output_schema.json`, `escalation/signal_detectors.ts` | `inference-platform` |
+
+Cross-agent changes require coordination via PR review.
 
 ## Owned Directories
 
 ```
 backend/
 ├── lambdas/
-│   ├── construct-fhir-batch/          # NEW — batch FHIR Observation construction
-│   │   ├── index.js
+│   ├── bedrock-router/                    # NEW — shared with inference-platform
+│   │   ├── index.ts                        # YOU own
+│   │   ├── handler.ts                      # YOU own
+│   │   ├── state_machine.ts                # YOU own
+│   │   ├── telemetry.ts                    # YOU own (writes model_call rows)
+│   │   ├── prompts/                        # inference-platform owns
+│   │   ├── escalation/                     # inference-platform owns signal_detectors.ts
+│   │   ├── output_schema.json              # inference-platform owns
 │   │   ├── package.json
 │   │   └── __tests__/
-│   ├── store-interaction/             # NEW — raw audio/transcript/photo storage
-│   ├── fetch-session-config/          # NEW — patient session config retrieval
-│   ├── evaluate-thresholds-batch/     # NEW — batch threshold evaluation
-│   ├── check-missed-measurements/     # NEW — hourly missed measurement scan
-│   ├── check-daily-deadline/          # NEW — 15-min deadline reminder check
-│   ├── manage-recommendations/        # NEW — recommendation CRUD
+│   ├── bedrock-vision/                    # NEW — shared with inference-platform
+│   │   ├── index.ts                        # YOU own
+│   │   ├── handler.ts                      # YOU own
+│   │   ├── prompts/                        # inference-platform owns
+│   │   └── package.json
+│   ├── health-check/                      # NEW — entirely yours
+│   │   ├── index.ts
+│   │   └── package.json
 │   │
-│   ├── invite-attendant/              # MODIFY → rename/update for caregivers
-│   ├── accept-invite/                 # MODIFY — handle caregivers group
-│   ├── post-confirmation/             # MODIFY — caregiver group assignment
-│   ├── create-patient/                # MODIFY — persona_type = caregiver
-│   ├── threshold-crud/                # MODIFY — batch evaluation trigger
-│   ├── alert-crud/                    # MODIFY — add missed_measurement type
-│   ├── reminder-crud/                 # MODIFY — daily_deadline, frequency_days
-│   ├── notification-sender/           # MODIFY — detailed FCM payloads
-│   ├── patient-summary/               # MODIFY — interaction session metadata
-│   ├── care-team/                     # MODIFY — remove attendant refs
-│   └── ... (other existing lambdas — touch only if needed)
+│   ├── construct-fhir-batch/              # Existing (v1) — minor changes
+│   ├── store-interaction/                 # Existing — accepts new optional fields
+│   ├── evaluate-thresholds-batch/         # Existing
+│   ├── check-missed-measurements/         # Existing
+│   ├── check-daily-deadline/              # Existing
+│   ├── manage-recommendations/            # Existing
+│   ├── invite-caregiver/                  # Existing
+│   ├── invite-doctor/                     # Existing
+│   ├── accept-invite/                     # Existing
+│   ├── post-confirmation/                 # Existing
+│   ├── create-patient/                    # Existing
+│   ├── threshold-crud/                    # Existing
+│   ├── alert-crud/                        # Existing
+│   ├── reminder-crud/                     # Existing
+│   ├── notification-sender/               # Existing
+│   ├── patient-summary/                   # Existing
+│   ├── care-team/                         # Existing
+│   └── device-token/                      # Existing
 │
 ├── database/
 │   └── migrations/
-│       ├── V001__initial_schema.sql           # existing
-│       ├── V002__xxx.sql                      # existing
-│       ├── V003__xxx.sql                      # existing
-│       └── V004__conversational_system.sql    # NEW — all new tables + alterations
+│       ├── V001__initial_schema.sql              # existing
+│       ├── V002__xxx.sql                         # existing
+│       ├── V003__xxx.sql                         # existing
+│       ├── V004__conversational_system.sql      # existing (v1)
+│       └── V005__bedrock_telemetry.sql          # NEW — model_call, cost_telemetry, alter interaction_session
 │
-└── shared/                                     # Optional shared utilities across lambdas
+└── shared/                                       # Optional shared utilities
 
-infrastructure/terraform/
-├── modules/
-│   ├── api_gateway/                   # MODIFY — add new routes
-│   ├── cognito/                       # MODIFY — rename groups
-│   ├── lambda/                        # MODIFY — add new Lambda definitions
-│   ├── s3/                            # MODIFY — add raw interactions bucket
-│   └── ... (other modules as needed)
-└── environments/
-    └── dev/
-        └── main.tf                    # MODIFY — wire new modules
+infrastructure/terraform/                          # Shared with devops
+├── modules/api_gateway/                           # Add new routes (coordinate with devops)
+├── modules/lambda/                                # Add new Lambda definitions
+└── modules/iam/                                   # Scoped Bedrock policies
 ```
 
-You do NOT touch: `mac-mini/`, `android/`, `web-portal/src/` (but you DO own API Gateway routes that the web portal calls).
+**Removed in v2:**
+- `lambdas/fetch-session-config/` — folded into `bedrock-router` (config now loaded server-side per turn)
+
+You do NOT touch: `android/`, `web-portal/`, `inference-platform/`, prompt files, Guardrail config.
 
 ## Specifications
 
-Refer to `docs/carelog_spec.md`:
-- Section 3.2 — Lambda inventory (existing modifications + new Lambdas)
-- Section 4.2 — Cloud API contracts (all endpoints you implement)
-- Section 5.1 — SQL DDL for V004 migration
-- Section 5.2 — S3 key conventions
-- Section 10 — Notification & Alert Engine (EventBridge rules, threshold evaluation, missed measurement detection, FCM payloads)
+Refer to `docs/matika_spec_v2.md`:
+- Section 3.2 — Lambda inventory
+- Section 4 — API contracts (all endpoints you implement)
+- Section 5.1 — DDL for V005 migration
+- Section 6.4 — Structured output parsing contract (your responsibility)
+- Section 7.6 — Health check protocol
+- Section 11.4 — IAM scoping
+- Section 11.6 — Per-patient rate limits
 
 ## Phase Assignments
 
-### P0 — Foundation (Weeks 1-3)
-Epic 0.3: Database Migration
-- **0.3.1** Write V004 migration: `interaction_sessions`, `parameter_configs`, `topics`, `patient_topics`, `recommendations`, `conversation_prompts`, `vision_results` tables; alter `patients` (add language, timezone), `reminder_configs` (add daily_deadline, frequency_days, timezone); rename persona_type enum values; seed initial topics
-- **0.3.2** Seed initial conversation prompts (patient_logging, caregiver_config, caregiver_onboarding)
+### P0 — Foundation (Weeks 1–2)
+- **[T-V2-020]** `bedrock-router` Lambda skeleton (Node.js 20, Bedrock SDK Lambda Layer). Wire `POST /conversation/turn`. Stub response.
+- **[T-V2-021]** `bedrock-vision` Lambda skeleton. Wire `POST /conversation/photo-extract`.
+- **[T-V2-022]** `health-check` Lambda — RDS ping + S3 list + Bedrock 1-token ping. Wire `GET /health`.
 
-Epic 0.2 (partial):
-- **0.2.5** Update Cognito groups: remove `attendants`, rename `relatives` → `caregivers` in Terraform cognito module + affected Lambda code
+### P1 — Conversational Core (Weeks 3–6)
+- **[T-V2-103]** Implement Bedrock invocation in `bedrock-router`: load prompts (from `inference-platform`), build cache breakpoints, call `InvokeModel`, surface response.
+- **[T-V2-104]** Implement structured output parser per `output_schema.json` (owned by `inference-platform`). One-retry-on-failure logic; 503 on second failure.
+- **[T-V2-105]** Implement state machine (reads `interaction_session` row at start, writes back at end).
+- **[T-V2-106]** Wire `escalation/signal_detectors.ts` (from `inference-platform`) into routing decision.
+- **[T-V2-107]** Telemetry: insert `model_call` row per Bedrock call with tokens, latency, cost.
+- **[T-V2-108]** Cost-telemetry rollup Lambda (EventBridge daily) → `cost_telemetry` table.
+- **[T-V2-110]** Implement `POST /conversation/turn-stream` with SSE (`InvokeModelWithResponseStream`).
+- **[T-V2-111]** Streaming decision logic per spec §6.6.
 
-### P1 — Conversational Core (Weeks 4-8)
-Epic 1.2 (Lambda side):
-- **1.2.1** Implement `fetch-session-config` Lambda — query parameter_configs, topics, prompts, last session, recommendations for a patient
+### P2 — Vision + Escalation (Weeks 7–8)
+- **[T-V2-210]** `bedrock-vision` business logic: load photo from S3, call Haiku vision, fallback to Sonnet on confidence < 0.80.
+- **[T-V2-211]** Vision telemetry → `model_call` with `T2_VISION` / `T3_VISION` tier.
+- **[T-V2-220]** Implausible-value escalation flow: plausibility-range check before model invocation; route to Sonnet with focused sub-prompt (sub-prompt owned by `inference-platform`).
+- **[T-V2-222]** Wire Guardrails emergency-trigger to caregiver alert (SQS → notification-sender).
 
-Epic 1.4: FHIR and Interaction Storage (Lambda side):
-- **1.4.1** Implement `construct-fhir-batch` Lambda — receive batch values, construct FHIR R4 Observations, store in S3, trigger threshold evaluation (async invoke of evaluate-thresholds-batch)
-- **1.4.2** Implement `store-interaction` Lambda — receive multipart upload (audio + transcript + photos + metadata), store in S3 raw bucket, create `interaction_sessions` record in RDS
+### P3 — Caregiver Experience (Weeks 9–11)
+- **[T-V2-300]** Sonnet-default routing for `caregiver_config` and `caregiver_onboarding` session types.
+- **[T-V2-302]** Protocol persistence — call existing v1 Lambda APIs.
+- **[T-V2-310]** Verify v1 invite Lambdas still work end-to-end.
 
-### P2 — Caregiver Experience (Weeks 9-12)
-Epic 2.1 (Lambda side):
-- Update `create-patient` Lambda to accept conversationally-extracted patient profiles
-- Update invite Lambdas for caregiver group
+### P4 — Integration & Polish (Weeks 12–14)
+- Per-patient rate limit enforcement (soft 100, hard 500 — env-tunable).
+- Connectivity-loss handling: idempotency key on `/conversation/turn`; safe to retry mid-stream.
+- Audit prompt cache hit rate from `model_call.cached_input_tokens`; surface in admin telemetry.
 
-Epic 2.2: Reminder Engine
-- **2.2.1** Implement `check-daily-deadline` Lambda — query deadlines, check today's sessions, send FCM via notification-sender
-- **2.2.2** Create EventBridge rule (`rate(15 minutes)`) targeting check-daily-deadline
+### P5 — Compliance & Pilot (Weeks 15–16)
+- Verify `model_call.guardrail_blocked` is correctly flagged on Guardrail outputs.
+- Verify per-patient PHI-touch log is queryable for compliance audits.
 
-Epic 2.3: Alert Engine
-- **2.3.1** Implement `evaluate-thresholds-batch` Lambda — check values against thresholds, create alert records, enqueue SQS
-- **2.3.2** Implement `check-missed-measurements` Lambda — hourly scan, detect overdue params, create alerts
-- **2.3.3** Update `notification-sender` for detailed FCM payloads (parameter name, value, threshold in body)
-- **2.3.4** Create EventBridge rule (`rate(1 hour)`) targeting check-missed-measurements
+## V005 Migration Highlights
 
-### P3 — Doctor Portal (Weeks 13-15)
-Epic 3.4: API Endpoints
-- **3.4.1** Add parameter config CRUD endpoints (API Gateway + Lambda handlers)
-- **3.4.2** Add interaction sessions list/detail endpoints (paginated list + transcript retrieval from S3)
-- **3.4.3** Add prompts management endpoints (GET/PUT for admin/doctor)
+```sql
+CREATE TABLE model_call (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id UUID NOT NULL REFERENCES interaction_session(id),
+    patient_id UUID NOT NULL REFERENCES patient(id),
+    tier VARCHAR(16) NOT NULL CHECK (tier IN ('T2','T3','T2_VISION','T3_VISION')),
+    model VARCHAR(64) NOT NULL,
+    streamed BOOLEAN NOT NULL DEFAULT FALSE,
+    guardrail_blocked BOOLEAN NOT NULL DEFAULT FALSE,
+    input_tokens INTEGER NOT NULL,
+    cached_input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL,
+    latency_ms INTEGER NOT NULL,
+    inference_region VARCHAR(32) NOT NULL,
+    escalation_reason VARCHAR(64),
+    cost_usd NUMERIC(10,6) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
-Epic 3.2 (Lambda side):
-- **3.2.3** Implement `manage-recommendations` Lambda — CRUD for parameter recommendations
+CREATE TABLE cost_telemetry (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    patient_id UUID NOT NULL REFERENCES patient(id),
+    day DATE NOT NULL,
+    haiku_calls INTEGER NOT NULL DEFAULT 0,
+    sonnet_calls INTEGER NOT NULL DEFAULT 0,
+    vision_haiku_calls INTEGER NOT NULL DEFAULT 0,
+    vision_sonnet_calls INTEGER NOT NULL DEFAULT 0,
+    ocr_local_calls INTEGER NOT NULL DEFAULT 0,
+    total_input_tokens INTEGER NOT NULL DEFAULT 0,
+    total_cached_input_tokens INTEGER NOT NULL DEFAULT 0,
+    total_output_tokens INTEGER NOT NULL DEFAULT 0,
+    total_cost_usd NUMERIC(10,4) NOT NULL DEFAULT 0,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (patient_id, day)
+);
 
-## Key Design Decisions
+ALTER TABLE interaction_session
+    ADD COLUMN streaming_used BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN escalations_triggered JSONB,
+    ADD COLUMN inference_region VARCHAR(32);
+```
 
-1. **V004 migration is the critical path**: All Lambda work in P1+ depends on this. Prioritize it in P0.
-2. **FHIR construction on Lambda**: The app sends raw extracted values; the Lambda constructs FHIR R4 Observation JSON and stores in S3. Not the app, not the Mac Mini.
-3. **Async threshold evaluation**: `construct-fhir-batch` asynchronously invokes `evaluate-thresholds-batch` via Lambda invoke (not SQS) for low latency. Threshold evaluation then enqueues SQS for notification-sender.
-4. **Upload order**: Raw interaction upload and FHIR batch are independent paths. Raw upload failure should not block FHIR storage.
-5. **Cognito migration**: Rename `relatives` → `caregivers` in Cognito user pool groups. Remove `attendants` group. Update all Lambda code referencing old group names.
-6. **S3 bucket structure**: FHIR observations at `observations/{patientId}/{YYYY}/{MM}/{DD}/{id}.json`. Raw interactions at `interactions/{patientId}/{YYYY}/{MM}/{DD}/{sessionId}/`.
-
-## API Routes to Add (API Gateway)
+## API Routes (added in v2)
 
 | Method | Path | Lambda | Auth |
 |---|---|---|---|
-| GET | `/session-config/{patientId}` | fetch-session-config | patient, caregiver |
-| POST | `/interactions` | store-interaction | patient, caregiver |
-| POST | `/observations/batch` | construct-fhir-batch | patient, caregiver |
-| GET | `/patients/{patientId}/recommendations` | manage-recommendations | caregiver, doctor |
-| POST | `/patients/{patientId}/recommendations` | manage-recommendations | doctor |
-| PUT | `/patients/{patientId}/recommendations/{id}` | manage-recommendations | caregiver |
-| GET | `/patients/{patientId}/parameter-configs` | (new handler or extend existing) | caregiver, doctor |
-| POST | `/patients/{patientId}/parameter-configs` | (new handler) | caregiver, doctor |
-| PUT | `/patients/{patientId}/parameter-configs/{id}` | (new handler) | caregiver, doctor |
-| DELETE | `/patients/{patientId}/parameter-configs/{id}` | (new handler) | caregiver, doctor |
-| GET | `/patients/{patientId}/interactions` | (new handler) | caregiver, doctor |
-| GET | `/patients/{patientId}/interactions/{id}/transcript` | (new handler) | caregiver, doctor |
-| GET | `/prompts` | (new handler) | any authenticated |
-| PUT | `/prompts/{promptType}` | (new handler) | doctor |
-| PUT | `/patients/{patientId}/language` | (new handler) | caregiver |
-| POST | `/patients/{patientId}/topics/{topicId}` | (new handler) | caregiver |
+| POST | `/conversation/turn` | bedrock-router | patient, caregiver |
+| POST | `/conversation/turn-stream` (SSE) | bedrock-router | patient, caregiver |
+| POST | `/conversation/photo-extract` | bedrock-vision | patient, caregiver |
+| GET | `/health` | health-check | any authenticated |
+| GET | `/admin/telemetry/cost` | (extension of patient-summary or new) | admin |
+| GET | `/admin/telemetry/escalations` | (new admin handler) | admin |
+
+All v1 routes (FHIR, observations, recommendations, parameter-configs, interactions, prompts, etc.) remain unchanged.
+
+## Output Format Contract (with `inference-platform`)
+
+LLM returns JSON inside `<output>...</output>` tags. Parser:
+1. Extract JSON via tagged-block regex.
+2. Validate against `output_schema.json` (provided by `inference-platform`).
+3. On parse failure: retry once with stricter system-prompt note.
+4. On second failure: return 503; record `parse_failure: true` in telemetry; flag for `inference-platform` review.
+
+You do NOT modify the prompt or schema yourself. If parsing keeps failing, file an issue against `inference-platform`.
+
+## Key Design Decisions
+
+1. **Stateless turn handler**: Lambda is stateless per invocation. Session state lives in RDS; reads at start, writes at end. Idempotent under retry with idempotency key.
+2. **Telemetry on every call**: `model_call` row per Bedrock invocation, including failed calls and Guardrail blocks. Critical for cost + audit.
+3. **Cost computed at insert time**: `cost_usd` populated by the Lambda using current pricing; price changes are a code change, not a query change.
+4. **FHIR construction unchanged**: `construct-fhir-batch` still receives extracted values from the app and writes to S3. The v2 difference: extracted values come from `bedrock-router`'s structured output rather than from the Mac Mini.
+5. **Per-patient rate limits**: Enforced in `bedrock-router` before model invocation. Hard cap returns 429 + alerts caregiver.
+6. **No prompt logic in Lambda code**: All prompt content lives in `inference-platform/`-owned files. Lambda loads, interpolates `{{var}}` placeholders, and sends to Bedrock.
 
 ## Dependencies
 
 | What I need | From whom | When |
 |---|---|---|
-| SSM port-forwarding to RDS (for migration) | devops | P0 |
-| S3 raw interactions bucket created | devops (or self via Terraform) | P1 |
+| Bedrock access + inference profiles | devops | P0 |
+| Guardrail deployed | devops (config from inference-platform) | P0 |
+| Provisioned concurrency on `bedrock-router` | devops | P0 |
+| Prompt templates | inference-platform | P1 |
+| `output_schema.json` | inference-platform | P1 |
+| `signal_detectors.ts` | inference-platform | P1 |
+| SSM port-forward for migration | devops | P0 |
 
 | What I provide | To whom | When |
 |---|---|---|
-| V004 migration (DB schema) | all agents | P0 (critical path) |
-| fetch-session-config Lambda | android-app | P1 |
-| construct-fhir-batch Lambda | android-app | P1 |
-| store-interaction Lambda | android-app | P1 |
-| Parameter config CRUD endpoints | web-portal | P3 |
-| Recommendations endpoints | web-portal | P3 |
-| Interaction list/detail endpoints | web-portal | P3 |
-| EventBridge rules | qa-testing (for E2E) | P2 |
+| `bedrock-router` + `bedrock-vision` + `health-check` Lambdas | android-app, qa-testing | P0/P1 |
+| V005 migration | all (model_call queries) | P0 |
+| `model_call` + `cost_telemetry` tables | qa-testing, web-portal (admin tab) | P1 |
+| Per-patient rate limit | (compliance) | P4 |
 
 ## Testing
 
-- Framework: Jest
-- Scope: Request validation, FHIR construction logic, threshold evaluation, alert creation, S3 key generation, session config assembly
-- Each Lambda has its own `__tests__/` directory
-- Test with realistic payloads matching the API contracts in spec Section 4.2
+- Framework: Jest.
+- Scope: state machine transitions, structured output parser (with malformed inputs), telemetry recording correctness, rate-limit enforcement, cost calculation, escalation routing decisions (using stub `signal_detectors`).
+- Each Lambda has its own `__tests__/` directory.
+- For prompt content correctness: defer to `inference-platform/eval/`. You only test that the Lambda *uses* the prompt correctly, not the prompt content.
 
 ## Constraints
 
-- Node.js 20 runtime for all Lambdas
-- Each Lambda has its own `package.json` — install dependencies individually
-- All data in ap-south-1 (DPDP data localisation)
-- S3 buckets: SSE-KMS encryption, TLS enforced, public access blocked
-- RDS access only via SSM port-forwarding through bastion
-- DB credentials from AWS Secrets Manager
+- Node.js 20 runtime.
+- Each Lambda has its own `package.json`.
+- Storage in ap-south-1; inference cross-region (per spec §11.3).
+- DB credentials from Secrets Manager.
+- RDS access only via SSM port-forwarding through bastion.
+- IAM scoped to specific Bedrock model + guardrail ARNs (no wildcards).
+- Coordinate with `inference-platform` on all `bedrock-router/` and `bedrock-vision/` changes.
+- Coordinate with `devops` on all `infrastructure/terraform/modules/` changes.

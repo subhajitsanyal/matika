@@ -1,0 +1,1001 @@
+# Matika — Technical Specification
+
+**Version:** 2.0
+**Date:** May 2026
+**Status:** Draft for Review
+**Classification:** Confidential
+**Source PRD:** `docs/matika_prd_v2.md` v2.0
+**Replaces:** `docs/carelog_spec.md` v1.0 (April 2026)
+
+---
+
+## Table of Contents
+
+1. [Overview](#1-overview)
+2. [System Context Diagram](#2-system-context-diagram)
+3. [Service Inventory](#3-service-inventory)
+4. [API Contracts](#4-api-contracts)
+5. [Data Schemas](#5-data-schemas)
+6. [Conversation Engine Design](#6-conversation-engine-design)
+7. [Inference Architecture](#7-inference-architecture)
+8. [Mobile App Architecture](#8-mobile-app-architecture)
+9. [Web Portal Changes](#9-web-portal-changes)
+10. [Notification & Alert Engine](#10-notification--alert-engine)
+11. [Security Implementation](#11-security-implementation)
+12. [Testing Strategy](#12-testing-strategy)
+13. [Implementation Phases](#13-implementation-phases)
+14. [Deployment & Operations](#14-deployment--operations)
+15. [Appendix](#15-appendix)
+
+---
+
+## 1. Overview
+
+Matika v2 is a conversational health monitoring system that replaces v1's per-household Mac Mini inference stack with a cloud-native architecture. Speech-to-text and text-to-speech run on the patient's Android device using OS-native engines. Conversational reasoning, parameter extraction, and FHIR construction run on AWS Bedrock — Claude Haiku 4.5 by default, Claude Sonnet 4.x on escalation — accessed via cross-region inference profiles. All persistent data (RDS, S3) stays in ap-south-1; inference invocations transit cross-region under the AWS BAA.
+
+The system comprises three deployable boundaries:
+
+1. **Android mobile app** — patient and caregiver UI; on-device STT/TTS/OCR; Cognito-authenticated cloud calls.
+2. **AWS backend** — API Gateway, Lambda, RDS, S3, SQS, EventBridge in ap-south-1; Bedrock + Guardrails accessed via cross-region inference profile.
+3. **React web portal** — doctor's review interface (unchanged from v1 in scope; updated for new data model).
+
+### Sections unchanged from v1
+
+These v1 spec sections remain authoritative; v2 introduces no behavior change to:
+
+- §10 Notification & Alert Engine (FCM, threshold evaluation, missed-measurement detection)
+- §9 Web Portal API contracts (except `model_call` and `cost_telemetry` queries; see §9 here)
+- Most of §5 Data Schemas (existing tables); new tables documented in §5 here
+- §14 Deployment & Operations Terraform structure (modifications listed in §14 here)
+
+---
+
+## 2. System Context Diagram
+
+```mermaid
+graph TB
+    subgraph "Patient/Caregiver Phone"
+        APP["Android App<br/>Kotlin · Compose"]
+        STT_OD["SpeechRecognizer<br/>on-device"]
+        TTS_OD["TextToSpeech<br/>on-device"]
+        OCR_OD["ML Kit Text Recognition v2<br/>on-device"]
+    end
+
+    subgraph "AWS ap-south-1 (Mumbai)"
+        APIGW["API Gateway<br/>REST · Cognito Authorizer"]
+        COG["Cognito"]
+        ROUT["bedrock-router<br/>Lambda (Node.js 20)<br/>Provisioned Concurrency"]
+        VIS["bedrock-vision<br/>Lambda (Node.js 20)"]
+        EXIST["Existing Lambdas<br/>FHIR · alerts · invites"]
+        RDS[("RDS PostgreSQL 15")]
+        S3F[("S3 — observations/")]
+        S3R[("S3 — interactions/")]
+        SQS["SQS Alert Queue"]
+        SNS["SNS → FCM"]
+        EB["EventBridge"]
+        SECRETS["Secrets Manager"]
+    end
+
+    subgraph "AWS Cross-Region (ap-southeast-1 primary, us-east-1 fallback)"
+        IP_HAIKU["Inference Profile<br/>anthropic.claude-haiku-4-5"]
+        IP_SONNET["Inference Profile<br/>anthropic.claude-sonnet-4-x"]
+        GUARD["Bedrock Guardrails"]
+    end
+
+    subgraph "Doctor"
+        WEB["Web Portal<br/>React · TS · Vite"]
+    end
+
+    APP --- STT_OD
+    APP --- TTS_OD
+    APP --- OCR_OD
+
+    APP -- "HTTPS · JWT · SSE for streamed turns" --> APIGW
+    APIGW --> COG
+    APIGW --> ROUT
+    APIGW --> VIS
+    APIGW --> EXIST
+
+    ROUT -- "InvokeModelWithResponseStream<br/>via Guardrails" --> IP_HAIKU
+    ROUT -- "escalation" --> IP_SONNET
+    VIS --> IP_HAIKU
+    VIS --> IP_SONNET
+    GUARD -.attached to.- IP_HAIKU
+    GUARD -.attached to.- IP_SONNET
+
+    EXIST --> RDS
+    EXIST --> S3F
+    EXIST --> S3R
+    EXIST --> SQS
+    SQS --> SNS
+    SNS --> APP
+    EB --> EXIST
+    ROUT --> RDS
+    ROUT --> SECRETS
+
+    WEB -- "HTTPS · JWT" --> APIGW
+```
+
+### Communication Protocols
+
+| Path | Protocol | Format | Auth |
+|---|---|---|---|
+| App ↔ API Gateway (sync turn) | HTTPS | JSON | Cognito JWT (Bearer) |
+| App ↔ API Gateway (streamed turn) | HTTPS + Server-Sent Events | SSE event stream of JSON deltas | Cognito JWT |
+| Lambda ↔ Bedrock | AWS SDK (`InvokeModel` / `InvokeModelWithResponseStream`) | JSON | IAM Role (cross-region inference profile ARN) |
+| Lambda ↔ Bedrock Guardrails | AWS SDK (`ApplyGuardrail` or attached at invoke time) | JSON | IAM Role |
+| Lambda ↔ RDS | PostgreSQL (SSL) | SQL | Secrets Manager |
+| Lambda ↔ S3 | AWS SDK (HTTPS) | JSON / Binary | IAM Role |
+| Lambda ↔ SQS | AWS SDK | JSON | IAM Role |
+| EventBridge → Lambda | AWS invocation | JSON | IAM Role |
+
+---
+
+## 3. Service Inventory
+
+### 3.1 On-Device Components
+
+| Component | Engine | Notes |
+|---|---|---|
+| **STT** | `android.speech.SpeechRecognizer` with `EXTRA_PREFER_OFFLINE = true` | Languages: `en-IN`, `hi-IN`, `bn-IN`. Offline language packs prompted on first use. Falls back to online STT silently if pack missing — telemetry tags whether offline path was used. |
+| **TTS** | `android.speech.tts.TextToSpeech` | Same languages. Offline voice data downloaded at onboarding. Uses `QUEUE_ADD` for sentence-buffered streamed responses. |
+| **OCR** | Google ML Kit Text Recognition v2 (`com.google.mlkit:text-recognition`) | On-device only. Returns text blocks with bounding boxes + confidence. Numeric extraction layer in app post-processes blocks for value + unit. |
+
+### 3.2 AWS Lambda Functions
+
+#### New in v2
+
+| Lambda | Runtime | Provisioned Concurrency | Responsibility | Trigger |
+|---|---|---|---|---|
+| **bedrock-router** | Node.js 20 | 1 (pilot scale) | Receives transcript + session context; applies prompt cache; invokes Bedrock (Haiku default; Sonnet on escalation signals); enforces Guardrails; returns response (sync or SSE-streamed); records `model_call` telemetry | API Gateway POST `/conversation/turn` |
+| **bedrock-vision** | Node.js 20 | 0 (on-demand; warm via scheduled ping) | Receives photo (S3 presigned key) + parameter context; invokes Haiku vision; on low confidence escalates to Sonnet vision; returns extracted value + confidence | API Gateway POST `/conversation/photo-extract` |
+
+#### Modified in v2
+
+| Lambda | Modification |
+|---|---|
+| `health-check` (new) | Aggregates Bedrock connectivity test + RDS ping + S3 list; replaces v1 Mac Mini health endpoint |
+| `store-interaction` | Unchanged contract; new optional fields `streaming_used`, `inference_region`, `escalations_triggered` |
+| `construct-fhir-batch` | Unchanged contract; called by app after session complete |
+
+#### Removed in v2
+
+| Lambda | Reason |
+|---|---|
+| `fetch-session-config` | Folded into `bedrock-router` — config now loaded server-side per turn instead of fetched by app and forwarded |
+
+#### Unchanged from v1
+
+All other Lambdas (`invite-caregiver`, `invite-doctor`, `accept-invite`, `post-confirmation`, `create-patient`, `threshold-crud`, `alert-crud`, `reminder-crud`, `notification-sender`, `patient-summary`, `care-team`, `device-token`, `evaluate-thresholds-batch`, `check-missed-measurements`, `check-daily-deadline`, `manage-recommendations`).
+
+### 3.3 Bedrock Configuration
+
+| Resource | Configuration |
+|---|---|
+| Inference profile (Haiku) | `apac.anthropic.claude-haiku-4-5-v1:0` (or equivalent cross-region profile spanning ap-southeast-1 + us-east-1) |
+| Inference profile (Sonnet) | `apac.anthropic.claude-sonnet-4-x-v1:0` |
+| Guardrail | One Matika guardrail with: PII filters (PHONE, EMAIL, NAME redaction off — we need names; ADDRESS off; CREDIT_CARD/SSN/PASSPORT/IBAN redact); denied topics (medication-dosage-advice, surgical-recommendation, prognosis-statement); custom topic triggers (self-harm, suicide-ideation, chest-pain-emergency); contextual grounding on outputs |
+| Prompt caching | Enabled on system prompt (large, stable, ~3K tokens) and on per-patient context block (medium, semi-stable, ~1K tokens). 5-minute TTL. |
+
+### 3.4 Mobile App
+
+| Component | Technology | Description |
+|---|---|---|
+| Android App | Kotlin · Jetpack Compose · Hilt · Retrofit2 | Single APK, dual persona (patient + caregiver). New modules: `app/src/main/java/com/matika/inference/` (cloud client, SSE), `app/src/main/java/com/matika/audio/` (STT + TTS wrappers), `app/src/main/java/com/matika/vision/` (ML Kit OCR wrapper) |
+
+### 3.5 Web Portal
+
+Unchanged from v1. New API endpoints documented in §9.
+
+---
+
+## 4. API Contracts
+
+### 4.1 Cloud API — `bedrock-router` Lambda
+
+#### `POST /conversation/turn` (sync)
+
+Used for short patient utterances and simple confirmations.
+
+**Request body:**
+```json
+{
+  "sessionId": "uuid-v4",
+  "patientId": "uuid-v4",
+  "transcript": "BP is one thirty over eighty five",
+  "language": "en-IN",
+  "turnSequence": 3,
+  "clientHints": {
+    "preferStreaming": false,
+    "deviceLatencyEstimateMs": 80
+  }
+}
+```
+
+**Response 200:**
+```json
+{
+  "responseText": "I heard one thirty over eighty five. Is that correct?",
+  "ttsHints": {
+    "language": "en-IN",
+    "rate": 0.95,
+    "spellOutNumbers": false
+  },
+  "extractedValues": [
+    {
+      "parameter": "blood_pressure_systolic",
+      "value": 130,
+      "unit": "mmHg",
+      "loincCode": "8480-6",
+      "status": "pending_confirmation",
+      "confidence": 0.94
+    },
+    {
+      "parameter": "blood_pressure_diastolic",
+      "value": 85,
+      "unit": "mmHg",
+      "loincCode": "8462-4",
+      "status": "pending_confirmation",
+      "confidence": 0.94
+    }
+  ],
+  "sessionState": {
+    "capturedThisSession": ["blood_pressure_systolic", "blood_pressure_diastolic"],
+    "pendingConfirmation": ["blood_pressure_systolic", "blood_pressure_diastolic"],
+    "stillNeeded": ["blood_glucose", "weight"]
+  },
+  "actions": [],
+  "telemetry": {
+    "tier": "T2",
+    "model": "claude-haiku-4-5",
+    "latencyMs": 612,
+    "inputTokens": 1840,
+    "cachedInputTokens": 1420,
+    "outputTokens": 28,
+    "guardrailBlocked": false,
+    "inferenceRegion": "ap-southeast-1"
+  }
+}
+```
+
+**Actions vocabulary** (driven by LLM tool-use or structured output):
+- `request_photo` — patient should be prompted to take a photo
+- `escalate_emergency` — emergency detected; show emergency UI + send caregiver alert
+- `pause_session` — patient is confused/unresponsive; pause and offer retry
+- `complete_session` — all required parameters captured; finalize FHIR
+- `confirm_value` — patient confirmed a previously pending value (server returns updated `extractedValues` with `status: "confirmed"`)
+
+**Response 4xx/5xx:**
+- `400` — invalid session/patient
+- `401` — missing/invalid JWT
+- `403` — patient not linked to authenticated user
+- `429` — per-patient rate limit hit (soft cap warning header `X-Matika-Cost-Today: 0.42`)
+- `503` — Bedrock or Guardrails unavailable
+
+#### `POST /conversation/turn-stream` (streaming)
+
+Same request body. Response is `text/event-stream` (SSE).
+
+**Event types:**
+
+```
+event: prelude
+data: {"sessionId":"...","tier":"T3","model":"claude-sonnet-4-x","streamId":"..."}
+
+event: token
+data: {"text":"I "}
+
+event: token
+data: {"text":"see "}
+
+event: sentence
+data: {"text":"I see you mentioned your blood pressure was high earlier this week.","sentenceIndex":0}
+
+event: extracted
+data: {"parameter":"blood_pressure_systolic","value":130,"unit":"mmHg","status":"pending_confirmation"}
+
+event: action
+data: {"type":"request_photo","reason":"value_not_recalled"}
+
+event: telemetry
+data: {"tier":"T3","model":"claude-sonnet-4-x","latencyMs":1842,"inputTokens":2100,"cachedInputTokens":1420,"outputTokens":85,"guardrailBlocked":false}
+
+event: done
+data: {"sessionState":{...}}
+```
+
+The Android app subscribes to `sentence` events and queues each sentence to TTS as it arrives (`QUEUE_ADD`). `token` events are used only for UI text reveal animation, not TTS. `action` events are processed in real time.
+
+### 4.2 Cloud API — `bedrock-vision` Lambda
+
+#### `POST /conversation/photo-extract`
+
+**Request body:**
+```json
+{
+  "sessionId": "uuid-v4",
+  "patientId": "uuid-v4",
+  "photoS3Key": "interactions/{patientId}/{YYYY}/{MM}/{DD}/{sessionId}/photos/uuid.jpg",
+  "expectedParameter": "blood_glucose",
+  "expectedUnit": "mg/dL",
+  "deviceHint": "glucometer",
+  "localOcrAttempt": {
+    "rawText": "142",
+    "confidence": 0.62
+  }
+}
+```
+
+`localOcrAttempt` is populated when ML Kit ran on-device but returned low confidence (below 0.85). The Lambda uses this as a hint but does not blindly trust it.
+
+**Response 200:**
+```json
+{
+  "extractedValue": {
+    "parameter": "blood_glucose",
+    "value": 142,
+    "unit": "mg/dL",
+    "loincCode": "2339-0",
+    "confidence": 0.96,
+    "source": "claude-haiku-4-5-vision"
+  },
+  "telemetry": {
+    "tier": "T2_VISION",
+    "haikuLatencyMs": 720,
+    "sonnetUsed": false,
+    "inferenceRegion": "ap-southeast-1"
+  }
+}
+```
+
+If Haiku returns low confidence (< 0.80), Lambda automatically escalates to Sonnet vision and returns Sonnet's result. Telemetry records both attempts.
+
+**Response 4xx:**
+- `422` — extraction failed at all tiers; client should ask patient to retry photo or speak the value
+
+### 4.3 Cloud API — `health-check`
+
+#### `GET /health`
+
+Authenticated health check used by the app for connectivity gating.
+
+**Response 200:**
+```json
+{
+  "status": "healthy",
+  "checks": {
+    "rds": "up",
+    "bedrock": "up",
+    "bedrock_inference_region": "ap-southeast-1",
+    "s3": "up",
+    "lambda_warm": true
+  },
+  "timestamp": "2026-05-02T12:00:00Z"
+}
+```
+
+**Response 503:**
+```json
+{
+  "status": "degraded",
+  "checks": { "bedrock": "down", ... },
+  "timestamp": "..."
+}
+```
+
+App polls every 30 seconds while in conversational state.
+
+### 4.4 Other Cloud APIs
+
+`POST /interactions/log`, `POST /observations/batch`, `GET /patients/{id}/summary`, etc. — unchanged from v1. See `docs/carelog_spec.md` §4.2.
+
+---
+
+## 5. Data Schemas
+
+### 5.1 New Tables
+
+```sql
+-- Per-call telemetry for cost and latency analysis
+CREATE TABLE model_call (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id      UUID NOT NULL REFERENCES interaction_session(id),
+    patient_id      UUID NOT NULL REFERENCES patient(id),
+    tier            VARCHAR(16) NOT NULL CHECK (tier IN ('T2','T3','T2_VISION','T3_VISION')),
+    model           VARCHAR(64) NOT NULL,  -- e.g. 'claude-haiku-4-5'
+    streamed        BOOLEAN NOT NULL DEFAULT FALSE,
+    guardrail_blocked BOOLEAN NOT NULL DEFAULT FALSE,
+    input_tokens        INTEGER NOT NULL,
+    cached_input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens   INTEGER NOT NULL,
+    latency_ms      INTEGER NOT NULL,
+    inference_region VARCHAR(32) NOT NULL,
+    escalation_reason VARCHAR(64),  -- 'implausible_value', 'emergency', 'caregiver_protocol', 'long_response', null for T2 default
+    cost_usd        NUMERIC(10,6) NOT NULL,  -- computed at insert time
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_model_call_patient_day ON model_call (patient_id, created_at);
+CREATE INDEX idx_model_call_session ON model_call (session_id);
+
+-- Daily roll-up for fast cost dashboards
+CREATE TABLE cost_telemetry (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    patient_id      UUID NOT NULL REFERENCES patient(id),
+    day             DATE NOT NULL,
+    haiku_calls     INTEGER NOT NULL DEFAULT 0,
+    sonnet_calls    INTEGER NOT NULL DEFAULT 0,
+    vision_haiku_calls INTEGER NOT NULL DEFAULT 0,
+    vision_sonnet_calls INTEGER NOT NULL DEFAULT 0,
+    ocr_local_calls INTEGER NOT NULL DEFAULT 0,
+    total_input_tokens  INTEGER NOT NULL DEFAULT 0,
+    total_cached_input_tokens INTEGER NOT NULL DEFAULT 0,
+    total_output_tokens INTEGER NOT NULL DEFAULT 0,
+    total_cost_usd  NUMERIC(10,4) NOT NULL DEFAULT 0,
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (patient_id, day)
+);
+
+CREATE INDEX idx_cost_telemetry_day ON cost_telemetry (day);
+```
+
+### 5.2 Modified Tables
+
+```sql
+ALTER TABLE interaction_session
+    ADD COLUMN streaming_used BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN escalations_triggered JSONB,  -- e.g. ["implausible_value","emergency"]
+    ADD COLUMN inference_region VARCHAR(32);
+```
+
+### 5.3 S3 Key Conventions
+
+Unchanged from v1.
+
+### 5.4 FHIR Resource Templates
+
+Unchanged from v1.
+
+---
+
+## 6. Conversation Engine Design
+
+### 6.1 Where the engine lives
+
+In v1 the engine ran on the Mac Mini as `mac-mini/services/llm_service.py` with in-memory Python session state. In v2 the engine is split:
+
+- **Stateful session store**: `bedrock-router` Lambda is stateless per invocation; session state is read from RDS at the start of each turn and written back at the end. Session timeout is 30 minutes (matches v1).
+- **Stateless turn handler**: each call to `bedrock-router` builds the full prompt from session state + per-patient context, invokes Bedrock, parses structured output, persists state.
+- **Bedrock-side reasoning**: Claude (Haiku or Sonnet) does extraction, follow-up generation, plausibility reasoning, FHIR drafting — all in the model.
+
+### 6.2 Session State Machine
+
+```
+[CREATED] --start--> [GREETING] --first-utterance--> [EXTRACTING]
+[EXTRACTING] --value-extracted--> [PENDING_CONFIRMATION]
+[PENDING_CONFIRMATION] --patient-confirms--> [EXTRACTING] (next param)
+[PENDING_CONFIRMATION] --patient-corrects--> [EXTRACTING]
+[EXTRACTING] --photo-needed--> [AWAITING_PHOTO] --photo-received--> [PENDING_CONFIRMATION]
+[EXTRACTING] --emergency-detected--> [EMERGENCY] --notify-caregiver--> [TERMINAL]
+[EXTRACTING] --implausible-value--> [PLAUSIBILITY_CHALLENGE] --confirmed/corrected--> [EXTRACTING]
+[EXTRACTING] --all-required-captured--> [COMPLETE] --persist-fhir--> [TERMINAL]
+[*] --idle-timeout-30min--> [TERMINAL_INCOMPLETE]
+[*] --explicit-pause--> [PAUSED] --resume--> (prior state)
+[*] --connectivity-lost--> [SUSPENDED] --reconnect--> (prior state)
+```
+
+The state machine is enforced in `bedrock-router` against the `interaction_session` row. Bedrock returns structured output (see §6.4) which drives transitions.
+
+### 6.3 Prompt Templates
+
+System prompt is large (~3K tokens) and aggressively cached. It includes:
+
+- Persona definition ("You are Matika, a warm, patient health assistant…")
+- Language rules (respond in the language the patient used; do not switch unprompted)
+- Required-parameters table (LOINC codes + plausibility ranges + units)
+- Conversation rules (one follow-up at a time; always confirm before recording; etc.)
+- Output format spec (see §6.4)
+
+Per-patient context block (~1K tokens, separately cached with patient-keyed cache breakpoint):
+
+- Patient demographics, conditions, medical history
+- Active monitoring protocol (parameters, frequencies, deadlines, thresholds)
+- Active topics with status
+- Last 3 sessions' summaries
+- Pending recommendations (analytics + doctor)
+
+Per-turn context (uncached):
+
+- Current session state (`extractedValues`, `pendingConfirmation`, `stillNeeded`)
+- Recent turn history (last 6 turns; sliding window)
+- Current transcript
+
+**Cache budget**: ~4K cached tokens × pilot conversation rate = effectively free after warm-up.
+
+### 6.4 Structured Output Format
+
+Claude returns JSON within `<output>` tags:
+
+```json
+{
+  "responseText": "I heard one thirty over eighty five. Is that correct?",
+  "ttsHints": { "language": "en-IN", "spellOutNumbers": false },
+  "extractedValues": [
+    { "parameter": "blood_pressure_systolic", "value": 130, "unit": "mmHg", "confidence": 0.94 }
+  ],
+  "actions": [],
+  "stateTransition": "EXTRACTING -> PENDING_CONFIRMATION",
+  "escalationReason": null
+}
+```
+
+Parsed by `bedrock-router` and enforced (regex + JSON schema validation). On parse failure, retry once with a stricter system prompt; on second failure, return error 503 to client.
+
+### 6.5 Escalation Logic (T2 → T3)
+
+`bedrock-router` triggers Sonnet on these signals (computed before the model call where possible):
+
+| Signal | Source | Why Sonnet |
+|---|---|---|
+| `implausible_value` | Plausibility ranges in turn handler before invoking model | Hard reasoning about whether the value is real or misheard |
+| `emergency_keyword` | On-device keyword match in app, or Guardrails trigger | Empathetic + safety-first response generation |
+| `caregiver_protocol_design` | Session type = `caregiver_config` AND turn involves new-parameter introduction or recommendation negotiation | Long, nuanced multi-turn |
+| `cross_session_continuity` | Patient session has `pending_recommendations` with `requiresGentleIntroduction` flag | Gentle introduction of new parameters needs care |
+| `low_confidence_extraction` | Previous Haiku turn returned `confidence < 0.70` on a parameter | Sonnet retry for ambiguous extraction |
+| `code_switch_density_high` | Transcript contains > 30% non-primary-language tokens | Sonnet handles code-switching better |
+| `long_response_expected` | System prompt indicates response will be > 100 tokens | Streaming Sonnet feels comparable to Haiku |
+
+Escalation reasons are persisted in `model_call.escalation_reason` for telemetry analysis. After 4 weeks of pilot data, signals will be tuned to balance quality vs. cost.
+
+### 6.6 Streaming Decision Logic
+
+`bedrock-router` decides streaming per turn:
+
+```
+streamThis turn IF:
+  tier == T3
+  OR escalationReason IN (caregiver_protocol_design, cross_session_continuity, long_response_expected)
+  OR clientHints.preferStreaming == true
+ELSE: non-streamed response
+```
+
+Streamed responses use SSE on the API Gateway → Lambda path (`InvokeModelWithResponseStream`). Non-streamed uses regular `InvokeModel`.
+
+### 6.7 Multi-Turn Context Management
+
+Sliding window of last 6 turns kept in `interaction_session.transcript_history` (JSONB). On window overflow, oldest turns are summarized into a single context-summary message and pushed off the window. Summarization is itself a Haiku call (cheap, ~50 tokens output).
+
+### 6.8 Language Detection and Switching
+
+Language is set per-session in `interaction_session.language` (default from patient profile). On every turn, the app passes the actual `SpeechRecognizer` locale used. If it differs from session language for 2 consecutive turns, the engine switches the session language and acknowledges ("ঠিক আছে, আমরা বাংলায় কথা বলব।").
+
+Mid-utterance code-switching is handled by the LLM directly — both Haiku and Sonnet handle Hindi/English and Bengali/English code-mixing well; Sonnet handles dense code-switching better and is the escalation target for `code_switch_density_high`.
+
+---
+
+## 7. Inference Architecture
+
+### 7.1 Model Selection Per Task
+
+| Task | Default Model | Escalation Model |
+|---|---|---|
+| Patient short turn (value extraction, confirmation) | Claude Haiku 4.5 | Claude Sonnet 4.x on signals (§6.5) |
+| Patient long turn (open-ended monologue) | Claude Haiku 4.5 (streamed) | Sonnet on long-response signal |
+| Caregiver protocol configuration | Claude Sonnet 4.x (default for this session type) | — |
+| Caregiver onboarding (patient profile extraction) | Claude Sonnet 4.x | — |
+| Plausibility challenge / implausible value | Claude Sonnet 4.x | — |
+| Emergency detection response | Claude Sonnet 4.x | — |
+| Recommendation negotiation with caregiver | Claude Sonnet 4.x | — |
+| Vision OCR (clean) | ML Kit on-device | — |
+| Vision OCR (ML Kit miss) | Claude Haiku 4.5 vision | Claude Sonnet 4.x vision on Haiku low-confidence |
+| Context summarization (window overflow) | Claude Haiku 4.5 | — |
+
+Note: Caregiver sessions default to Sonnet because turns are higher-stakes and longer; the latency cost is acceptable because caregivers tolerate it and the conversations are infrequent.
+
+### 7.2 Inference Pipeline (T2 short turn)
+
+```
+[App: STT 80ms]
+  → [Network: 60ms]
+    → [API Gateway: 20ms]
+      → [Lambda warm: 80ms]
+        → [Build prompt + cache lookup: 10ms]
+          → [Bedrock Guardrails input: 50ms]
+            → [Bedrock Haiku invoke (cross-region): 200ms TTFT + 250ms generation]
+              → [Bedrock Guardrails output: 50ms]
+                → [Parse + persist state: 20ms]
+                  → [Lambda response: 10ms]
+                    → [API Gateway: 20ms]
+                      → [Network: 60ms]
+                        → [App: TTS 100ms first audio]
+Total: ~810ms median; ~1670ms P95 (mostly Bedrock TTFT variance)
+```
+
+### 7.3 Inference Pipeline (T3 long streamed turn)
+
+```
+[App: STT] → [Network] → [API Gateway SSE] → [Lambda stream]
+  → [Bedrock Sonnet invoke streaming (cross-region)]
+    → first token at ~350ms TTFT
+    → stream into Lambda → SSE chunk to App
+    → App buffers tokens until first sentence-end → TTS speaks
+First-audio: ~600-900ms
+Full-response: ~2000-3000ms
+```
+
+### 7.4 Latency Budget Breakdown
+
+| Stage | T2 short median | T2 short P95 | T3 long streamed (first audio) |
+|---|---|---|---|
+| On-device STT | 80ms | 200ms | 80ms |
+| Network App→APIGW | 60ms | 120ms | 60ms |
+| API Gateway | 20ms | 50ms | 20ms |
+| Lambda warm | 80ms | 150ms | 80ms |
+| Prompt build + cache | 10ms | 20ms | 10ms |
+| Guardrails input | 50ms | 100ms | 50ms |
+| Bedrock TTFT (cached) | 200ms | 400ms | 350ms |
+| Bedrock generation (~30 tokens / first sentence) | 250ms | 500ms | first-sentence ~150ms |
+| Guardrails output | 50ms | 100ms | streamed in parallel |
+| Parse + persist | 20ms | 50ms | 20ms |
+| Network APIGW→App | 60ms | 120ms | 60ms |
+| Android TTS first audio | 100ms | 250ms | 100ms |
+| **Total** | **~980ms** | **~1960ms** | **~1080ms first audio** |
+
+**SLO compliance:**
+- T2 short P95 < 2s ✅ (1960ms with 40ms margin)
+- T3 long first-audio P95 < 1.5s ✅ (1080ms; with 420ms margin)
+
+If P95 starts to drift over 2s, mitigations in priority order:
+1. Increase prompt cache hit rate (audit which prompt segments aren't cached)
+2. Bump provisioned concurrency on `bedrock-router`
+3. Consider Llama 3.3 in-region as T1 fast-path for the 50% simplest turns (re-introduces tier 1)
+4. Pre-warm Bedrock connection in Lambda init
+
+### 7.5 Resource Allocation
+
+| Resource | Pilot config (10 patients) |
+|---|---|
+| `bedrock-router` Lambda | 1024 MB; provisioned concurrency 1; reserved concurrency 5 |
+| `bedrock-vision` Lambda | 1024 MB; on-demand; reserved concurrency 3 |
+| RDS | t4g.micro (existing) |
+| Bedrock quotas (Haiku) | Default cross-region quota typically sufficient; monitor `Throttling` exceptions |
+| Bedrock quotas (Sonnet) | Default; expect 5-10% of Haiku call rate |
+| API Gateway throttling | 100 burst / 50 rate (existing dev config sufficient) |
+
+### 7.6 Health Check Protocol
+
+`health-check` Lambda runs:
+- RDS: `SELECT 1`
+- S3: `ListObjectsV2` with `MaxKeys=1` on each bucket
+- Bedrock: `InvokeModel` with a 1-token "ping" prompt against the Haiku inference profile. Bedrock charge for this is ~$0.000001/call × 1 call/30s × 86400/30 = ~$0.003/day per pilot — negligible.
+
+Returns `degraded` if any check fails. App polls every 30 seconds while in conversational state; every 5 minutes while idle.
+
+### 7.7 Model Update / Rollback
+
+Model identifiers are environment-variable driven in `bedrock-router`:
+
+```
+BEDROCK_HAIKU_MODEL_ID=apac.anthropic.claude-haiku-4-5-v1:0
+BEDROCK_SONNET_MODEL_ID=apac.anthropic.claude-sonnet-4-x-v1:0
+```
+
+Updating to a newer model is a Terraform variable change + Lambda alias swap with traffic shifting (10% / 50% / 100%). Rollback is alias revert. No app update required.
+
+---
+
+## 8. Mobile App Architecture
+
+### 8.1 Module / Package Structure
+
+```
+android/app/src/main/java/com/matika/
+├── audio/
+│   ├── stt/
+│   │   ├── SttManager.kt              # Wraps SpeechRecognizer; offline pack mgmt
+│   │   ├── SttResult.kt               # Sealed class: Final, Partial, Error
+│   │   └── LanguagePackChecker.kt
+│   └── tts/
+│       ├── TtsManager.kt              # Wraps TextToSpeech; QUEUE_ADD for streamed
+│       ├── SentenceQueue.kt           # Buffers sentences from streaming responses
+│       └── NumberFormatter.kt         # Pre-format LLM numbers for natural readout
+├── vision/
+│   ├── OcrManager.kt                  # ML Kit Text Recognition v2 wrapper
+│   └── DigitExtractor.kt              # Post-process text blocks → numeric value
+├── inference/
+│   ├── BedrockClient.kt               # Retrofit + SSE client for /conversation/turn(-stream)
+│   ├── ConversationTurnRepository.kt
+│   └── ConversationStateMachine.kt    # Mirrors server state machine for UI
+├── auth/                               # Cognito (unchanged)
+├── fhir/                               # HAPI FHIR (unchanged)
+├── api/                                # Cloud REST clients (unchanged)
+├── notifications/                      # FCM (unchanged)
+└── ui/
+    ├── conversation/                  # Voice conversation screen
+    ├── photo/                         # Camera + OCR confirmation screen
+    └── ...
+```
+
+### 8.2 Removed from v1
+
+- `com.carelog.macmini.*` — entire package (mDNS discovery, LAN HTTP client, model health endpoint polling)
+- `MacMiniHealthChecker` and related observers
+- `LanInferenceClient`
+
+### 8.3 Audio Capture and Streaming Pipeline
+
+1. User taps "Start Conversation" → `SttManager.start(language)`.
+2. `SpeechRecognizer.startListening()` with `RecognizerIntent.EXTRA_PREFER_OFFLINE = true`.
+3. Partial results consumed for UI ("waveform + transcript preview"); final result triggers turn submission.
+4. Final transcript → `ConversationTurnRepository.submitTurn()` → cloud call.
+5. Audio waveform data buffered locally; uploaded as part of `POST /interactions/log` after session end; local buffer cleared on 200 OK.
+
+Microphone is only active during STT capture; explicitly released between turns to surface clear "your turn" / "system's turn" UX states.
+
+### 8.4 SSE Streaming Client
+
+OkHttp's `EventSource` is not used directly (limited SSE support); a custom `BufferedReader`-based SSE consumer parses event lines and dispatches by event type. Reconnection on mid-stream errors: stop TTS playback, surface "Reconnecting…", retry once with idempotency key.
+
+### 8.5 State Management for Conversation Sessions
+
+A single `ConversationViewModel` holds:
+
+- `session: SessionState` (CREATED / GREETING / EXTRACTING / …)
+- `pendingConfirmation: List<ExtractedValue>`
+- `transcript: String` (current turn)
+- `responseSentenceQueue: Channel<String>` for streamed sentence delivery to TTS
+- `connectivity: ConnectivityState` (HEALTHY / RECONNECTING / DEGRADED)
+
+State updates are unidirectional from the cloud's `sessionState` field; client never authoritatively mutates session state.
+
+### 8.6 Notification Handling
+
+Unchanged from v1.
+
+---
+
+## 9. Web Portal Changes
+
+### 9.1 Delta from v1
+
+- New "Cost & Telemetry" tab (admin-only initially) showing per-patient daily Bedrock cost, escalation rate, latency P95.
+- Existing patient detail page gets a "Last session telemetry" card showing tier breakdown + region.
+- No changes to clinical views (vitals, FHIR timeline, protocol management).
+
+### 9.2 New API Calls
+
+```ts
+// web-portal/src/services/telemetry.ts
+GET /admin/telemetry/cost?patientId={id}&from={date}&to={date}
+GET /admin/telemetry/cost/aggregate?from={date}&to={date}
+GET /admin/telemetry/escalations?from={date}&to={date}
+```
+
+Restricted to a new `admins` Cognito group (1-2 internal users at pilot scale).
+
+---
+
+## 10. Notification & Alert Engine
+
+Unchanged from v1. See `docs/carelog_spec.md` §10.
+
+---
+
+## 11. Security Implementation
+
+### 11.1 TLS Configuration
+
+Unchanged from v1. All HTTPS endpoints use TLS 1.2+. Certificate pinning on app for `*.execute-api.ap-south-1.amazonaws.com` with backup pin rotation.
+
+### 11.2 Cognito Token Flow
+
+Unchanged from v1.
+
+### 11.3 Cross-Region Inference Data Flow
+
+```mermaid
+sequenceDiagram
+    participant App
+    participant APIGW (ap-south-1)
+    participant Lambda (ap-south-1)
+    participant Bedrock IP (ap-southeast-1)
+    participant S3 (ap-south-1)
+
+    App->>APIGW: POST /conversation/turn (PHI in body)
+    APIGW->>Lambda: invoke (PHI, in-region)
+    Lambda->>Bedrock IP: InvokeModel (PHI in prompt; cross-region)
+    Note over Bedrock IP: Inference executes outside India.<br/>No persistent storage.<br/>Subject to AWS BAA.
+    Bedrock IP-->>Lambda: response text (cross-region)
+    Lambda->>S3: persist transcript + response (in-region)
+    Lambda-->>APIGW: response
+    APIGW-->>App: response
+```
+
+**Compliance notes:**
+- AWS BAA covers Bedrock inference globally.
+- DPDP consent text discloses cross-region inference explicitly.
+- No PHI is persisted outside ap-south-1; inference invocations are ephemeral.
+- CloudTrail logs Bedrock invocations; per-call audit available via `model_call` table.
+
+### 11.4 IAM Scoping
+
+`bedrock-router` Lambda execution role:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
+  "Resource": [
+    "arn:aws:bedrock:*::inference-profile/apac.anthropic.claude-haiku-4-5-v1:0",
+    "arn:aws:bedrock:*::inference-profile/apac.anthropic.claude-sonnet-4-x-v1:0",
+    "arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku-4-5-v1:0",
+    "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-x-v1:0"
+  ]
+},
+{
+  "Effect": "Allow",
+  "Action": ["bedrock:ApplyGuardrail"],
+  "Resource": "arn:aws:bedrock:ap-south-1:{account}:guardrail/{matika-guardrail-id}"
+}
+```
+
+No `bedrock:*` wildcard. No access to other foundation models.
+
+### 11.5 Bedrock Guardrails Configuration
+
+| Filter | Action | Notes |
+|---|---|---|
+| PII: PHONE | Anonymize | Patient/caregiver phone numbers may appear in transcripts |
+| PII: EMAIL | Anonymize | |
+| PII: NAME | None | We need names for natural addressing |
+| PII: ADDRESS | None | Patient addresses are used in care context |
+| PII: CREDIT_CARD / SSN / PASSPORT | Block | Should never appear; if they do, hard block |
+| Denied topic: `medication_dosage_advice` | Block input/output | LLM should never recommend specific dosages |
+| Denied topic: `surgical_recommendation` | Block | |
+| Denied topic: `prognosis_statement` | Block | |
+| Custom topic trigger: `self_harm_or_suicide` | Output: rewrite + flag | Triggers app-side emergency UI even if LLM didn't escalate |
+| Custom topic trigger: `chest_pain_emergency` | Output: rewrite + flag | |
+| Contextual grounding | Output filter | Validates vision outputs against image context |
+
+### 11.6 Per-Patient Rate Limit
+
+`bedrock-router` enforces:
+- Soft cap: 100 model calls per patient per UTC day → adds `X-Matika-Cost-Today` warning header
+- Hard cap: 500 model calls per patient per UTC day → returns 429 + alerts caregiver via FCM ("Unusual session activity — please contact support")
+
+Cap values are pilot-tuned; expected normal usage is ~12 calls/patient/day.
+
+### 11.7 S3 Bucket Policies, Certificate Pinning
+
+Unchanged from v1.
+
+---
+
+## 12. Testing Strategy
+
+### 12.1 Unit Tests
+
+| Component | Coverage target |
+|---|---|
+| `bedrock-router` prompt builder | All escalation signals; structured output parser; cache key generation |
+| `bedrock-router` state machine | All transitions; idle timeout; explicit pause |
+| `bedrock-vision` fallback chain | ML Kit → Haiku → Sonnet decision logic |
+| Android `SttManager` | Offline pack detection; language switching; partial vs final result |
+| Android `TtsManager` | Sentence queueing; barge-in interruption; number formatting |
+| Android `OcrManager` | Numeric extraction confidence thresholding |
+| Cost calculation | Haiku/Sonnet/cached-token pricing accuracy |
+
+### 12.2 Integration Tests
+
+| Test | Stub strategy |
+|---|---|
+| End-to-end turn (sync) | Bedrock stubbed to return canned JSON; verifies state persists, telemetry recorded |
+| End-to-end turn (streamed) | Bedrock stub emits SSE chunks; verifies app sentence queueing |
+| Vision fallback | ML Kit returns low confidence → Bedrock vision called |
+| Guardrails block | Bedrock returns guardrail-blocked response → state preserved, error surfaced |
+| Cross-region failure | Bedrock returns 503 → fallback inference profile attempted |
+| Connectivity loss mid-turn | Network drops mid-stream → app surfaces reconnecting; resumes on reconnect |
+
+### 12.3 End-to-End Scenarios
+
+| Scenario | Languages | Tier mix |
+|---|---|---|
+| Patient logs BP successfully | en, hi, bn | T2 only |
+| Patient logs glucose via photo | en | ML Kit success |
+| Patient logs glucose via photo on glare | en | ML Kit miss → Haiku → Sonnet |
+| Patient implausible BP value | hi | T2 → T3 escalation |
+| Patient mentions chest pain | en, hi | T3 emergency + Guardrail trigger + caregiver alert within 60s |
+| Caregiver onboards patient | en | T3 (caregiver default) |
+| Caregiver adds new parameter | en | T3 |
+| Caregiver receives recommendation | en | T3 |
+| Code-switching mid-utterance | hi+en, bn+en | T2 default; T3 if density high |
+
+### 12.4 Multilingual Test Matrix
+
+10 utterances per language × 5 health parameters × 3 noise conditions = 150 utterances per language. Recorded with elderly speakers where possible. Used for STT correction-rate baseline and end-to-end extraction accuracy.
+
+### 12.5 Latency Benchmarking
+
+Run 100 turns per scenario in steady state; compute median, P95, P99. Baseline before pilot launch; monitor in production via `model_call` table.
+
+---
+
+## 13. Implementation Phases
+
+See `docs/matika_implementation_plan_v2.md` for task-level breakdown. Phase summary in `docs/matika_prd_v2.md` §11.
+
+---
+
+## 14. Deployment & Operations
+
+### 14.1 Terraform Changes
+
+| Module | Change |
+|---|---|
+| `infrastructure/terraform/modules/bedrock` (new) | Inference profile ARNs (config-only); Guardrail resource definition |
+| `infrastructure/terraform/modules/lambda` | New Lambdas: `bedrock-router`, `bedrock-vision`, `health-check`. Provisioned concurrency on `bedrock-router` |
+| `infrastructure/terraform/modules/iam` | New roles for the new Lambdas; scoped Bedrock policies (§11.4) |
+| `infrastructure/terraform/modules/api_gateway` | New routes: `POST /conversation/turn`, `POST /conversation/turn-stream`, `POST /conversation/photo-extract`, `GET /health` |
+| `infrastructure/terraform/modules/healthlake` | No changes |
+| Removed | None — no Mac Mini infra was in Terraform |
+
+### 14.2 Removed Repository Artifacts
+
+- `mac-mini/` directory (entire)
+- Any references in `docs/setup-and-deployment-guide.md` to Mac Mini setup
+- Mobile app `com.carelog.macmini.*` package
+- v1 Lambda `fetch-session-config` (folded into `bedrock-router`)
+
+### 14.3 Environment Variables (`bedrock-router` Lambda)
+
+```
+BEDROCK_HAIKU_MODEL_ID=apac.anthropic.claude-haiku-4-5-v1:0
+BEDROCK_SONNET_MODEL_ID=apac.anthropic.claude-sonnet-4-x-v1:0
+BEDROCK_GUARDRAIL_ID={matika-guardrail-id}
+BEDROCK_GUARDRAIL_VERSION={version-number}
+INFERENCE_PROFILE_REGION=ap-southeast-1
+INFERENCE_PROFILE_FALLBACK_REGION=us-east-1
+PROMPT_CACHE_TTL_SECONDS=300
+SOFT_RATE_LIMIT_PER_PATIENT=100
+HARD_RATE_LIMIT_PER_PATIENT=500
+DB_SECRET_ARN={...}
+SYSTEM_PROMPT_VERSION=v2.0
+```
+
+### 14.4 Observability
+
+- **Per-call telemetry**: every Bedrock call written to `model_call`; rolled up to `cost_telemetry` daily.
+- **CloudWatch metrics**: `BedrockTtfTMs`, `BedrockTotalLatencyMs`, `GuardrailBlockRate`, `EscalationRate`, `CostPerPatientPerDay`.
+- **CloudWatch alarms**: P95 latency > SLO for 10 minutes; Guardrail block rate > 5% for 10 minutes; cost-per-patient above adaptive baseline.
+- **Dashboards**: per-patient daily cost, latency P95 by tier, escalation breakdown, language distribution.
+
+### 14.5 Pilot Operations
+
+- 10 patients onboarded over 2 weeks.
+- Daily cost review for first 4 weeks.
+- Weekly latency P95 review.
+- Bi-weekly transcript audit (sampled, with consent) for extraction accuracy.
+
+---
+
+## 15. Appendix
+
+### 15.1 Glossary
+
+- **Tier (T2/T3)**: Bedrock model tier. T2 = Claude Haiku 4.5 (default). T3 = Claude Sonnet 4.x (escalation).
+- **Inference profile**: Bedrock cross-region routing abstraction; routes calls to one of multiple regions for capacity and availability.
+- **Guardrail**: Bedrock safety layer applied at invoke time; PII redaction + denied topics + custom triggers.
+- **Cached input tokens**: Tokens served from Bedrock prompt cache at ~10% of normal input cost.
+- **Escalation signal**: Any of the conditions in §6.5 that route a turn to Sonnet.
+- **Streamed turn**: A turn using SSE delivery for token-by-token response, enabling sentence-buffered TTS playback before generation completes.
+
+### 15.2 Reference Links
+
+- v1 PRD: `docs/carelog_prd.md`
+- v1 Spec: `docs/carelog_spec.md`
+- v2 Implementation Plan: `docs/matika_implementation_plan_v2.md`
+- v2 Migration: `docs/matika_v2_migration.md`
+
+---
+
+*Matika Spec v2.0 — May 2026 — Pilot Release — CONFIDENTIAL*
