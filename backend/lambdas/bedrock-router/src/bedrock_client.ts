@@ -13,6 +13,7 @@ import {
   BedrockRuntimeClient,
   InvokeModelCommand,
   InvokeModelCommandOutput,
+  InvokeModelWithResponseStreamCommand,
 } from '@aws-sdk/client-bedrock-runtime';
 import type { BedrockBody } from './prompt_builder';
 
@@ -32,6 +33,21 @@ export interface InvokeResult {
   guardrailBlocked: boolean;
   inferenceRegion: string;
   rawStopReason: string | null;
+}
+
+// ---------- Streaming types ----------
+
+// Streaming chunks parsed from Bedrock's response-stream events. Mirrors
+// Anthropic's content-block-delta shape, with usage metrics surfaced from
+// message_stop.
+export type StreamChunk =
+  | { type: 'text_delta'; text: string }
+  | { type: 'message_stop'; usage: StreamUsage; stopReason: string | null };
+
+export interface StreamUsage {
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
 }
 
 // Anthropic-on-Bedrock response body shape.
@@ -55,6 +71,7 @@ interface AnthropicResponse {
 // Minimal interface so tests can mock without depending on the AWS SDK.
 export interface BedrockInvoker {
   invoke(input: InvokeInput): Promise<InvokeResult>;
+  invokeStream(input: InvokeInput): AsyncIterable<StreamChunk>;
 }
 
 export class AwsBedrockInvoker implements BedrockInvoker {
@@ -77,6 +94,86 @@ export class AwsBedrockInvoker implements BedrockInvoker {
     const response = await this.client.send(command);
     return parseInvokeOutput(response, input.configuredRegion);
   }
+
+  invokeStream(input: InvokeInput): AsyncIterable<StreamChunk> {
+    const client = this.client;
+    return (async function* () {
+      const command = new InvokeModelWithResponseStreamCommand({
+        modelId: input.modelId,
+        contentType: 'application/json',
+        accept: 'application/json',
+        body: new TextEncoder().encode(JSON.stringify(input.body)),
+        ...(input.guardrailId
+          ? {
+              guardrailIdentifier: input.guardrailId,
+              guardrailVersion: input.guardrailVersion ?? 'DRAFT',
+            }
+          : {}),
+      });
+      const response = await client.send(command);
+      if (!response.body) {
+        throw new Error('Bedrock streaming response had no body.');
+      }
+      for await (const event of response.body) {
+        if (!event.chunk?.bytes) continue;
+        const decoded = new TextDecoder().decode(event.chunk.bytes);
+        const chunk = parseStreamChunk(decoded);
+        if (chunk) yield chunk;
+      }
+    })();
+  }
+}
+
+// Exported for tests — pure parser over Anthropic-on-Bedrock SSE chunk JSON.
+// Returns null for chunks we don't care about (message_start, ping, etc.).
+export function parseStreamChunk(json: string): StreamChunk | null {
+  let parsed: AnthropicStreamEvent;
+  try {
+    parsed = JSON.parse(json) as AnthropicStreamEvent;
+  } catch {
+    return null;
+  }
+
+  if (
+    parsed.type === 'content_block_delta' &&
+    parsed.delta?.type === 'text_delta' &&
+    typeof parsed.delta.text === 'string'
+  ) {
+    return { type: 'text_delta', text: parsed.delta.text };
+  }
+
+  if (parsed.type === 'message_stop') {
+    const metrics = parsed['amazon-bedrock-invocationMetrics'];
+    if (!metrics) return null;
+    const cacheRead = metrics.cacheReadInputTokenCount ?? 0;
+    const cacheCreation = metrics.cacheWriteInputTokenCount ?? 0;
+    return {
+      type: 'message_stop',
+      usage: {
+        inputTokens: metrics.inputTokenCount + cacheCreation + cacheRead,
+        cachedInputTokens: cacheRead,
+        outputTokens: metrics.outputTokenCount,
+      },
+      stopReason: parsed['amazon-bedrock-stopReason'] ?? null,
+    };
+  }
+
+  return null;
+}
+
+// Anthropic-on-Bedrock streaming event shapes.
+interface AnthropicStreamEvent {
+  type: string;
+  delta?: { type: string; text?: string };
+  'amazon-bedrock-invocationMetrics'?: {
+    inputTokenCount: number;
+    outputTokenCount: number;
+    cacheReadInputTokenCount?: number;
+    cacheWriteInputTokenCount?: number;
+    invocationLatency?: number;
+    firstByteLatency?: number;
+  };
+  'amazon-bedrock-stopReason'?: string;
 }
 
 // Exported for tests — pure function over the SDK output shape.

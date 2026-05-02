@@ -1,5 +1,5 @@
 import type { InvokeModelCommandOutput } from '@aws-sdk/client-bedrock-runtime';
-import { parseInvokeOutput } from '../src/bedrock_client';
+import { parseInvokeOutput, parseStreamChunk } from '../src/bedrock_client';
 
 function makeOutput(
   body: object,
@@ -122,5 +122,106 @@ describe('parseInvokeOutput', () => {
       $metadata: { httpStatusCode: 200 },
     } as unknown as InvokeModelCommandOutput;
     expect(() => parseInvokeOutput(out, 'ap-southeast-1')).toThrow(/not valid JSON/);
+  });
+});
+
+describe('parseStreamChunk', () => {
+  it('parses a content_block_delta with text_delta', () => {
+    const chunk = parseStreamChunk(
+      JSON.stringify({
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'text_delta', text: 'Hello, ' },
+      }),
+    );
+    expect(chunk).toEqual({ type: 'text_delta', text: 'Hello, ' });
+  });
+
+  it('returns null for content_block_delta with non-text delta', () => {
+    expect(
+      parseStreamChunk(
+        JSON.stringify({
+          type: 'content_block_delta',
+          delta: { type: 'input_json_delta', partial_json: '{}' },
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it('parses a message_stop with usage and stop reason', () => {
+    const chunk = parseStreamChunk(
+      JSON.stringify({
+        type: 'message_stop',
+        'amazon-bedrock-invocationMetrics': {
+          inputTokenCount: 100,
+          outputTokenCount: 28,
+          cacheReadInputTokenCount: 1420,
+          cacheWriteInputTokenCount: 0,
+          invocationLatency: 612,
+          firstByteLatency: 200,
+        },
+        'amazon-bedrock-stopReason': 'end_turn',
+      }),
+    );
+    expect(chunk).toEqual({
+      type: 'message_stop',
+      usage: {
+        inputTokens: 1520, // 100 + 0 + 1420
+        cachedInputTokens: 1420,
+        outputTokens: 28,
+      },
+      stopReason: 'end_turn',
+    });
+  });
+
+  it('returns null for message_stop without invocation metrics', () => {
+    expect(
+      parseStreamChunk(JSON.stringify({ type: 'message_stop' })),
+    ).toBeNull();
+  });
+
+  it('returns null for unknown chunk types', () => {
+    expect(parseStreamChunk(JSON.stringify({ type: 'message_start' }))).toBeNull();
+    expect(parseStreamChunk(JSON.stringify({ type: 'content_block_start' }))).toBeNull();
+    expect(parseStreamChunk(JSON.stringify({ type: 'ping' }))).toBeNull();
+  });
+
+  it('returns null for invalid JSON', () => {
+    expect(parseStreamChunk('not json')).toBeNull();
+  });
+
+  it('treats missing cache fields as zero in message_stop', () => {
+    const chunk = parseStreamChunk(
+      JSON.stringify({
+        type: 'message_stop',
+        'amazon-bedrock-invocationMetrics': {
+          inputTokenCount: 200,
+          outputTokenCount: 5,
+        },
+      }),
+    );
+    expect(chunk).toEqual({
+      type: 'message_stop',
+      usage: {
+        inputTokens: 200,
+        cachedInputTokens: 0,
+        outputTokens: 5,
+      },
+      stopReason: null,
+    });
+  });
+
+  it('detects guardrail_intervened stop reason', () => {
+    const chunk = parseStreamChunk(
+      JSON.stringify({
+        type: 'message_stop',
+        'amazon-bedrock-invocationMetrics': {
+          inputTokenCount: 100,
+          outputTokenCount: 8,
+        },
+        'amazon-bedrock-stopReason': 'guardrail_intervened',
+      }),
+    );
+    expect(chunk).toMatchObject({ type: 'message_stop', stopReason: 'guardrail_intervened' });
   });
 });

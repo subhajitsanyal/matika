@@ -1,6 +1,14 @@
 import { resolve } from 'node:path';
-import { handleTurn, HandlerDeps, TurnRequest, _resetSystemPromptCache } from '../src/handler';
-import type { BedrockInvoker, InvokeInput, InvokeResult } from '../src/bedrock_client';
+import {
+  handleTurn,
+  handleTurnStream,
+  HandlerDeps,
+  HandlerError,
+  TurnRequest,
+  _resetSystemPromptCache,
+} from '../src/handler';
+import { CollectingSseEmitter } from '../src/sse_events';
+import type { BedrockInvoker, InvokeInput, InvokeResult, StreamChunk } from '../src/bedrock_client';
 import type {
   PatientContextLoader,
   TurnContextLoader,
@@ -62,6 +70,27 @@ function baseTurnCtx(): TurnContext {
   };
 }
 
+// Default stream chunks reconstruct the canonical happy-path responseText
+// in two text_delta chunks, then a message_stop with usage matching the
+// non-streamed makeInvokeResult() defaults.
+function defaultStreamChunks(invokeResult?: InvokeResult): StreamChunk[] {
+  const r = invokeResult ?? makeInvokeResult();
+  const half = Math.floor(r.responseText.length / 2);
+  return [
+    { type: 'text_delta', text: r.responseText.slice(0, half) },
+    { type: 'text_delta', text: r.responseText.slice(half) },
+    {
+      type: 'message_stop',
+      usage: {
+        inputTokens: r.inputTokens,
+        cachedInputTokens: r.cachedInputTokens,
+        outputTokens: r.outputTokens,
+      },
+      stopReason: r.rawStopReason,
+    },
+  ];
+}
+
 function makeInvokeResult(overrides: Partial<InvokeResult> = {}): InvokeResult {
   return {
     responseText: `<output>
@@ -102,6 +131,7 @@ function makeDeps(opts: {
   turnCtx?: TurnContext;
   invokeResult?: InvokeResult;
   invokeError?: Error;
+  streamChunks?: StreamChunk[];
   patientLoadError?: Error;
   turnLoadError?: Error;
   nowSequence?: number[];
@@ -119,6 +149,15 @@ function makeDeps(opts: {
       calls.invokeCalls.push(input);
       if (opts.invokeError) throw opts.invokeError;
       return opts.invokeResult ?? makeInvokeResult();
+    },
+    invokeStream(input: InvokeInput): AsyncIterable<StreamChunk> {
+      calls.invokeCalls.push(input);
+      const error = opts.invokeError;
+      const streamChunks = opts.streamChunks ?? defaultStreamChunks(opts.invokeResult);
+      return (async function* () {
+        if (error) throw error;
+        for (const chunk of streamChunks) yield chunk;
+      })();
     },
   };
   const patientLoader: PatientContextLoader = {
@@ -450,5 +489,255 @@ describe('handleTurn — Bedrock invocation shape', () => {
     await handleTurn(baseRequest, deps);
     expect(calls.invokeCalls[0].guardrailId).toBe('matika-test-guardrail');
     expect(calls.invokeCalls[0].guardrailVersion).toBe('DRAFT');
+  });
+});
+
+// ---------- Parser retry (handleTurn) ----------
+
+describe('handleTurn — parser retry on parse failure', () => {
+  const malformedResponse = makeInvokeResult({ responseText: 'No tags here, just prose.' });
+  const validRetry = makeInvokeResult();
+
+  function makeRetryingDeps(opts: { firstResult: InvokeResult; secondResult?: InvokeResult; secondError?: Error }) {
+    const calls: CapturedCalls = {
+      invokeCalls: [],
+      patientLoadCalls: [],
+      turnLoadCalls: [],
+      persisterUpdates: [],
+      modelCallRecords: [],
+    };
+    let invokeCount = 0;
+    const bedrock: BedrockInvoker = {
+      async invoke(input) {
+        calls.invokeCalls.push(input);
+        invokeCount++;
+        if (invokeCount === 1) return opts.firstResult;
+        if (opts.secondError) throw opts.secondError;
+        return opts.secondResult ?? validRetry;
+      },
+      invokeStream() {
+        throw new Error('not used in this test');
+      },
+    };
+    const deps: HandlerDeps = {
+      bedrock,
+      patientLoader: {
+        async load(id) { calls.patientLoadCalls.push(id); return basePatientCtx(); },
+      },
+      turnLoader: {
+        async load(sessionId, transcript) {
+          calls.turnLoadCalls.push({ sessionId, transcript });
+          return baseTurnCtx();
+        },
+      },
+      sessionPersister: { async update(sessionId, patch) { calls.persisterUpdates.push({ sessionId, patch }); } },
+      modelCallRecorder: { async record(record) { calls.modelCallRecords.push(record); } },
+      config: {
+        haikuModelId: 'apac.anthropic.claude-haiku-4-5-v1:0',
+        sonnetModelId: 'apac.anthropic.claude-sonnet-4-x-v1:0',
+        guardrailId: 'matika-test-guardrail',
+        guardrailVersion: 'DRAFT',
+        inferenceRegion: 'ap-southeast-1',
+        maxTokens: 1024,
+        systemPromptPath: SYSTEM_PROMPT_PATH,
+      },
+    };
+    return { deps, calls };
+  }
+
+  it('retries once with stricter prompt when first response has no <output> tags', async () => {
+    const { deps, calls } = makeRetryingDeps({ firstResult: malformedResponse });
+    const result = await handleTurn(baseRequest, deps);
+    expect(result.statusCode).toBe(200);
+    expect(calls.invokeCalls).toHaveLength(2);
+    // Second invoke should have the strictness reminder appended to the
+    // per-turn (last) content block
+    const secondBody = calls.invokeCalls[1].body;
+    const lastContent = secondBody.messages[0].content[secondBody.messages[0].content.length - 1];
+    expect(lastContent.text).toContain('SYSTEM REMINDER');
+  });
+
+  it('retries on invalid JSON inside <output> tags', async () => {
+    const malformed = makeInvokeResult({
+      responseText: '<output>{ broken json</output>',
+    });
+    const { deps, calls } = makeRetryingDeps({ firstResult: malformed });
+    const result = await handleTurn(baseRequest, deps);
+    expect(result.statusCode).toBe(200);
+    expect(calls.invokeCalls).toHaveLength(2);
+  });
+
+  it('retries on schema validation failure', async () => {
+    const missingField = makeInvokeResult({
+      responseText: `<output>
+{"responseText":"ok","ttsHints":{"language":"en-IN","spellOutNumbers":false},"extractedValues":[],"actions":[],"stateTransition":"EXTRACTING -> EXTRACTING"}
+</output>`,
+    });
+    const { deps, calls } = makeRetryingDeps({ firstResult: missingField });
+    const result = await handleTurn(baseRequest, deps);
+    expect(result.statusCode).toBe(200);
+    expect(calls.invokeCalls).toHaveLength(2);
+  });
+
+  it('throws HandlerError(503) when retry also fails to parse', async () => {
+    const { deps, calls } = makeRetryingDeps({
+      firstResult: malformedResponse,
+      secondResult: malformedResponse, // same garbage, retry also fails
+    });
+    await expect(handleTurn(baseRequest, deps)).rejects.toThrow(HandlerError);
+    expect(calls.invokeCalls).toHaveLength(2);
+    try {
+      await handleTurn(baseRequest, deps);
+    } catch (e) {
+      if (e instanceof HandlerError) {
+        expect(e.statusCode).toBe(503);
+        expect(e.code).toMatch(/^parse_failed_after_retry/);
+      }
+    }
+  });
+
+  it('does NOT retry on non-retriable errors (e.g. state-machine from-mismatch)', async () => {
+    const wrongTransition = makeInvokeResult({
+      responseText: `<output>
+{"responseText":"ok","ttsHints":{"language":"en-IN","spellOutNumbers":false},"extractedValues":[],"actions":[],"stateTransition":"GREETING -> EXTRACTING","escalationReason":null}
+</output>`,
+    });
+    const { deps, calls } = makeRetryingDeps({ firstResult: wrongTransition });
+    await expect(handleTurn(baseRequest, deps)).rejects.toThrow(/FROM/);
+    // FROM-mismatch happens AFTER parse, so only one invoke
+    expect(calls.invokeCalls).toHaveLength(1);
+  });
+});
+
+// ---------- handleTurnStream ----------
+
+describe('handleTurnStream', () => {
+  it('emits prelude → sentence → extracted → telemetry → done in order', async () => {
+    const { deps } = makeDeps();
+    const emitter = new CollectingSseEmitter();
+    await handleTurnStream(baseRequest, deps, emitter);
+
+    const types = emitter.events.map((e) => e.type);
+    expect(types[0]).toBe('prelude');
+    // Sentence + extracted appear after prelude, before telemetry/done
+    expect(types).toContain('sentence');
+    expect(types).toContain('extracted');
+    expect(types).toContain('telemetry');
+    expect(types[types.length - 1]).toBe('done');
+    expect(emitter.ended).toBe(true);
+  });
+
+  it('prelude carries tier and model', async () => {
+    const { deps } = makeDeps();
+    const emitter = new CollectingSseEmitter();
+    await handleTurnStream(baseRequest, deps, emitter);
+    const prelude = emitter.events[0];
+    expect(prelude.type).toBe('prelude');
+    if (prelude.type === 'prelude') {
+      expect(prelude.data.sessionId).toBe('session-1');
+      expect(prelude.data.tier).toBe('T2');
+      expect(prelude.data.model).toBe('apac.anthropic.claude-haiku-4-5-v1:0');
+      expect(prelude.data.streamId).toMatch(/^[0-9a-f-]{36}$/);
+    }
+  });
+
+  it('streamed=true is recorded in model_call telemetry', async () => {
+    const { deps, calls } = makeDeps();
+    await handleTurnStream(baseRequest, deps, new CollectingSseEmitter());
+    expect(calls.modelCallRecords).toHaveLength(1);
+    expect(calls.modelCallRecords[0].streamed).toBe(true);
+  });
+
+  it('streamingUsed=true is recorded in session update', async () => {
+    const { deps, calls } = makeDeps();
+    await handleTurnStream(baseRequest, deps, new CollectingSseEmitter());
+    expect(calls.persisterUpdates[0].patch.streamingUsed).toBe(true);
+  });
+
+  it('routes T3 escalation to Sonnet streaming', async () => {
+    // Use streamChunks that produce a T3 (Sonnet) response after escalation
+    const sonnetResponse = `<output>
+{"responseText":"That seems unusually high.","ttsHints":{"language":"en-IN","spellOutNumbers":false},"extractedValues":[],"actions":[],"stateTransition":"EXTRACTING -> PLAUSIBILITY_CHALLENGE","escalationReason":"implausible_value"}
+</output>`;
+    const { deps, calls } = makeDeps({
+      streamChunks: [
+        { type: 'text_delta', text: sonnetResponse },
+        {
+          type: 'message_stop',
+          usage: { inputTokens: 2100, cachedInputTokens: 1420, outputTokens: 85 },
+          stopReason: 'end_turn',
+        },
+      ],
+    });
+    const emitter = new CollectingSseEmitter();
+    await handleTurnStream(
+      { ...baseRequest, transcript: 'My BP is 350 over 200' },
+      deps,
+      emitter,
+    );
+
+    expect(calls.invokeCalls[0].modelId).toBe('apac.anthropic.claude-sonnet-4-x-v1:0');
+    const telemetry = emitter.events.find((e) => e.type === 'telemetry');
+    expect(telemetry?.type).toBe('telemetry');
+    if (telemetry?.type === 'telemetry') {
+      expect(telemetry.data.tier).toBe('T3');
+      expect(telemetry.data.escalationReason).toBe('implausible_value');
+    }
+  });
+
+  it('emits error event on Bedrock failure and ends emitter', async () => {
+    const { deps } = makeDeps({ invokeError: new Error('Bedrock down') });
+    const emitter = new CollectingSseEmitter();
+    await expect(handleTurnStream(baseRequest, deps, emitter)).rejects.toThrow('Bedrock down');
+    const errorEvent = emitter.events.find((e) => e.type === 'error');
+    expect(errorEvent).toBeDefined();
+    expect(emitter.ended).toBe(true);
+  });
+
+  it('emits error event on validation failure (empty transcript)', async () => {
+    const { deps } = makeDeps();
+    const emitter = new CollectingSseEmitter();
+    await expect(
+      handleTurnStream({ ...baseRequest, transcript: '   ' }, deps, emitter),
+    ).rejects.toThrow(/transcript/);
+    const errorEvent = emitter.events.find((e) => e.type === 'error');
+    expect(errorEvent).toBeDefined();
+  });
+
+  it('done event carries final session state', async () => {
+    const { deps } = makeDeps();
+    const emitter = new CollectingSseEmitter();
+    await handleTurnStream(baseRequest, deps, emitter);
+    const done = emitter.events[emitter.events.length - 1];
+    expect(done.type).toBe('done');
+    if (done.type === 'done') {
+      expect(done.data.sessionState.fsmState).toBe('PENDING_CONFIRMATION');
+      expect(done.data.sessionState.pendingConfirmation).toHaveLength(2);
+    }
+  });
+
+  it('aggregates multi-chunk text_delta into one parsed output', async () => {
+    // Same content split across many chunks
+    const fullText = makeInvokeResult().responseText;
+    const chunks: StreamChunk[] = [];
+    for (let i = 0; i < fullText.length; i += 50) {
+      chunks.push({ type: 'text_delta', text: fullText.slice(i, i + 50) });
+    }
+    chunks.push({
+      type: 'message_stop',
+      usage: { inputTokens: 1840, cachedInputTokens: 1420, outputTokens: 28 },
+      stopReason: 'end_turn',
+    });
+
+    const { deps } = makeDeps({ streamChunks: chunks });
+    const emitter = new CollectingSseEmitter();
+    await handleTurnStream(baseRequest, deps, emitter);
+
+    // Should have parsed correctly and emitted full content
+    const sentence = emitter.events.find((e) => e.type === 'sentence');
+    expect(sentence).toBeDefined();
+    if (sentence?.type === 'sentence') {
+      expect(sentence.data.text).toContain('one thirty');
+    }
   });
 });
