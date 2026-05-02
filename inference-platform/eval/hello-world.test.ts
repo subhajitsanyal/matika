@@ -22,10 +22,14 @@ describe('inference-platform scaffold', () => {
     const ajv = new Ajv({ strict: false });
     const validate = ajv.compile(schema);
 
-    // Validate a stub-shape document against the placeholder schema.
+    // Validate a complete-shape document against the schema.
     const sample = {
       responseText: 'I heard one thirty over eighty five.',
+      ttsHints: { language: 'en-IN', spellOutNumbers: false },
+      extractedValues: [],
+      actions: [],
       stateTransition: 'EXTRACTING -> PENDING_CONFIRMATION',
+      escalationReason: null,
     };
     expect(validate(sample)).toBe(true);
   });
