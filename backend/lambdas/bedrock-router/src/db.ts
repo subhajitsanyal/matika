@@ -91,20 +91,20 @@ export class PgPatientContextLoader implements PatientContextLoader {
     const [patientRows, configRows, topicRows, sessionRows, recRows] = await Promise.all([
       this.client.query<PatientRow>(
         `SELECT id, name, age, gender, primary_language, conditions, medical_history_summary
-         FROM patient WHERE id = $1`,
+         FROM patients WHERE id = $1`,
         [patientId],
       ),
       this.client.query<ParameterConfigRow>(
         `SELECT parameter_name, loinc_code, unit, frequency_days, daily_deadline, timezone,
                 threshold_min, threshold_max, threshold_set_by, active
-         FROM parameter_config
+         FROM parameter_configs
          WHERE patient_id = $1 AND active = TRUE
          ORDER BY parameter_name`,
         [patientId],
       ),
       this.client.query<PatientTopicRow>(
         `SELECT t.topic_name, pt.status, pt.last_updated, pt.summary
-         FROM patient_topic pt JOIN topic t ON t.id = pt.topic_id
+         FROM patient_topics pt JOIN topics t ON t.id = pt.topic_id
          WHERE pt.patient_id = $1
          ORDER BY t.topic_name`,
         [patientId],
@@ -112,7 +112,7 @@ export class PgPatientContextLoader implements PatientContextLoader {
       this.client.query<SessionSummaryRow>(
         `SELECT id AS session_id, session_type, language, started_at, ended_at, status,
                 extracted_parameters AS captured_values, incomplete_reason
-         FROM interaction_session
+         FROM interaction_sessions
          WHERE patient_id = $1
          ORDER BY started_at DESC
          LIMIT 3`,
@@ -121,7 +121,7 @@ export class PgPatientContextLoader implements PatientContextLoader {
       this.client.query<RecommendationRow>(
         `SELECT parameter_name, source, rationale, suggested_frequency_days,
                 requires_gentle_introduction
-         FROM recommendation
+         FROM recommendations
          WHERE patient_id = $1 AND status = 'pending'
          ORDER BY created_at`,
         [patientId],
@@ -219,11 +219,11 @@ export class PgTurnContextLoader implements TurnContextLoader {
     const result = await this.client.query<SessionRow>(
       `SELECT id, session_type, language, fsm_state, captured_this_session, pending_confirmation,
               still_needed, transcript_history, conversation_summary
-       FROM interaction_session WHERE id = $1`,
+       FROM interaction_sessions WHERE id = $1`,
       [sessionId],
     );
     if (result.rows.length === 0) {
-      throw new Error(`No interaction_session row found for id ${sessionId}`);
+      throw new Error(`No interaction_sessions row found for id ${sessionId}`);
     }
     const r = result.rows[0];
     const sessionState: SessionState = {
@@ -272,7 +272,7 @@ export class PgSessionPersister implements SessionPersister {
 
   async update(sessionId: string, patch: SessionUpdate): Promise<void> {
     await this.client.query(
-      `UPDATE interaction_session
+      `UPDATE interaction_sessions
        SET fsm_state = $2,
            captured_this_session = $3,
            pending_confirmation = $4,

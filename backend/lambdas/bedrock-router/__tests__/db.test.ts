@@ -34,7 +34,7 @@ function matchKey(text: string, map: Map<string, unknown[]>): string {
 describe('PgPatientContextLoader', () => {
   it('issues five parallel queries and assembles the PatientContext', async () => {
     const rows = new Map<string, unknown[]>();
-    rows.set('FROM patient WHERE id', [
+    rows.set('FROM patients WHERE id', [
       {
         id: 'patient-1',
         name: 'Ramesh Sharma',
@@ -45,7 +45,7 @@ describe('PgPatientContextLoader', () => {
         medical_history_summary: 'CABG 2018',
       },
     ]);
-    rows.set('FROM parameter_config', [
+    rows.set('FROM parameter_configs', [
       {
         parameter_name: 'blood_pressure_systolic',
         loinc_code: '8480-6',
@@ -59,7 +59,7 @@ describe('PgPatientContextLoader', () => {
         active: true,
       },
     ]);
-    rows.set('FROM patient_topic', [
+    rows.set('FROM patient_topics', [
       {
         topic_name: 'medications',
         status: 'complete',
@@ -67,7 +67,7 @@ describe('PgPatientContextLoader', () => {
         summary: 'Metformin 500 BD',
       },
     ]);
-    rows.set('FROM interaction_session', [
+    rows.set('FROM interaction_sessions', [
       {
         session_id: 's1',
         session_type: 'patient_logging',
@@ -79,7 +79,7 @@ describe('PgPatientContextLoader', () => {
         incomplete_reason: null,
       },
     ]);
-    rows.set('FROM recommendation', [
+    rows.set('FROM recommendations', [
       {
         parameter_name: 'blood_glucose_fasting',
         source: 'doctor',
@@ -106,11 +106,11 @@ describe('PgPatientContextLoader', () => {
 
   it('throws when the patient row is missing', async () => {
     const rows = new Map<string, unknown[]>();
-    rows.set('FROM patient WHERE id', []);
-    rows.set('FROM parameter_config', []);
-    rows.set('FROM patient_topic', []);
-    rows.set('FROM interaction_session', []);
-    rows.set('FROM recommendation', []);
+    rows.set('FROM patients WHERE id', []);
+    rows.set('FROM parameter_configs', []);
+    rows.set('FROM patient_topics', []);
+    rows.set('FROM interaction_sessions', []);
+    rows.set('FROM recommendations', []);
     const { client } = stubClient(rows);
     const loader = new PgPatientContextLoader(client);
     await expect(loader.load('missing')).rejects.toThrow(/No patient row/);
@@ -118,7 +118,7 @@ describe('PgPatientContextLoader', () => {
 
   it('handles null conditions gracefully', async () => {
     const rows = new Map<string, unknown[]>();
-    rows.set('FROM patient WHERE id', [
+    rows.set('FROM patients WHERE id', [
       {
         id: 'p',
         name: 'Test',
@@ -129,10 +129,10 @@ describe('PgPatientContextLoader', () => {
         medical_history_summary: null,
       },
     ]);
-    rows.set('FROM parameter_config', []);
-    rows.set('FROM patient_topic', []);
-    rows.set('FROM interaction_session', []);
-    rows.set('FROM recommendation', []);
+    rows.set('FROM parameter_configs', []);
+    rows.set('FROM patient_topics', []);
+    rows.set('FROM interaction_sessions', []);
+    rows.set('FROM recommendations', []);
     const { client } = stubClient(rows);
     const ctx = await new PgPatientContextLoader(client).load('p');
     expect(ctx.patient.conditions).toEqual([]);
@@ -143,7 +143,7 @@ describe('PgPatientContextLoader', () => {
 describe('PgTurnContextLoader', () => {
   it('loads session state and turn history', async () => {
     const rows = new Map<string, unknown[]>();
-    rows.set('FROM interaction_session WHERE id', [
+    rows.set('FROM interaction_sessions WHERE id', [
       {
         id: 'session-1',
         session_type: 'patient_logging',
@@ -171,16 +171,16 @@ describe('PgTurnContextLoader', () => {
 
   it('throws when session row is missing', async () => {
     const rows = new Map<string, unknown[]>();
-    rows.set('FROM interaction_session WHERE id', []);
+    rows.set('FROM interaction_sessions WHERE id', []);
     const { client } = stubClient(rows);
     await expect(new PgTurnContextLoader(client).load('missing', 'x')).rejects.toThrow(
-      /No interaction_session row/,
+      /No interaction_sessions row/,
     );
   });
 
   it('handles null transcript_history', async () => {
     const rows = new Map<string, unknown[]>();
-    rows.set('FROM interaction_session WHERE id', [
+    rows.set('FROM interaction_sessions WHERE id', [
       {
         id: 'session-2',
         session_type: 'patient_logging',
@@ -219,7 +219,7 @@ describe('PgSessionPersister', () => {
       conversationSummary: 'Earlier patient confirmed BP 132/84.',
     });
     expect(calls).toHaveLength(1);
-    expect(calls[0].text).toContain('UPDATE interaction_session');
+    expect(calls[0].text).toContain('UPDATE interaction_sessions');
     expect(calls[0].text).toContain('conversation_summary = $10');
     expect(calls[0].params).toBeDefined();
     const params = calls[0].params as unknown[];
