@@ -119,3 +119,25 @@ variable "manage_prompts_invoke_arn" {
   type    = string
   default = ""
 }
+
+# ============================================================
+# V2 — Bedrock-backed Lambdas
+# ============================================================
+
+variable "bedrock_router_invoke_arn" {
+  description = "Invoke ARN for matika-<env>-bedrock-router (POST /conversation/turn, /conversation/turn-stream)"
+  type        = string
+  default     = ""
+}
+
+variable "bedrock_vision_invoke_arn" {
+  description = "Invoke ARN for matika-<env>-bedrock-vision (POST /conversation/photo-extract)"
+  type        = string
+  default     = ""
+}
+
+variable "health_check_invoke_arn" {
+  description = "Invoke ARN for matika-<env>-health-check (GET /health)"
+  type        = string
+  default     = ""
+}

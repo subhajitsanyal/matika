@@ -112,7 +112,7 @@ resource "aws_kms_key" "cloudtrail" {
         Sid       = "Allow CloudTrail to encrypt logs"
         Effect    = "Allow"
         Principal = { Service = "cloudtrail.amazonaws.com" }
-        Action    = [
+        Action = [
           "kms:GenerateDataKey*",
           "kms:DescribeKey"
         ]

@@ -91,3 +91,67 @@ variable "raw_interactions_bucket_name" {
 variable "lambdas_source_path" {
   type = string
 }
+
+# ============================================================
+# V2 — Bedrock-backed Lambdas
+# ============================================================
+
+variable "bedrock_haiku_model_arn" {
+  description = "Foundation-model ARN for Claude Haiku 4.5 (IAM scoping)"
+  type        = string
+  default     = ""
+}
+
+variable "bedrock_sonnet_model_arn" {
+  description = "Foundation-model ARN for Claude Sonnet 4.6 (IAM scoping)"
+  type        = string
+  default     = ""
+}
+
+variable "bedrock_guardrail_arn" {
+  description = "ARN of the Matika Bedrock Guardrail"
+  type        = string
+  default     = ""
+}
+
+variable "bedrock_guardrail_id" {
+  description = "ID of the Matika Bedrock Guardrail (env var)"
+  type        = string
+  default     = ""
+}
+
+variable "bedrock_guardrail_version" {
+  description = "Pinned numeric version of the Matika Bedrock Guardrail (env var)"
+  type        = string
+  default     = ""
+}
+
+variable "bedrock_haiku_model_id" {
+  description = "Bedrock foundation-model ID for Claude Haiku 4.5 (env var)"
+  type        = string
+  default     = "anthropic.claude-haiku-4-5-20251001-v1:0"
+}
+
+variable "bedrock_sonnet_model_id" {
+  description = "Bedrock foundation-model ID for Claude Sonnet 4.6 (env var)"
+  type        = string
+  default     = "anthropic.claude-sonnet-4-6"
+}
+
+variable "bedrock_router_provisioned_concurrency" {
+  description = "Provisioned-concurrency count for bedrock-router (keeps cold-start out of patient latency)"
+  type        = number
+  default     = 1
+}
+
+variable "soft_rate_limit_per_patient" {
+  description = "Soft per-patient daily turn limit (warns; no hard cutoff)"
+  type        = number
+  default     = 100
+}
+
+variable "hard_rate_limit_per_patient" {
+  description = "Hard per-patient daily turn limit (rejects further turns)"
+  type        = number
+  default     = 500
+}

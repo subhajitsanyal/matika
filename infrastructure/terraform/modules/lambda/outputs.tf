@@ -158,5 +158,50 @@ output "all_function_names" {
     aws_lambda_function.device_token.function_name,
     aws_lambda_function.reminder_crud.function_name,
     aws_lambda_function.remove_team_member.function_name,
+    # v2 Bedrock-backed Lambdas
+    aws_lambda_function.bedrock_router.function_name,
+    aws_lambda_function.bedrock_vision.function_name,
+    aws_lambda_function.cost_telemetry_rollup.function_name,
+    aws_lambda_function.health_check.function_name,
   ]
+}
+
+# ============================================================
+# V2 — Bedrock-backed Lambdas
+# ============================================================
+
+output "bedrock_router_invoke_arn" {
+  description = "Invoke ARN for bedrock-router (used by API Gateway integrations)"
+  value       = aws_lambda_function.bedrock_router.invoke_arn
+}
+
+output "bedrock_router_function_name" {
+  value = aws_lambda_function.bedrock_router.function_name
+}
+
+output "bedrock_vision_invoke_arn" {
+  description = "Invoke ARN for bedrock-vision (used by API Gateway integration)"
+  value       = aws_lambda_function.bedrock_vision.invoke_arn
+}
+
+output "bedrock_vision_function_name" {
+  value = aws_lambda_function.bedrock_vision.function_name
+}
+
+output "cost_telemetry_rollup_arn" {
+  description = "ARN for cost-telemetry-rollup (used by EventBridge target)"
+  value       = aws_lambda_function.cost_telemetry_rollup.arn
+}
+
+output "cost_telemetry_rollup_function_name" {
+  value = aws_lambda_function.cost_telemetry_rollup.function_name
+}
+
+output "health_check_invoke_arn" {
+  description = "Invoke ARN for health-check (used by API Gateway integration)"
+  value       = aws_lambda_function.health_check.invoke_arn
+}
+
+output "health_check_function_name" {
+  value = aws_lambda_function.health_check.function_name
 }

@@ -118,14 +118,14 @@ resource "aws_db_instance" "main" {
   identifier = "carelog-${var.environment}"
 
   # Engine configuration
-  engine               = "postgres"
-  engine_version       = "15"
-  instance_class       = var.db_instance_class
-  allocated_storage    = var.allocated_storage
+  engine                = "postgres"
+  engine_version        = "15"
+  instance_class        = var.db_instance_class
+  allocated_storage     = var.allocated_storage
   max_allocated_storage = var.max_allocated_storage
-  storage_type         = "gp3"
-  storage_encrypted    = true
-  kms_key_id           = aws_kms_key.rds.arn
+  storage_type          = "gp3"
+  storage_encrypted     = true
+  kms_key_id            = aws_kms_key.rds.arn
 
   # Database configuration
   db_name  = var.db_name

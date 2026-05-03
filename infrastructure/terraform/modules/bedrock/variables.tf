@@ -3,14 +3,20 @@ variable "environment" {
   type        = string
 }
 
-variable "haiku_inference_profile_id" {
-  description = "Bedrock inference profile ID for Claude Haiku 4.5 (cross-region)"
+variable "aws_region" {
+  description = "AWS region (Bedrock + Lambda)"
   type        = string
-  default     = "apac.anthropic.claude-haiku-4-5-v1:0"
+  default     = "ap-south-1"
 }
 
-variable "sonnet_inference_profile_id" {
-  description = "Bedrock inference profile ID for Claude Sonnet 4.x (cross-region)"
+variable "haiku_model_id" {
+  description = "Bedrock foundation-model ID for Claude Haiku 4.5"
   type        = string
-  default     = "apac.anthropic.claude-sonnet-4-x-v1:0"
+  default     = "anthropic.claude-haiku-4-5-20251001-v1:0"
+}
+
+variable "sonnet_model_id" {
+  description = "Bedrock foundation-model ID for Claude Sonnet 4.6"
+  type        = string
+  default     = "anthropic.claude-sonnet-4-6"
 }

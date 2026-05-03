@@ -277,9 +277,9 @@ resource "aws_cognito_user_pool_client" "web" {
   user_pool_id = aws_cognito_user_pool.main.id
 
   # Token validity
-  access_token_validity  = 1  # 1 hour
-  id_token_validity      = 1  # 1 hour
-  refresh_token_validity = 7  # 7 days for web
+  access_token_validity  = 1 # 1 hour
+  id_token_validity      = 1 # 1 hour
+  refresh_token_validity = 7 # 7 days for web
 
   token_validity_units {
     access_token  = "hours"

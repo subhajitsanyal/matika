@@ -24,3 +24,17 @@ variable "check_missed_measurements_lambda_name" {
   description = "Name of the check-missed-measurements Lambda function (for permission resource)"
   type        = string
 }
+
+# ============================================================
+# V2 — Bedrock cost-telemetry daily rollup
+# ============================================================
+
+variable "cost_telemetry_rollup_lambda_arn" {
+  description = "ARN of matika-<env>-cost-telemetry-rollup Lambda (EventBridge target)"
+  type        = string
+}
+
+variable "cost_telemetry_rollup_lambda_name" {
+  description = "Function name of matika-<env>-cost-telemetry-rollup Lambda (for permission resource)"
+  type        = string
+}

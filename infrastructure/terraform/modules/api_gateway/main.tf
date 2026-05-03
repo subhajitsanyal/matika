@@ -1053,6 +1053,20 @@ resource "aws_api_gateway_deployment" "main" {
       aws_api_gateway_integration.prompts_get.id,
       aws_api_gateway_method.prompt_type_put.id,
       aws_api_gateway_integration.prompt_type_put.id,
+      # v2 routes — see routes_v2.tf
+      aws_api_gateway_resource.conversation.id,
+      aws_api_gateway_resource.conversation_turn.id,
+      aws_api_gateway_resource.conversation_turn_stream.id,
+      aws_api_gateway_resource.conversation_photo_extract.id,
+      aws_api_gateway_resource.health.id,
+      aws_api_gateway_method.conversation_turn_post.id,
+      aws_api_gateway_integration.conversation_turn_post.id,
+      aws_api_gateway_method.conversation_turn_stream_post.id,
+      aws_api_gateway_integration.conversation_turn_stream_post.id,
+      aws_api_gateway_method.conversation_photo_extract_post.id,
+      aws_api_gateway_integration.conversation_photo_extract_post.id,
+      aws_api_gateway_method.health_get.id,
+      aws_api_gateway_integration.health_get.id,
     ]))
   }
 
@@ -1101,18 +1115,18 @@ resource "aws_api_gateway_stage" "main" {
   access_log_settings {
     destination_arn = aws_cloudwatch_log_group.api_access_logs.arn
     format = jsonencode({
-      requestId         = "$context.requestId"
-      ip                = "$context.identity.sourceIp"
-      caller            = "$context.identity.caller"
-      user              = "$context.identity.user"
-      requestTime       = "$context.requestTime"
-      httpMethod        = "$context.httpMethod"
-      resourcePath      = "$context.resourcePath"
-      status            = "$context.status"
-      protocol          = "$context.protocol"
-      responseLength    = "$context.responseLength"
-      integrationError  = "$context.integrationErrorMessage"
-      authorizerError   = "$context.authorizer.error"
+      requestId        = "$context.requestId"
+      ip               = "$context.identity.sourceIp"
+      caller           = "$context.identity.caller"
+      user             = "$context.identity.user"
+      requestTime      = "$context.requestTime"
+      httpMethod       = "$context.httpMethod"
+      resourcePath     = "$context.resourcePath"
+      status           = "$context.status"
+      protocol         = "$context.protocol"
+      responseLength   = "$context.responseLength"
+      integrationError = "$context.integrationErrorMessage"
+      authorizerError  = "$context.authorizer.error"
     })
   }
 

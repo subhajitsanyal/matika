@@ -107,3 +107,37 @@ variable "ses_from_email" {
   type        = string
   default     = ""
 }
+
+# ============================================================
+# V2 — Bedrock-backed Lambdas
+# ============================================================
+
+variable "bedrock_haiku_model_id" {
+  description = "Bedrock foundation-model ID for Claude Haiku 4.5"
+  type        = string
+  default     = "anthropic.claude-haiku-4-5-20251001-v1:0"
+}
+
+variable "bedrock_sonnet_model_id" {
+  description = "Bedrock foundation-model ID for Claude Sonnet 4.6"
+  type        = string
+  default     = "anthropic.claude-sonnet-4-6"
+}
+
+variable "bedrock_router_provisioned_concurrency" {
+  description = "Provisioned-concurrency count for matika-<env>-bedrock-router"
+  type        = number
+  default     = 1
+}
+
+variable "soft_rate_limit_per_patient" {
+  description = "Soft per-patient daily turn limit"
+  type        = number
+  default     = 100
+}
+
+variable "hard_rate_limit_per_patient" {
+  description = "Hard per-patient daily turn limit"
+  type        = number
+  default     = 500
+}

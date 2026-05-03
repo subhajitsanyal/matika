@@ -198,10 +198,10 @@ resource "aws_s3_bucket_policy" "documents" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid    = "EnforceTLS"
-        Effect = "Deny"
+        Sid       = "EnforceTLS"
+        Effect    = "Deny"
         Principal = "*"
-        Action = "s3:*"
+        Action    = "s3:*"
         Resource = [
           aws_s3_bucket.documents.arn,
           "${aws_s3_bucket.documents.arn}/*"
@@ -213,11 +213,11 @@ resource "aws_s3_bucket_policy" "documents" {
         }
       },
       {
-        Sid    = "EnforceEncryption"
-        Effect = "Deny"
+        Sid       = "EnforceEncryption"
+        Effect    = "Deny"
         Principal = "*"
-        Action = "s3:PutObject"
-        Resource = "${aws_s3_bucket.documents.arn}/*"
+        Action    = "s3:PutObject"
+        Resource  = "${aws_s3_bucket.documents.arn}/*"
         Condition = {
           StringNotEquals = {
             "s3:x-amz-server-side-encryption" = "aws:kms"

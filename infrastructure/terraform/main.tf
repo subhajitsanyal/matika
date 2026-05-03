@@ -42,10 +42,10 @@ provider "aws" {
 module "vpc" {
   source = "./modules/vpc"
 
-  environment         = var.environment
-  vpc_cidr            = var.vpc_cidr
-  availability_zones  = var.availability_zones
-  public_subnet_cidrs = var.public_subnet_cidrs
+  environment          = var.environment
+  vpc_cidr             = var.vpc_cidr
+  availability_zones   = var.availability_zones
+  public_subnet_cidrs  = var.public_subnet_cidrs
   private_subnet_cidrs = var.private_subnet_cidrs
 }
 
@@ -53,14 +53,14 @@ module "vpc" {
 module "cognito" {
   source = "./modules/cognito"
 
-  environment                  = var.environment
-  mobile_callback_urls         = ["carelog://callback", "carelog://signin"]
-  mobile_logout_urls           = ["carelog://signout"]
-  web_callback_urls            = var.environment == "prod" ? ["https://portal.${var.domain_name}/callback"] : ["https://portal.${var.environment}.${var.domain_name}/callback"]
-  web_logout_urls              = var.environment == "prod" ? ["https://portal.${var.domain_name}/logout"] : ["https://portal.${var.environment}.${var.domain_name}/logout"]
-  ses_email_arn                = var.ses_email_arn
-  ses_from_email               = var.ses_from_email
-  domain_name                  = var.domain_name
+  environment          = var.environment
+  mobile_callback_urls = ["carelog://callback", "carelog://signin"]
+  mobile_logout_urls   = ["carelog://signout"]
+  web_callback_urls    = var.environment == "prod" ? ["https://portal.${var.domain_name}/callback"] : ["https://portal.${var.environment}.${var.domain_name}/callback"]
+  web_logout_urls      = var.environment == "prod" ? ["https://portal.${var.domain_name}/logout"] : ["https://portal.${var.environment}.${var.domain_name}/logout"]
+  ses_email_arn        = var.ses_email_arn
+  ses_from_email       = var.ses_from_email
+  domain_name          = var.domain_name
 }
 
 # Attach post-confirmation Lambda trigger to Cognito (breaks circular dependency)
@@ -90,23 +90,28 @@ module "api_gateway" {
   quota_limit           = var.environment == "prod" ? 100000 : 10000
 
   # Lambda integrations
-  create_patient_invoke_arn    = module.lambda.create_patient_invoke_arn
-  sync_observation_invoke_arn  = module.lambda.sync_observation_invoke_arn
-  bulk_sync_invoke_arn         = module.lambda.bulk_sync_invoke_arn
-  presigned_url_invoke_arn     = module.lambda.presigned_url_invoke_arn
-  invite_attendant_invoke_arn  = module.lambda.invite_attendant_invoke_arn
-  invite_doctor_invoke_arn     = module.lambda.invite_doctor_invoke_arn
-  accept_invite_invoke_arn     = module.lambda.accept_invite_invoke_arn
-  care_team_invoke_arn         = module.lambda.care_team_invoke_arn
-  patient_summary_invoke_arn   = module.lambda.patient_summary_invoke_arn
-  get_observations_invoke_arn     = module.lambda.get_observations_invoke_arn
-  fetch_session_config_invoke_arn = module.lambda.fetch_session_config_invoke_arn
-  store_interaction_invoke_arn    = module.lambda.store_interaction_invoke_arn
-  construct_fhir_batch_invoke_arn    = module.lambda.construct_fhir_batch_invoke_arn
-  manage_recommendations_invoke_arn  = module.lambda.manage_recommendations_invoke_arn
+  create_patient_invoke_arn           = module.lambda.create_patient_invoke_arn
+  sync_observation_invoke_arn         = module.lambda.sync_observation_invoke_arn
+  bulk_sync_invoke_arn                = module.lambda.bulk_sync_invoke_arn
+  presigned_url_invoke_arn            = module.lambda.presigned_url_invoke_arn
+  invite_attendant_invoke_arn         = module.lambda.invite_attendant_invoke_arn
+  invite_doctor_invoke_arn            = module.lambda.invite_doctor_invoke_arn
+  accept_invite_invoke_arn            = module.lambda.accept_invite_invoke_arn
+  care_team_invoke_arn                = module.lambda.care_team_invoke_arn
+  patient_summary_invoke_arn          = module.lambda.patient_summary_invoke_arn
+  get_observations_invoke_arn         = module.lambda.get_observations_invoke_arn
+  fetch_session_config_invoke_arn     = module.lambda.fetch_session_config_invoke_arn
+  store_interaction_invoke_arn        = module.lambda.store_interaction_invoke_arn
+  construct_fhir_batch_invoke_arn     = module.lambda.construct_fhir_batch_invoke_arn
+  manage_recommendations_invoke_arn   = module.lambda.manage_recommendations_invoke_arn
   manage_parameter_configs_invoke_arn = module.lambda.manage_parameter_configs_invoke_arn
-  manage_interactions_invoke_arn     = module.lambda.manage_interactions_invoke_arn
-  manage_prompts_invoke_arn          = module.lambda.manage_prompts_invoke_arn
+  manage_interactions_invoke_arn      = module.lambda.manage_interactions_invoke_arn
+  manage_prompts_invoke_arn           = module.lambda.manage_prompts_invoke_arn
+
+  # v2 Bedrock-backed routes
+  bedrock_router_invoke_arn = module.lambda.bedrock_router_invoke_arn
+  bedrock_vision_invoke_arn = module.lambda.bedrock_vision_invoke_arn
+  health_check_invoke_arn   = module.lambda.health_check_invoke_arn
 }
 
 # HealthLake Module
@@ -130,10 +135,10 @@ module "s3" {
 module "sqs" {
   source = "./modules/sqs"
 
-  environment            = var.environment
+  environment             = var.environment
   enable_s3_notifications = true
-  documents_bucket_id    = module.s3.documents_bucket_id
-  documents_bucket_arn   = module.s3.documents_bucket_arn
+  documents_bucket_id     = module.s3.documents_bucket_id
+  documents_bucket_arn    = module.s3.documents_bucket_arn
 }
 
 # RDS Module
@@ -148,29 +153,52 @@ module "rds" {
   db_username           = var.db_username
 }
 
+# Bedrock Module — Guardrail + foundation-model ARN exports.
+# Must be declared before the lambda module so its outputs can be passed in.
+module "bedrock" {
+  source = "./modules/bedrock"
+
+  environment     = var.environment
+  aws_region      = var.aws_region
+  haiku_model_id  = var.bedrock_haiku_model_id
+  sonnet_model_id = var.bedrock_sonnet_model_id
+}
+
 # Lambda Module
 module "lambda" {
   source = "./modules/lambda"
 
-  environment              = var.environment
-  aws_region               = var.aws_region
-  private_subnet_ids       = module.vpc.private_subnet_ids
-  lambda_security_group_id = module.vpc.lambda_security_group_id
-  db_secret_arn            = module.rds.db_password_secret_arn
-  db_secret_name           = module.rds.db_password_secret_name
-  rds_kms_key_arn          = module.rds.kms_key_arn
-  cognito_user_pool_arn    = module.cognito.user_pool_arn
-  documents_bucket_name    = module.s3.documents_bucket_name
-  documents_bucket_arn     = module.s3.documents_bucket_arn
-  s3_kms_key_arn           = module.s3.kms_key_arn
-  api_execution_arn        = module.api_gateway.api_execution_arn
-  from_email               = var.ses_from_email != "" ? var.ses_from_email : "noreply@${var.domain_name}"
-  domain_name              = var.domain_name
-  alerts_queue_arn         = module.sqs.alerts_queue_arn
-  alerts_queue_url         = module.sqs.alerts_queue_url
-  sqs_kms_key_arn          = module.sqs.kms_key_arn
+  environment                  = var.environment
+  aws_region                   = var.aws_region
+  private_subnet_ids           = module.vpc.private_subnet_ids
+  lambda_security_group_id     = module.vpc.lambda_security_group_id
+  db_secret_arn                = module.rds.db_password_secret_arn
+  db_secret_name               = module.rds.db_password_secret_name
+  rds_kms_key_arn              = module.rds.kms_key_arn
+  cognito_user_pool_arn        = module.cognito.user_pool_arn
+  documents_bucket_name        = module.s3.documents_bucket_name
+  documents_bucket_arn         = module.s3.documents_bucket_arn
+  s3_kms_key_arn               = module.s3.kms_key_arn
+  api_execution_arn            = module.api_gateway.api_execution_arn
+  from_email                   = var.ses_from_email != "" ? var.ses_from_email : "noreply@${var.domain_name}"
+  domain_name                  = var.domain_name
+  alerts_queue_arn             = module.sqs.alerts_queue_arn
+  alerts_queue_url             = module.sqs.alerts_queue_url
+  sqs_kms_key_arn              = module.sqs.kms_key_arn
   raw_interactions_bucket_name = module.s3.raw_interactions_bucket_name
-  lambdas_source_path      = "${path.module}/../../backend/lambdas"
+  lambdas_source_path          = "${path.module}/../../backend/lambdas"
+
+  # v2 Bedrock plumbing
+  bedrock_haiku_model_arn                = module.bedrock.haiku_model_arn
+  bedrock_sonnet_model_arn               = module.bedrock.sonnet_model_arn
+  bedrock_guardrail_arn                  = module.bedrock.guardrail_arn
+  bedrock_guardrail_id                   = module.bedrock.guardrail_id
+  bedrock_guardrail_version              = module.bedrock.guardrail_version
+  bedrock_haiku_model_id                 = module.bedrock.haiku_model_id
+  bedrock_sonnet_model_id                = module.bedrock.sonnet_model_id
+  bedrock_router_provisioned_concurrency = var.bedrock_router_provisioned_concurrency
+  soft_rate_limit_per_patient            = var.soft_rate_limit_per_patient
+  hard_rate_limit_per_patient            = var.hard_rate_limit_per_patient
 }
 
 # EventBridge Module (scheduled rules for proactive monitoring)
@@ -178,10 +206,14 @@ module "eventbridge" {
   source = "./modules/eventbridge"
 
   environment                           = var.environment
-  check_daily_deadline_lambda_arn        = module.lambda.check_daily_deadline_arn
-  check_daily_deadline_lambda_name       = module.lambda.check_daily_deadline_function_name
-  check_missed_measurements_lambda_arn   = module.lambda.check_missed_measurements_arn
-  check_missed_measurements_lambda_name  = module.lambda.check_missed_measurements_function_name
+  check_daily_deadline_lambda_arn       = module.lambda.check_daily_deadline_arn
+  check_daily_deadline_lambda_name      = module.lambda.check_daily_deadline_function_name
+  check_missed_measurements_lambda_arn  = module.lambda.check_missed_measurements_arn
+  check_missed_measurements_lambda_name = module.lambda.check_missed_measurements_function_name
+
+  # v2 daily cost-telemetry rollup
+  cost_telemetry_rollup_lambda_arn  = module.lambda.cost_telemetry_rollup_arn
+  cost_telemetry_rollup_lambda_name = module.lambda.cost_telemetry_rollup_function_name
 }
 
 # Monitoring Module (CloudWatch alarms, SNS, dashboard)
@@ -189,17 +221,17 @@ module "monitoring" {
   count  = var.alert_email != "" ? 1 : 0
   source = "./modules/monitoring"
 
-  environment                            = var.environment
-  alert_email                            = var.alert_email
-  lambda_function_names                  = module.lambda.all_function_names
-  construct_fhir_batch_function_name     = module.lambda.construct_fhir_batch_function_name
+  environment                             = var.environment
+  alert_email                             = var.alert_email
+  lambda_function_names                   = module.lambda.all_function_names
+  construct_fhir_batch_function_name      = module.lambda.construct_fhir_batch_function_name
   evaluate_thresholds_batch_function_name = module.lambda.evaluate_thresholds_batch_function_name
-  api_gateway_name                       = module.api_gateway.api_name
-  api_gateway_stage                      = module.api_gateway.stage_name
-  rds_instance_id                        = module.rds.db_instance_id
-  sqs_queue_name                         = module.sqs.document_processing_queue_name
-  dlq_queue_name                         = module.sqs.document_processing_dlq_name
-  alerts_dlq_queue_name                  = module.sqs.alerts_dlq_name
+  api_gateway_name                        = module.api_gateway.api_name
+  api_gateway_stage                       = module.api_gateway.stage_name
+  rds_instance_id                         = module.rds.db_instance_id
+  sqs_queue_name                          = module.sqs.document_processing_queue_name
+  dlq_queue_name                          = module.sqs.document_processing_dlq_name
+  alerts_dlq_queue_name                   = module.sqs.alerts_dlq_name
 }
 
 # Bastion Module (for SSM port-forwarding to RDS)
