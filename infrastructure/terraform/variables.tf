@@ -68,6 +68,18 @@ variable "db_username" {
   sensitive   = true
 }
 
+variable "rds_multi_az" {
+  description = "Enable Multi-AZ for the RDS primary. True for prod (HA + automatic failover), false for dev (cost)."
+  type        = bool
+  default     = false
+}
+
+variable "rds_deletion_protection" {
+  description = "Enable deletion protection on the RDS instance. True for prod."
+  type        = bool
+  default     = false
+}
+
 # S3 variables (T-007)
 variable "s3_bucket_prefix" {
   description = "Prefix for S3 bucket names"

@@ -9,3 +9,9 @@ variable "ses_from_email" {
   type        = string
   default     = ""
 }
+
+variable "alert_email" {
+  description = "Email subscribed to the operator-alerts SNS topic for CloudWatch alarms. When empty, the entire monitoring module is skipped. In prod this should be an operations alias, not a personal inbox."
+  type        = string
+  default     = ""
+}

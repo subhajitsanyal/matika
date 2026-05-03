@@ -152,6 +152,8 @@ module "rds" {
   db_instance_class     = var.db_instance_class
   db_name               = var.db_name
   db_username           = var.db_username
+  multi_az              = var.rds_multi_az
+  deletion_protection   = var.rds_deletion_protection
 }
 
 # Bedrock Module — Guardrail + foundation-model ARN exports.

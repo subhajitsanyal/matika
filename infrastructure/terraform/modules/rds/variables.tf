@@ -45,3 +45,15 @@ variable "max_allocated_storage" {
   type        = number
   default     = 100
 }
+
+variable "multi_az" {
+  description = "Enable Multi-AZ deployment for the primary DB instance. True for prod (HA + automatic failover), false for dev (cost)."
+  type        = bool
+  default     = false
+}
+
+variable "deletion_protection" {
+  description = "Enable deletion protection on the RDS instance. True for prod (prevents accidental terraform destroy)."
+  type        = bool
+  default     = false
+}

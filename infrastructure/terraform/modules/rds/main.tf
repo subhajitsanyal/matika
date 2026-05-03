@@ -146,8 +146,9 @@ resource "aws_db_instance" "main" {
   backup_window           = "03:00-04:00"
   maintenance_window      = "Mon:04:00-Mon:05:00"
 
-  # Multi-AZ disabled for now — enable when scaling requires it
-  multi_az = false
+  # Multi-AZ — controlled per env via var.multi_az. dev defaults to false
+  # for cost; prod overrides to true for HA + automatic failover.
+  multi_az = var.multi_az
 
   # Performance Insights
   performance_insights_enabled          = true
@@ -158,8 +159,9 @@ resource "aws_db_instance" "main" {
   monitoring_interval = 60
   monitoring_role_arn = aws_iam_role.rds_monitoring.arn
 
-  # Deletion protection (production only)
-  deletion_protection = var.environment == "prod"
+  # Deletion protection — explicit per-env via var.deletion_protection.
+  # Defaults to false; prod's main.tf passes true.
+  deletion_protection = var.deletion_protection
 
   # Auto minor version upgrade
   auto_minor_version_upgrade = true
