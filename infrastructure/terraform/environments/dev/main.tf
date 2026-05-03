@@ -44,6 +44,9 @@ module "carelog" {
   ses_email_arn  = var.ses_email_arn
   ses_from_email = var.ses_from_email
 
+  # CloudWatch alarms — set in terraform.tfvars (gitignored). Empty disables.
+  alert_email = var.alert_email
+
   # Feature flags
   enable_healthlake = false # Disable for dev to save costs
   enable_bastion    = true  # Enable bastion for RDS access via SSM
