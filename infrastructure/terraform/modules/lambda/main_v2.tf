@@ -94,20 +94,20 @@ resource "aws_iam_role_policy" "bedrock_router_inline" {
           var.bedrock_sonnet_foundation_model_arn,
         ]
       },
-      {
-        # AWS Bedrock requires the invoking principal to be able to subscribe
-        # to the Anthropic Marketplace listing on first use of a model. Once
-        # the account is subscribed (one-time, persists for the life of the
-        # account), these permissions are unused. Resource * is required —
-        # AWS does not document specific subscription ARNs to scope to.
-        Sid    = "MarketplaceSubscribeOnFirstUse"
-        Effect = "Allow"
-        Action = [
-          "aws-marketplace:ViewSubscriptions",
-          "aws-marketplace:Subscribe",
-        ]
-        Resource = "*"
-      },
+      # NOTE: aws-marketplace:Subscribe / ViewSubscriptions were previously
+      # attached on Resource = "*" to handle Bedrock's first-use auto-
+      # subscribe flow against the Anthropic Marketplace listing. The
+      # account is now subscribed (verified 2026-05-03 via
+      # `aws bedrock list-foundation-models --region ap-south-1`,
+      # all Anthropic models reported as ACTIVE), so the permissions
+      # are no longer needed at runtime.
+      #
+      # If a NEW Anthropic model variant ships in the future and Bedrock
+      # rejects InvokeModel with "model use case details have not been
+      # submitted" or "AWS Marketplace actions" errors, temporarily
+      # re-add this block, run one invocation manually as the
+      # bedrock-router role to trigger the auto-subscribe, then remove
+      # the block again.
       {
         Sid      = "ApplyGuardrail"
         Effect   = "Allow"
