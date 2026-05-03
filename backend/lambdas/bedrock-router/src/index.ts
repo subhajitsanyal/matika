@@ -22,9 +22,11 @@ import {
 import { SqsAlertEnqueuer } from './alert_queue';
 import { HaikuSummarizer } from './summarizer';
 import { PgRateLimiter } from './rate_limiter';
+import { S3Client } from '@aws-sdk/client-s3';
 import { SonnetProtocolExtractor } from './protocol_extractor';
 import { PgProtocolPersister } from './protocol_persister';
 import { PgUserResolver } from './user_resolver';
+import { S3ObservationWriter } from './observation_writer';
 import { getPgPool } from './db_secret';
 
 // Cold-start: build deps once, reuse across warm invocations.
@@ -95,6 +97,13 @@ async function buildDeps(): Promise<HandlerDeps> {
     protocolExtractor,
     protocolPersister,
     userResolver: new PgUserResolver(pool),
+    observationWriter: process.env.FHIR_OBSERVATIONS_BUCKET
+      ? new S3ObservationWriter(
+          new S3Client({ region: awsRegion }),
+          process.env.FHIR_OBSERVATIONS_BUCKET,
+          process.env.FHIR_OBSERVATIONS_KMS_KEY_ID,
+        )
+      : undefined,
     config: {
       haikuModelId,
       sonnetModelId,

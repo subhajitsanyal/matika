@@ -140,6 +140,15 @@ resource "aws_iam_role_policy" "bedrock_router_inline" {
         ]
       },
       {
+        # T-V2-304: confirmed-value → FHIR Observation bridge writes
+        # to the documents bucket under observations/<patientCognitoSub>/...
+        # KMS perms already covered by the s3_kms_key_arn statement above.
+        Sid      = "PutFhirObservations"
+        Effect   = "Allow"
+        Action   = ["s3:PutObject"]
+        Resource = ["arn:aws:s3:::${var.documents_bucket_name}/observations/*"]
+      },
+      {
         Effect   = "Allow"
         Action   = ["sqs:SendMessage", "sqs:GetQueueUrl", "sqs:GetQueueAttributes"]
         Resource = [var.alerts_queue_arn]
@@ -398,10 +407,14 @@ resource "aws_lambda_function" "bedrock_router" {
 
   environment {
     variables = merge(local.bedrock_env_common, local.db_env, {
-      MATIKA_ALERT_QUEUE_URL      = var.alerts_queue_url
-      SOFT_RATE_LIMIT_PER_PATIENT = var.soft_rate_limit_per_patient
-      HARD_RATE_LIMIT_PER_PATIENT = var.hard_rate_limit_per_patient
-      BEDROCK_MAX_TOKENS          = "1024"
+      MATIKA_ALERT_QUEUE_URL          = var.alerts_queue_url
+      SOFT_RATE_LIMIT_PER_PATIENT     = var.soft_rate_limit_per_patient
+      HARD_RATE_LIMIT_PER_PATIENT     = var.hard_rate_limit_per_patient
+      BEDROCK_MAX_TOKENS              = "1024"
+      # T-V2-304: confirmed-value → FHIR Observation bridge. The same
+      # documents bucket sync-observation Lambda writes to.
+      FHIR_OBSERVATIONS_BUCKET        = var.documents_bucket_name
+      FHIR_OBSERVATIONS_KMS_KEY_ID    = var.s3_kms_key_arn
     })
   }
 }

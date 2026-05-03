@@ -50,6 +50,7 @@ import type { ProtocolExtractor } from './protocol_extractor';
 import { ProtocolExtractionError } from './protocol_extractor';
 import type { ProtocolPersister } from './protocol_persister';
 import type { UserResolver } from './user_resolver';
+import type { ObservationWriter } from './observation_writer';
 
 // ---------- Public types ----------
 
@@ -111,6 +112,15 @@ export interface TurnResponseBody {
     topicsSkipped: string[];
     error: string | null;
   };
+  // Present only on turns that confirmed at least one extracted value
+  // (T-V2-304 — confirmed-value → FHIR Observation bridge). Absent
+  // when no values were confirmed this turn.
+  observations?: {
+    written: number;
+    failed: number;
+    s3Keys: string[];
+    errors: string[];
+  };
 }
 
 export interface TurnResponse {
@@ -155,6 +165,12 @@ export interface HandlerDeps {
   // parameter_configs.threshold_set_by. Optional — when not provided,
   // threshold_set_by stays null and protocols are still persisted.
   userResolver?: UserResolver;
+  // Confirmed-value → FHIR Observation bridge (T-V2-304). Each
+  // extractedValue with status='confirmed' becomes a FHIR R4
+  // Observation in S3 at the same key convention v1 sync-observation
+  // uses. Optional — when missing the writes are skipped and the
+  // transcript remains the source of truth.
+  observationWriter?: ObservationWriter;
   config: HandlerConfig;
   // Pluggable clock for tests; defaults to Date.now
   now?: () => number;
@@ -274,6 +290,19 @@ export async function handleTurn(event: TurnRequest, deps: HandlerDeps): Promise
     deps,
   });
 
+  // 8d. Confirmed values → FHIR Observations (S3). Per-value try/catch
+  //     so a single bad write doesn't fail the whole turn — the
+  //     transcript still has the data and the bridge can re-run later
+  //     post-hoc.
+  const observationResult = await maybeWriteFhirObservations({
+    extractedValues: parsed.extractedValues,
+    patientCognitoSub: event.patientId,
+    patientInternalId: patientCtx.patient.id,
+    sessionId: event.sessionId,
+    observedAt: new Date(now()),
+    writer: deps.observationWriter,
+  });
+
   // 9. Persist session, record telemetry, and (if emergency) enqueue caregiver
   //    alert — all in parallel.
   const emergencyTriggers = detectEmergencyTriggers(routing.reason, parsed.escalationReason, result.guardrailBlocked);
@@ -391,6 +420,9 @@ export async function handleTurn(event: TurnRequest, deps: HandlerDeps): Promise
             error: protocolResult.error ?? null,
           },
         }
+      : {}),
+    ...(observationResult.written > 0 || observationResult.failed > 0
+      ? { observations: observationResult }
       : {}),
   };
 
@@ -890,6 +922,62 @@ async function maybeExtractAndPersistProtocol(args: {
   }
 }
 
+// Confirmed-value → FHIR Observation bridge (T-V2-304).
+//
+// For each extractedValue with status='confirmed' on this turn, write a
+// FHIR R4 Observation to S3. Per-value try/catch: a single S3 hiccup
+// fails its own write but doesn't break the turn — the transcript still
+// contains the data and the bridge can re-run later.
+//
+// Skip entirely when:
+//   - no observationWriter is wired (deps optional for backwards-compat
+//     and tests)
+//   - the turn produced zero confirmed values
+async function maybeWriteFhirObservations(args: {
+  extractedValues: ExtractedValue[];
+  patientCognitoSub: string;
+  patientInternalId: string;
+  sessionId: string;
+  observedAt: Date;
+  writer: ObservationWriter | undefined;
+}): Promise<{
+  written: number;
+  failed: number;
+  s3Keys: string[];
+  errors: string[];
+}> {
+  const empty = { written: 0, failed: 0, s3Keys: [] as string[], errors: [] as string[] };
+  if (!args.writer) return empty;
+  const confirmed = args.extractedValues.filter((v) => v.status === 'confirmed');
+  if (confirmed.length === 0) return empty;
+
+  const result = { ...empty };
+  for (const value of confirmed) {
+    try {
+      const { s3Key } = await args.writer.write({
+        patientCognitoSub: args.patientCognitoSub,
+        patientInternalId: args.patientInternalId,
+        sessionId: args.sessionId,
+        value,
+        observedAt: args.observedAt,
+      });
+      result.written++;
+      result.s3Keys.push(s3Key);
+    } catch (e) {
+      result.failed++;
+      const message = e instanceof Error ? e.message : String(e);
+      result.errors.push(`${value.parameter}: ${message}`);
+      console.error('fhir_observation_write_failed', {
+        parameter: value.parameter,
+        sessionId: args.sessionId,
+        patientCognitoSub: args.patientCognitoSub,
+        message,
+      });
+    }
+  }
+  return result;
+}
+
 // ---------- Streaming handler ----------
 //
 // SSE-based variant. Architecture is in place; events emit AFTER the full
@@ -1025,6 +1113,18 @@ export async function handleTurnStream(
       patientId: patientCtx.patient.id,
       actorCognitoSub: event.actorCognitoSub,
       deps,
+    });
+
+    // FHIR observation writes — same flow as handleTurn (T-V2-304).
+    // Note: not surfaced as a streaming SSE event today; clients can
+    // query interaction_sessions or fetch observations directly.
+    await maybeWriteFhirObservations({
+      extractedValues: parsed.extractedValues,
+      patientCognitoSub: event.patientId,
+      patientInternalId: patientCtx.patient.id,
+      sessionId: event.sessionId,
+      observedAt: new Date(now()),
+      writer: deps.observationWriter,
     });
 
     const escalationsTriggered = routing.reason ? [routing.reason] : [];
