@@ -110,6 +110,20 @@ resource "aws_iam_role_policy" "bedrock_router_inline" {
         ]
       },
       {
+        # AWS Bedrock requires the invoking principal to be able to subscribe
+        # to the Anthropic Marketplace listing on first use of a model. Once
+        # the account is subscribed (one-time, persists for the life of the
+        # account), these permissions are unused. Resource * is required —
+        # AWS does not document specific subscription ARNs to scope to.
+        Sid    = "MarketplaceSubscribeOnFirstUse"
+        Effect = "Allow"
+        Action = [
+          "aws-marketplace:ViewSubscriptions",
+          "aws-marketplace:Subscribe",
+        ]
+        Resource = "*"
+      },
+      {
         Sid      = "ApplyGuardrail"
         Effect   = "Allow"
         Action   = ["bedrock:ApplyGuardrail"]

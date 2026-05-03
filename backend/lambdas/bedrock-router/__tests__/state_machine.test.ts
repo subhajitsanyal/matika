@@ -86,8 +86,16 @@ describe('isAllowedTransition', () => {
     expect(isAllowedTransition('TERMINAL', 'TERMINAL')).toBe(false);
   });
 
-  it('rejects CREATED -> EXTRACTING (must go through GREETING)', () => {
-    expect(isAllowedTransition('CREATED', 'EXTRACTING')).toBe(false);
+  it('allows CREATED -> EXTRACTING (patient may lead with a vital)', () => {
+    expect(isAllowedTransition('CREATED', 'EXTRACTING')).toBe(true);
+  });
+
+  it('allows CREATED -> PENDING_CONFIRMATION (patient leads with value, model captures pending)', () => {
+    expect(isAllowedTransition('CREATED', 'PENDING_CONFIRMATION')).toBe(true);
+  });
+
+  it('allows CREATED -> EMERGENCY (patient leads with distress signal)', () => {
+    expect(isAllowedTransition('CREATED', 'EMERGENCY')).toBe(true);
   });
 
   it('rejects GREETING -> EMERGENCY (no shortcut)', () => {

@@ -20,7 +20,18 @@ import type { FsmState } from './context/types';
 //   state and resume to its prior state. The state machine doesn't track the
 //   "prior state"; the caller is responsible for restoring it on resume.
 const ALLOWED_TRANSITIONS: Record<FsmState, ReadonlySet<FsmState>> = {
-  CREATED: new Set(['GREETING', 'PAUSED', 'TERMINAL']),
+  // Patients sometimes lead with a vital reading on the first turn (e.g.,
+  // "BP is 130 over 85" with no greeting). Allow direct entry to EXTRACTING /
+  // PENDING_CONFIRMATION / EMERGENCY rather than forcing an artificial
+  // GREETING hop that the LLM has to fabricate.
+  CREATED: new Set([
+    'GREETING',
+    'EXTRACTING',
+    'PENDING_CONFIRMATION',
+    'EMERGENCY',
+    'PAUSED',
+    'TERMINAL',
+  ]),
   GREETING: new Set(['EXTRACTING', 'PAUSED', 'TERMINAL']),
   EXTRACTING: new Set([
     'EXTRACTING',

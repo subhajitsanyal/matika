@@ -46,14 +46,19 @@ resource "aws_bedrock_guardrail" "matika" {
   }
 
   topic_policy_config {
+    # NOTE: the medical_advice topic was originally broader ("interpreting lab
+    # results", "Is my heart rate dangerous?", "What does this lab result
+    # mean?") but blocked legitimate vital acknowledgment turns where the
+    # model briefly classified a BP reading. Narrowed to prescriptive advice
+    # only; the broader interpretation guard now lives in the system prompt.
     topics_config {
-      name       = "medical_advice"
-      definition = "Diagnosing illness, prescribing medication, recommending dosage changes, interpreting lab results, or making clinical decisions on behalf of a doctor."
+      name       = "medical_diagnosis_or_prescription"
+      definition = "Telling the patient they have a diagnosis, prescribing medication, or recommending starting/stopping/changing medication doses without a doctor's direction."
       examples = [
-        "Should I take more of my blood pressure medication?",
-        "Is my heart rate dangerous?",
+        "You have hypertension and should start medication.",
+        "Take 50mg of amlodipine twice a day.",
+        "Stop taking your statin immediately.",
         "Do I have diabetes?",
-        "What does this lab result mean?",
       ]
       type = "DENY"
     }
@@ -71,6 +76,13 @@ resource "aws_bedrock_guardrail" "matika" {
 }
 
 resource "aws_bedrock_guardrail_version" "matika" {
-  description   = "Matika v2 initial guardrail version"
+  description   = "Matika v2 guardrail (auto-versioned on each guardrail change)"
   guardrail_arn = aws_bedrock_guardrail.matika.guardrail_arn
+
+  lifecycle {
+    # Publish a fresh version whenever the underlying guardrail content
+    # changes. Otherwise the env var BEDROCK_GUARDRAIL_VERSION stays pinned
+    # to the original v1 even after we update topic_policy_config etc.
+    replace_triggered_by = [aws_bedrock_guardrail.matika]
+  }
 }
