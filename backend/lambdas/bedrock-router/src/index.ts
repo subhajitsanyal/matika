@@ -9,7 +9,8 @@ import { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
 import { SQSClient } from '@aws-sdk/client-sqs';
 import { resolve as resolvePath } from 'node:path';
 
-import { handleTurn, TurnRequest, TurnResponse, HandlerDeps } from './handler';
+import { handleTurn, handleTurnStream, TurnRequest, TurnResponse, HandlerDeps } from './handler';
+import { CollectingSseEmitter, serializeEvent } from './sse_events';
 import { AwsBedrockInvoker } from './bedrock_client';
 import {
   PgPatientContextLoader,
@@ -114,6 +115,10 @@ function requiredEnv(name: string): string {
 interface ApiGatewayProxyEvent {
   body: string | null;
   isBase64Encoded?: boolean;
+  // The route's resource template (e.g. "/conversation/turn" or
+  // "/conversation/turn-stream"). Stable across stages.
+  resource?: string;
+  path?: string;
 }
 
 interface ApiGatewayProxyResponse {
@@ -129,6 +134,13 @@ function isProxyEvent(event: unknown): event is ApiGatewayProxyEvent {
     'body' in event &&
     !('sessionId' in event)
   );
+}
+
+function isStreamingPath(event: ApiGatewayProxyEvent): boolean {
+  // Match either the resource template or the deployed path. Both should
+  // end with `/turn-stream`. Defensive: treat missing fields as non-streaming.
+  const path = event.resource ?? event.path ?? '';
+  return path.endsWith('/turn-stream');
 }
 
 function jsonResponse(statusCode: number, body: unknown): ApiGatewayProxyResponse {
@@ -153,6 +165,10 @@ async function handleProxyInvocation(
     });
   }
 
+  if (isStreamingPath(event)) {
+    return handleStreamingProxyInvocation(payload, deps);
+  }
+
   try {
     const result = await handleTurn(payload, deps);
     return jsonResponse(200, result);
@@ -171,6 +187,61 @@ async function handleProxyInvocation(
       message,
     });
   }
+}
+
+// Streaming variant. API Gateway REST integrations buffer the full Lambda
+// response, so this collects all SSE events into the body rather than
+// streaming them on the wire. The wire format is still SSE-compliant
+// (`event: ... \ndata: ... \n\n` per event), so a fetch() consumer can
+// parse incrementally from the buffered body. Real per-token streaming
+// requires moving the route to a Lambda Function URL with response
+// streaming or to API Gateway HTTP API — deferred to v2.1 per the
+// pre-pilot status doc.
+async function handleStreamingProxyInvocation(
+  payload: TurnRequest,
+  deps: HandlerDeps,
+): Promise<ApiGatewayProxyResponse> {
+  const emitter = new CollectingSseEmitter();
+  let threw = false;
+  try {
+    await handleTurnStream(payload, deps, emitter);
+  } catch (err) {
+    threw = true;
+    // handleTurnStream's own catch always emits an `error` event AND
+    // calls emitter.end() before re-throwing, so emitter.events already
+    // contains the structured failure. We just log here for CloudWatch
+    // and proceed to serialize the buffered events.
+    console.error('handleTurnStream failed', err);
+  }
+
+  const body = emitter.events.map(serializeEvent).join('');
+
+  // SSE convention: stream-level failures (mid-turn) are delivered as
+  // events in a 200 response; clients inspect events, not status codes.
+  // Pre-stream validation failures (no prelude was ever emitted) get a
+  // 4xx so non-SSE-aware tooling sees the failure clearly.
+  const onlyErrorEvent =
+    threw &&
+    emitter.events.length === 1 &&
+    emitter.events[0].type === 'error';
+  const validationFailed =
+    onlyErrorEvent &&
+    /required|invalid|forbidden|not.allowed|rate.limit|exceeded/i.test(
+      (emitter.events[0] as { data: { message: string } }).data.message,
+    );
+
+  return {
+    statusCode: validationFailed ? 400 : 200,
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      // Hint to intermediaries (CloudFront, nginx) not to buffer if they
+      // do support streaming pass-through. API Gateway REST itself still
+      // buffers regardless.
+      'X-Accel-Buffering': 'no',
+    },
+    body,
+  };
 }
 
 export async function handler(
