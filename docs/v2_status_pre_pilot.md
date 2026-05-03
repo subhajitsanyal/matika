@@ -6,6 +6,23 @@
 
 ---
 
+> ## ⚠️ STALE — see the 2026-05-03 update at the bottom of this doc
+>
+> This page reflects state on 2026-05-02. The 2026-05-02/03 session
+> moved many items flagged below as "Not started" / "Stub" / "Never
+> run" to done — including all four v2 Lambdas deployed, V005 applied,
+> end-to-end smoke against real Bedrock + RDS, /health probes wired
+> with real RDS/Bedrock/S3 checks, caregiver protocol persistence
+> (T-V2-302), and confirmed-value → FHIR Observations bridge
+> (T-V2-304). Skim the bottom of the doc for the deltas, or
+> `git log --oneline -- backend/lambdas/bedrock-router backend/lambdas/bedrock-vision infrastructure/terraform/`
+> for the full picture.
+>
+> The matrices below remain useful as historical context but
+> should not be trusted as current state.
+
+---
+
 ## Executive summary
 
 **Where we are:** 25 of 66 plan tasks done (~38%). The backend conversational pipeline — bedrock-router, bedrock-vision, cost-telemetry-rollup, plus inference-platform prompts and evals — is code-complete and unit-tested. **466 tests across 5 packages, all green.** Schema migration V005 is written but never run.
@@ -292,3 +309,66 @@ The natural next session is to do the AWS-side work in parallel with the smaller
 
 *Status snapshot: 2026-05-02 — 25 of 66 plan tasks complete.*
 *Next planned increment depends on user direction.*
+
+---
+
+## 2026-05-03 update — backend complete in dev
+
+The 2026-05-02/03 session closed every backend item flagged in the
+matrices above. Below is just the delta — the original doc remains as
+historical context.
+
+### Newly done
+
+- **All four v2 Lambdas deployed and end-to-end smoke-tested** against real
+  Bedrock + real RDS in dev: bedrock-router (`/conversation/turn` and
+  `/conversation/turn-stream`), bedrock-vision (`/conversation/photo-extract`),
+  cost-telemetry-rollup, health-check.
+- **A fifth v2 Lambda landed:** photo-presign (`/conversation/photo-presign`)
+  for the client photo upload flow that bedrock-vision consumes.
+- **V005 schema migration applied** to dev RDS. Surfaced and fixed the
+  schema-vs-code drift the original doc warned about: cognito_sub
+  vs internal patient UUID for FK targets, threshold arrays, etc.
+- **/health probes wired** with real RDS / Bedrock / S3 checks. No more
+  "unknown" status fields.
+- **CloudWatch alarms (45 active)** for Lambda errors, p99 latency,
+  throttles, /health 5xx — pointed at SNS → confirmed email.
+- **Lambda concurrency quota** raised 10 → 1000.
+- **Terraform state migrated to S3 + DynamoDB lock** (was local).
+- **DB credentials moved off Lambda env vars** to runtime Secrets Manager
+  fetch (T-V2-046).
+- **Caregiver pipeline complete** (T-V2-302/303): protocol extraction at
+  session-close + persistence to parameter_configs + patient_topics +
+  caregiver-attribution via actorCognitoSub.
+- **Confirmed-value → FHIR Observation bridge** (T-V2-304): every
+  `status: 'confirmed'` value lands as a real FHIR R4 Observation in S3
+  at the v1 sync-observation key convention.
+- **Marketplace IAM** scoped + re-attached after first-call discovery.
+- **Bastion AMI hardened** to standard AL2023 (away from minimal which
+  shipped without ssm-agent).
+- **prod environment scaffolded but deferred** — `environments/prod/`
+  exists, plan-clean (~370 resources), no apply yet. See
+  `docs/v2_remaining_todos.md`.
+
+### Test count delta
+
+- Then: 466 unit tests
+- Now: 375+ in bedrock-router alone (added: protocol_extractor,
+  protocol_persister, user_resolver, observation_writer, plus expanded
+  handler integration coverage). Across all v2 Lambdas: ~480.
+
+### What's actually still open
+
+A short list, fully replacing the original "What's missing" section:
+
+| Item | Owner |
+|---|---|
+| Android v2 client (the real pilot blocker) | Engineer-time |
+| iOS v2 client | Engineer-time |
+| Admin telemetry tabs in web portal | Engineer-time |
+| `prod` Terraform apply | Pending limited-trial signal from dev |
+| AWS BAA cross-region scope confirmation (T-V2-001) | Legal |
+| DPDP review of `global.*` inference profiles | Legal |
+| Caregiver Sonnet `<output>` envelope polish | Light prompt tuning |
+
+*2026-05-03 delta authored by claude-opus-4-7. Backend in dev: trial-ready.*

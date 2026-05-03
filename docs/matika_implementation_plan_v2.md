@@ -7,6 +7,37 @@
 
 ---
 
+> ## ⚠️ Status as of 2026-05-03 — Phase 0 + Phase 1 backend mostly done
+>
+> The unticked checkboxes below are out of date. Many Phase 0 and
+> Phase 1 items have been completed since this doc was authored.
+> Authoritative sources for current status:
+>
+> - `git log --oneline -- backend/lambdas/bedrock-router backend/lambdas/bedrock-vision infrastructure/terraform/`
+> - `docs/v2_status_pre_pilot.md` — see the 2026-05-03 update at the end
+> - `docs/v2_remaining_todos.md` — currently scoped to the deferred
+>   prod Terraform apply
+>
+> **Done since this plan was written** (commits in parentheses):
+> T-V2-002 Bedrock model access · T-V2-005 quota increase to 1000 ·
+> T-V2-022 health-check (`4847a34`) · T-V2-023 v2 DevOps + IAM
+> (`6e81f89` and several others) · T-V2-046 PG runtime fetch (`5a2984e`) ·
+> T-V2-100..108, 110, 111, 210, 211 (bedrock-router + vision deployed
+> end-to-end) · T-V2-302 caregiver protocol persistence (`91e00ca`) ·
+> T-V2-303 caregiver attribution (`1d7dd46`) · T-V2-304 FHIR
+> Observation bridge (`7c19c37`) · V005 migration applied to dev RDS.
+>
+> Items still unticked **and still genuinely open**: the entire
+> Increment 6 (Android v2 client), T-V2-001 AWS BAA cross-region
+> scope (legal), DPDP review of `global.*` profiles (legal), and the
+> prod Terraform apply (scaffolded in `906260e`, deferred until limited
+> trials on dev surface signals worth incorporating).
+>
+> The checkboxes below are now best read as a reading exercise, not a
+> worklist.
+
+---
+
 ## Overview
 
 This plan reorganizes the v1 22-week timeline around the v2 architecture: cloud-only inference (AWS Bedrock), on-device STT/TTS/OCR, and removal of the Mac Mini stack. Total estimated duration: **16 weeks**, a 6-week saving from v1 (Mac Mini setup, model serving infrastructure, household deployment work all eliminated).
