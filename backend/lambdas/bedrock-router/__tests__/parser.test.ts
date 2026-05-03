@@ -1,4 +1,4 @@
-import { parseStructuredOutput, StructuredOutputParseError } from '../src/parser';
+import { parseStructuredOutput, parseStructuredOutputDetailed, StructuredOutputParseError } from '../src/parser';
 
 const validBlock = `<output>
 {
@@ -176,5 +176,78 @@ describe('parseStructuredOutput', () => {
     const result = parseStructuredOutput(block);
     expect(result.actions[0].type).toBe('complete_session');
     expect(result.stateTransition).toBe('PENDING_CONFIRMATION -> COMPLETE');
+  });
+});
+
+describe('parseStructuredOutputDetailed — bare-JSON recovery', () => {
+  const validJsonObject = `{
+    "responseText": "ok",
+    "ttsHints": { "language": "en-IN", "spellOutNumbers": false },
+    "extractedValues": [],
+    "actions": [],
+    "stateTransition": "EXTRACTING -> EXTRACTING",
+    "escalationReason": null
+  }`;
+
+  it('reports source=strict on a normal <output>-wrapped response', () => {
+    const result = parseStructuredOutputDetailed(`<output>${validJsonObject}</output>`);
+    expect(result.source).toBe('strict');
+    expect(result.parsed.responseText).toBe('ok');
+  });
+
+  it('recovers a bare JSON object when <output> tags are missing', () => {
+    const result = parseStructuredOutputDetailed(validJsonObject);
+    expect(result.source).toBe('recovered_bare_json');
+    expect(result.parsed.responseText).toBe('ok');
+  });
+
+  it('recovers JSON wrapped in conversational prose', () => {
+    const wrapped = `Sure, here is what I heard:\n\n${validJsonObject}\n\nLet me know if anything is wrong.`;
+    const result = parseStructuredOutputDetailed(wrapped);
+    expect(result.source).toBe('recovered_bare_json');
+  });
+
+  it('does NOT recover when the bare body fails schema validation', () => {
+    const broken = `{"responseText": "missing fields"}`;
+    expect(() => parseStructuredOutputDetailed(broken)).toThrow(StructuredOutputParseError);
+    try {
+      parseStructuredOutputDetailed(broken);
+    } catch (e) {
+      // Falls through to no_output_tags rather than schema_validation —
+      // recovery silently failed; original failure mode surfaces.
+      expect((e as StructuredOutputParseError).kind).toBe('no_output_tags');
+    }
+  });
+
+  it('still throws no_output_tags on prose with no JSON at all', () => {
+    expect(() => parseStructuredOutputDetailed('Just some prose, no JSON.')).toThrow(
+      StructuredOutputParseError,
+    );
+  });
+
+  it('handles braces inside string literals correctly', () => {
+    // The schema-valid object has a string with embedded braces. The
+    // brace-balancer must skip them.
+    const trickyJson = `{
+      "responseText": "Try {this} setting",
+      "ttsHints": { "language": "en-IN", "spellOutNumbers": false },
+      "extractedValues": [],
+      "actions": [],
+      "stateTransition": "EXTRACTING -> EXTRACTING",
+      "escalationReason": null
+    }`;
+    const result = parseStructuredOutputDetailed(trickyJson);
+    expect(result.source).toBe('recovered_bare_json');
+    expect(result.parsed.responseText).toBe('Try {this} setting');
+  });
+
+  it('still rejects multiple <output> blocks (no fallback for ambiguity)', () => {
+    const doubled = `<output>${validJsonObject}</output><output>${validJsonObject}</output>`;
+    expect(() => parseStructuredOutputDetailed(doubled)).toThrow(StructuredOutputParseError);
+    try {
+      parseStructuredOutputDetailed(doubled);
+    } catch (e) {
+      expect((e as StructuredOutputParseError).kind).toBe('multiple_output_tags');
+    }
   });
 });

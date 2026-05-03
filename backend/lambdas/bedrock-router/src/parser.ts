@@ -92,17 +92,31 @@ const validate: ValidateFunction<StructuredOutput> = ajv.compile(schema as objec
 
 const OUTPUT_TAG_REGEX = /<output>([\s\S]*?)<\/output>/g;
 
+// Result envelope so callers can distinguish strict-parse from
+// fallback-recovered turns and emit telemetry accordingly. Production
+// callers use parseStructuredOutput() which returns the bare value;
+// callers that want telemetry use parseStructuredOutputDetailed().
+export interface ParseDetails {
+  parsed: StructuredOutput;
+  // 'strict' = one `<output>` block, parsed cleanly (the happy path).
+  // 'recovered_bare_json' = no `<output>` tags but the response was
+  //   itself a single valid JSON object that matched the schema.
+  //   Models occasionally drop the envelope on long/dense replies;
+  //   this lets us recover invisibly to the user while still flagging
+  //   the drift via telemetry.
+  source: 'strict' | 'recovered_bare_json';
+}
+
 export function parseStructuredOutput(rawLlmText: string): StructuredOutput {
+  return parseStructuredOutputDetailed(rawLlmText).parsed;
+}
+
+export function parseStructuredOutputDetailed(rawLlmText: string): ParseDetails {
   const matches = [...rawLlmText.matchAll(OUTPUT_TAG_REGEX)];
 
-  if (matches.length === 0) {
-    throw new StructuredOutputParseError(
-      'no_output_tags',
-      'No <output>...</output> block found in LLM response.',
-      rawLlmText,
-    );
-  }
   if (matches.length > 1) {
+    // Multiple <output> blocks is genuinely ambiguous — don't try to
+    // pick one. Fail fast so the retry path can prompt for a single block.
     throw new StructuredOutputParseError(
       'multiple_output_tags',
       `Found ${matches.length} <output> blocks; expected exactly one.`,
@@ -110,7 +124,26 @@ export function parseStructuredOutput(rawLlmText: string): StructuredOutput {
     );
   }
 
-  const jsonText = matches[0][1].trim();
+  if (matches.length === 1) {
+    return { parsed: parseAndValidate(matches[0][1].trim(), rawLlmText), source: 'strict' };
+  }
+
+  // No <output> tags. Before giving up, try to recover a bare JSON
+  // object — the most common failure mode is the model omitting tags
+  // entirely on long/dense replies and just emitting the JSON directly.
+  const recovered = tryRecoverBareJson(rawLlmText);
+  if (recovered !== null) {
+    return { parsed: recovered, source: 'recovered_bare_json' };
+  }
+
+  throw new StructuredOutputParseError(
+    'no_output_tags',
+    'No <output>...</output> block found in LLM response.',
+    rawLlmText,
+  );
+}
+
+function parseAndValidate(jsonText: string, raw: string): StructuredOutput {
   let parsed: unknown;
   try {
     parsed = JSON.parse(jsonText);
@@ -118,7 +151,7 @@ export function parseStructuredOutput(rawLlmText: string): StructuredOutput {
     throw new StructuredOutputParseError(
       'invalid_json',
       `JSON.parse failed: ${(err as Error).message}`,
-      rawLlmText,
+      raw,
     );
   }
 
@@ -126,10 +159,56 @@ export function parseStructuredOutput(rawLlmText: string): StructuredOutput {
     throw new StructuredOutputParseError(
       'schema_validation',
       `Schema validation failed: ${ajv.errorsText(validate.errors)}`,
-      rawLlmText,
+      raw,
       validate.errors ?? undefined,
     );
   }
 
   return parsed as StructuredOutput;
+}
+
+// Best-effort recovery: scan for the first balanced JSON object in the
+// raw text and return it if it parses + validates. If anything fails,
+// return null and let the caller throw the original no_output_tags
+// error — we want the retry path to still fire on truly malformed
+// output, not silently accept noise.
+function tryRecoverBareJson(rawLlmText: string): StructuredOutput | null {
+  const start = rawLlmText.indexOf('{');
+  if (start < 0) return null;
+
+  // Walk the string tracking brace depth, ignoring braces inside
+  // string literals. Stops at the first balanced `}` — fast enough
+  // for typical 2KB responses.
+  let depth = 0;
+  let inString = false;
+  let escapeNext = false;
+  let end = -1;
+  for (let i = start; i < rawLlmText.length; i++) {
+    const ch = rawLlmText[i];
+    if (escapeNext) { escapeNext = false; continue; }
+    if (inString) {
+      if (ch === '\\') escapeNext = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') { inString = true; continue; }
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) { end = i; break; }
+    }
+  }
+  if (end < 0) return null;
+
+  const candidate = rawLlmText.slice(start, end + 1);
+  try {
+    const parsed = JSON.parse(candidate);
+    if (validate(parsed)) {
+      return parsed as StructuredOutput;
+    }
+  } catch {
+    // Either not valid JSON or fails schema — let the caller fall
+    // through to the regular no_output_tags error path.
+  }
+  return null;
 }

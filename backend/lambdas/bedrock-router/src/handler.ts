@@ -41,7 +41,7 @@ import { extractPreModelHints } from './pre_model_hints';
 import { renderPatientContext } from './context/per_patient';
 import { renderTurnContext, applySlidingWindow } from './context/per_turn';
 import { buildBedrockBody, BedrockBody } from './prompt_builder';
-import { parseStructuredOutput, ExtractedValue, StructuredOutput, StructuredOutputParseError } from './parser';
+import { parseStructuredOutputDetailed, ExtractedValue, StructuredOutput, StructuredOutputParseError } from './parser';
 import { applyTransition } from './state_machine';
 import { buildModelCallRecord } from './telemetry';
 import type { Tier } from './pricing';
@@ -517,7 +517,16 @@ async function invokeWithRetry<R>(
 ): Promise<{ parsed: StructuredOutput; meta: R }> {
   const first = await invoke(body);
   try {
-    return { parsed: parseStructuredOutput(first.text), meta: first.meta };
+    const detailed = parseStructuredOutputDetailed(first.text);
+    if (detailed.source === 'recovered_bare_json') {
+      // The model dropped the <output> envelope but the body was a
+      // valid JSON object that matched the schema. Invisible recovery
+      // for the user; flag for telemetry so we can track drift rate.
+      console.warn('parse_recovered_bare_json', {
+        rawSnippet: first.text.slice(0, 400),
+      });
+    }
+    return { parsed: detailed.parsed, meta: first.meta };
   } catch (e) {
     if (!(e instanceof StructuredOutputParseError) || !RETRIABLE_PARSE_FAILURES.has(e.kind)) {
       throw e;
@@ -529,7 +538,13 @@ async function invokeWithRetry<R>(
     const stricterBody = appendStrictnessReminder(body);
     const retry = await invoke(stricterBody);
     try {
-      return { parsed: parseStructuredOutput(retry.text), meta: retry.meta };
+      const detailed = parseStructuredOutputDetailed(retry.text);
+      if (detailed.source === 'recovered_bare_json') {
+        console.warn('parse_recovered_bare_json_on_retry', {
+          rawSnippet: retry.text.slice(0, 400),
+        });
+      }
+      return { parsed: detailed.parsed, meta: retry.meta };
     } catch (e2) {
       const kind = e2 instanceof StructuredOutputParseError ? e2.kind : 'unknown';
       console.warn('parse_failed_after_retry', {
