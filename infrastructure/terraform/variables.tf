@@ -125,9 +125,9 @@ variable "bedrock_sonnet_model_id" {
 }
 
 variable "bedrock_router_provisioned_concurrency" {
-  description = "Provisioned-concurrency count for matika-<env>-bedrock-router"
+  description = "Provisioned-concurrency count for matika-<env>-bedrock-router. Default 0 — bump to ≥1 after a Lambda concurrent-executions quota increase has been granted (AWS default account quota is only 10)."
   type        = number
-  default     = 1
+  default     = 0
 }
 
 variable "soft_rate_limit_per_patient" {

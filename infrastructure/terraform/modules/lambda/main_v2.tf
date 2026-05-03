@@ -286,6 +286,11 @@ resource "aws_lambda_function" "bedrock_router" {
   filename         = data.archive_file.bedrock_router.output_path
   source_code_hash = data.archive_file.bedrock_router.output_base64sha256
 
+  # Auto-publish a numbered version on each deploy. Required so the `live`
+  # alias can target a published version (provisioned concurrency rejects
+  # $LATEST).
+  publish = true
+
   vpc_config {
     subnet_ids         = var.private_subnet_ids
     security_group_ids = [var.lambda_security_group_id]
@@ -307,10 +312,15 @@ resource "aws_lambda_function" "bedrock_router" {
 resource "aws_lambda_alias" "bedrock_router_live" {
   name             = "live"
   function_name    = aws_lambda_function.bedrock_router.function_name
-  function_version = "$LATEST"
+  function_version = aws_lambda_function.bedrock_router.version
 }
 
 resource "aws_lambda_provisioned_concurrency_config" "bedrock_router" {
+  # Gate on the variable so dev (with the AWS default 10 concurrent-execution
+  # account quota) can deploy without PC. Bump the variable to >0 once a
+  # service-quota increase has been granted (T-V2-005).
+  count = var.bedrock_router_provisioned_concurrency > 0 ? 1 : 0
+
   function_name                     = aws_lambda_function.bedrock_router.function_name
   qualifier                         = aws_lambda_alias.bedrock_router_live.name
   provisioned_concurrent_executions = var.bedrock_router_provisioned_concurrency
