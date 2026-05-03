@@ -113,15 +113,15 @@ variable "ses_from_email" {
 # ============================================================
 
 variable "bedrock_haiku_model_id" {
-  description = "Bedrock foundation-model ID for Claude Haiku 4.5"
+  description = "Bedrock model ID for Claude Haiku 4.5. Defaults to the `global.*` inference profile — direct foundation-model on-demand isn't supported for Haiku 4.5."
   type        = string
-  default     = "anthropic.claude-haiku-4-5-20251001-v1:0"
+  default     = "global.anthropic.claude-haiku-4-5-20251001-v1:0"
 }
 
 variable "bedrock_sonnet_model_id" {
-  description = "Bedrock foundation-model ID for Claude Sonnet 4.6"
+  description = "Bedrock model ID for Claude Sonnet 4.6. Defaults to the `global.*` inference profile."
   type        = string
-  default     = "anthropic.claude-sonnet-4-6"
+  default     = "global.anthropic.claude-sonnet-4-6"
 }
 
 variable "bedrock_router_provisioned_concurrency" {

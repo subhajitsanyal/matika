@@ -97,10 +97,17 @@ resource "aws_iam_role_policy" "bedrock_router_inline" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid      = "InvokeBedrockModels"
-        Effect   = "Allow"
-        Action   = ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"]
-        Resource = [var.bedrock_haiku_model_arn, var.bedrock_sonnet_model_arn]
+        Sid    = "InvokeBedrockProfilesAndUnderlyingModels"
+        Effect = "Allow"
+        Action = ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"]
+        # Both inference-profile ARN and underlying foundation-model ARN must
+        # be allowed when invoking via a system-defined profile.
+        Resource = [
+          var.bedrock_haiku_model_arn,
+          var.bedrock_sonnet_model_arn,
+          var.bedrock_haiku_foundation_model_arn,
+          var.bedrock_sonnet_foundation_model_arn,
+        ]
       },
       {
         Sid      = "ApplyGuardrail"
@@ -154,10 +161,13 @@ resource "aws_iam_role_policy" "bedrock_vision_inline" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid      = "InvokeHaikuVision"
-        Effect   = "Allow"
-        Action   = ["bedrock:InvokeModel"]
-        Resource = [var.bedrock_haiku_model_arn]
+        Sid    = "InvokeHaikuVision"
+        Effect = "Allow"
+        Action = ["bedrock:InvokeModel"]
+        Resource = [
+          var.bedrock_haiku_model_arn,
+          var.bedrock_haiku_foundation_model_arn,
+        ]
       },
       {
         Sid      = "ApplyGuardrail"
@@ -238,10 +248,13 @@ resource "aws_iam_role_policy" "health_check_inline" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid      = "InvokeBedrockPing"
-        Effect   = "Allow"
-        Action   = ["bedrock:InvokeModel"]
-        Resource = [var.bedrock_haiku_model_arn]
+        Sid    = "InvokeBedrockPing"
+        Effect = "Allow"
+        Action = ["bedrock:InvokeModel"]
+        Resource = [
+          var.bedrock_haiku_model_arn,
+          var.bedrock_haiku_foundation_model_arn,
+        ]
       },
       {
         Effect   = "Allow"

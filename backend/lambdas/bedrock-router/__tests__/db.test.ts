@@ -32,9 +32,10 @@ function matchKey(text: string, map: Map<string, unknown[]>): string {
 }
 
 describe('PgPatientContextLoader', () => {
-  it('issues five parallel queries and assembles the PatientContext', async () => {
+  it('resolves cognito_sub then issues four parallel queries and assembles the PatientContext', async () => {
     const rows = new Map<string, unknown[]>();
-    rows.set('FROM patients WHERE id', [
+    // Phase 1 query — JOIN users on cognito_sub → patients.id + profile fields.
+    rows.set('FROM patients p', [
       {
         id: 'patient-1',
         name: 'Ramesh Sharma',
@@ -42,7 +43,7 @@ describe('PgPatientContextLoader', () => {
         gender: 'male',
         primary_language: 'hi-IN',
         conditions: ['hypertension'],
-        medical_history_summary: 'CABG 2018',
+        medical_history_summary: null, // v1 schema has no such column
       },
     ]);
     rows.set('FROM parameter_configs', [
@@ -55,16 +56,16 @@ describe('PgPatientContextLoader', () => {
         timezone: 'Asia/Kolkata',
         threshold_min: 90,
         threshold_max: 140,
-        threshold_set_by: 'doctor',
+        threshold_set_by: null, // v1 stores user_id; mapping to caregiver/doctor deferred
         active: true,
       },
     ]);
     rows.set('FROM patient_topics', [
       {
-        topic_name: 'medications',
+        topic_name: 'medications', // aliased from topics.name
         status: 'complete',
         last_updated: '2026-04-30T00:00:00Z',
-        summary: 'Metformin 500 BD',
+        summary: null, // v1 has no summary column
       },
     ]);
     rows.set('FROM interaction_sessions', [
@@ -75,7 +76,7 @@ describe('PgPatientContextLoader', () => {
         started_at: '2026-04-30T12:00:00Z',
         ended_at: '2026-04-30T12:05:00Z',
         status: 'complete',
-        captured_values: [{ parameter: 'blood_pressure_systolic', value: 132, unit: 'mmHg' }],
+        captured_values: [], // v1 stores extracted_summary JSONB; loader returns []
         incomplete_reason: null,
       },
     ]);
@@ -85,40 +86,46 @@ describe('PgPatientContextLoader', () => {
         source: 'doctor',
         rationale: 'Better diabetic monitoring',
         suggested_frequency_days: 1,
-        requires_gentle_introduction: true,
+        requires_gentle_introduction: false, // v1 has no such column; loader returns false
       },
     ]);
 
     const { client, calls } = stubClient(rows);
     const loader = new PgPatientContextLoader(client);
-    const ctx = await loader.load('patient-1');
+    const ctx = await loader.load('cognito-sub-abc');
 
+    // Phase 1 (sequential) + Phase 2 (four parallel) = 5 query calls total.
     expect(calls).toHaveLength(5);
+    expect(calls[0].text).toContain('FROM patients p');
+    expect(calls[0].params).toEqual(['cognito-sub-abc']);
+    // The next four use the resolved internal patients.id.
+    for (let i = 1; i <= 4; i++) {
+      expect(calls[i].params).toEqual(['patient-1']);
+    }
+    expect(ctx.patient.id).toBe('patient-1'); // internal UUID surfaced for model_call.patient_id
     expect(ctx.patient.name).toBe('Ramesh Sharma');
     expect(ctx.patient.conditions).toEqual(['hypertension']);
+    expect(ctx.patient.medicalHistorySummary).toBeNull();
     expect(ctx.protocol[0].parameterName).toBe('blood_pressure_systolic');
-    expect(ctx.protocol[0].thresholdSetBy).toBe('doctor');
+    expect(ctx.protocol[0].thresholdSetBy).toBeNull();
     expect(ctx.topics[0].topicName).toBe('medications');
     expect(ctx.topics[0].lastUpdated).toBeInstanceOf(Date);
-    expect(ctx.recentSessions[0].capturedValues).toHaveLength(1);
-    expect(ctx.pendingRecommendations[0].requiresGentleIntroduction).toBe(true);
+    expect(ctx.topics[0].summary).toBeNull();
+    expect(ctx.recentSessions[0].capturedValues).toEqual([]);
+    expect(ctx.pendingRecommendations[0].requiresGentleIntroduction).toBe(false);
   });
 
   it('throws when the patient row is missing', async () => {
     const rows = new Map<string, unknown[]>();
-    rows.set('FROM patients WHERE id', []);
-    rows.set('FROM parameter_configs', []);
-    rows.set('FROM patient_topics', []);
-    rows.set('FROM interaction_sessions', []);
-    rows.set('FROM recommendations', []);
+    rows.set('FROM patients p', []);
     const { client } = stubClient(rows);
     const loader = new PgPatientContextLoader(client);
-    await expect(loader.load('missing')).rejects.toThrow(/No patient row/);
+    await expect(loader.load('missing-sub')).rejects.toThrow(/No patient row/);
   });
 
   it('handles null conditions gracefully', async () => {
     const rows = new Map<string, unknown[]>();
-    rows.set('FROM patients WHERE id', [
+    rows.set('FROM patients p', [
       {
         id: 'p',
         name: 'Test',
@@ -134,7 +141,7 @@ describe('PgPatientContextLoader', () => {
     rows.set('FROM interaction_sessions', []);
     rows.set('FROM recommendations', []);
     const { client } = stubClient(rows);
-    const ctx = await new PgPatientContextLoader(client).load('p');
+    const ctx = await new PgPatientContextLoader(client).load('cognito-sub-test');
     expect(ctx.patient.conditions).toEqual([]);
     expect(ctx.patient.medicalHistorySummary).toBeNull();
   });

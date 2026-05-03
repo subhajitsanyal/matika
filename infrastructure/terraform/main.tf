@@ -191,6 +191,8 @@ module "lambda" {
   # v2 Bedrock plumbing
   bedrock_haiku_model_arn                = module.bedrock.haiku_model_arn
   bedrock_sonnet_model_arn               = module.bedrock.sonnet_model_arn
+  bedrock_haiku_foundation_model_arn     = module.bedrock.haiku_foundation_model_arn
+  bedrock_sonnet_foundation_model_arn    = module.bedrock.sonnet_foundation_model_arn
   bedrock_guardrail_arn                  = module.bedrock.guardrail_arn
   bedrock_guardrail_id                   = module.bedrock.guardrail_id
   bedrock_guardrail_version              = module.bedrock.guardrail_version

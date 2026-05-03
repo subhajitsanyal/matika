@@ -10,13 +10,13 @@ variable "aws_region" {
 }
 
 variable "haiku_model_id" {
-  description = "Bedrock foundation-model ID for Claude Haiku 4.5"
+  description = "Bedrock model ID passed to InvokeModel for Claude Haiku 4.5. Use the `global.*` inference profile — direct foundation-model ID isn't supported on-demand for Haiku 4.5."
   type        = string
-  default     = "anthropic.claude-haiku-4-5-20251001-v1:0"
+  default     = "global.anthropic.claude-haiku-4-5-20251001-v1:0"
 }
 
 variable "sonnet_model_id" {
-  description = "Bedrock foundation-model ID for Claude Sonnet 4.6"
+  description = "Bedrock model ID passed to InvokeModel for Claude Sonnet 4.6. Use the `global.*` inference profile."
   type        = string
-  default     = "anthropic.claude-sonnet-4-6"
+  default     = "global.anthropic.claude-sonnet-4-6"
 }

@@ -14,13 +14,23 @@ output "guardrail_version" {
 }
 
 output "haiku_model_arn" {
-  description = "Foundation-model ARN for Claude Haiku 4.5 (for IAM scoping)"
-  value       = local.haiku_model_arn
+  description = "Inference-profile ARN for Claude Haiku 4.5 (for IAM scoping). Lambda IAM also needs the foundation-model ARN — see haiku_foundation_model_arn."
+  value       = local.haiku_inference_profile_arn
 }
 
 output "sonnet_model_arn" {
-  description = "Foundation-model ARN for Claude Sonnet 4.6 (for IAM scoping)"
-  value       = local.sonnet_model_arn
+  description = "Inference-profile ARN for Claude Sonnet 4.6 (for IAM scoping). Lambda IAM also needs the foundation-model ARN — see sonnet_foundation_model_arn."
+  value       = local.sonnet_inference_profile_arn
+}
+
+output "haiku_foundation_model_arn" {
+  description = "Wildcard-region foundation-model ARN for the model that the Haiku 4.5 inference profile fronts. Required alongside the inference-profile ARN in IAM."
+  value       = local.haiku_foundation_model_arn
+}
+
+output "sonnet_foundation_model_arn" {
+  description = "Wildcard-region foundation-model ARN for the model that the Sonnet 4.6 inference profile fronts."
+  value       = local.sonnet_foundation_model_arn
 }
 
 output "haiku_model_id" {

@@ -4,10 +4,30 @@
 // The PgClient interface is intentionally a subset of pg.Pool / pg.Client so
 // either can be passed in. Tests pass a stub that returns predetermined rows.
 //
-// The SQL strings here are written against the v1 + V005 schema as documented
-// in docs/matika_spec_v2.md §5 and docs/carelog_spec.md §5. Verify against the
-// actual deployed schema during P1 integration testing — column names may need
-// adjustment for the v1 tables we don't fully control here.
+// Schema reality (v1 + V004 + V005) differs from the v2 spec in several places.
+// The loader handles these mappings:
+//   patients.name              → users.name (JOIN on patients.user_id)
+//   patients.age               → derived: EXTRACT(YEAR FROM AGE(date_of_birth))
+//   patients.primary_language  → patients.language
+//   patients.conditions        → patients.medical_conditions
+//   patients.medical_history_summary → does not exist in v1; returned as null
+//   parameter_configs.loinc_code     → loinc_codes[1] (column is TEXT[])
+//   parameter_configs.threshold_min  → threshold_min[1]  (column is NUMERIC[])
+//   parameter_configs.threshold_max  → threshold_max[1]  (column is NUMERIC[])
+//   parameter_configs.threshold_set_by → stored as user_id UUID; mapping to
+//                                        'caregiver'|'doctor' deferred — null
+//   topics.topic_name          → topics.name
+//   patient_topics.summary     → does not exist in v1; null
+//   interaction_sessions.captured_values → extracted_summary JSONB (empty for
+//                                          now; shape contract not yet pinned)
+//   interaction_sessions.incomplete_reason → does not exist in v1; null
+//   recommendations.requires_gentle_introduction → does not exist in v1; false
+//
+// Identity model: load() accepts the Cognito sub from the JWT (passed in the
+// request body as `patientId`). It JOINs users.cognito_sub → patients.user_id
+// to resolve the internal patients.id UUID, which is then used for the
+// other four queries (and surfaces in PatientContext.patient.id so the
+// handler can pass it to model_call.patient_id).
 
 import type { ExtractedValue } from './parser';
 import type {
@@ -37,6 +57,7 @@ export interface PgClient {
 
 interface PatientRow {
   id: string;
+  user_id: string;
   name: string;
   age: number;
   gender: 'male' | 'female' | 'other';
@@ -87,51 +108,88 @@ interface RecommendationRow {
 export class PgPatientContextLoader implements PatientContextLoader {
   constructor(private client: PgClient) {}
 
-  async load(patientId: string): Promise<PatientContext> {
-    const [patientRows, configRows, topicRows, sessionRows, recRows] = await Promise.all([
-      this.client.query<PatientRow>(
-        `SELECT id, name, age, gender, primary_language, conditions, medical_history_summary
-         FROM patients WHERE id = $1`,
-        [patientId],
-      ),
+  async load(cognitoSub: string): Promise<PatientContext> {
+    // Phase 1: resolve cognito_sub → patients.id and load the patient profile
+    // in a single round trip. The four parallel queries below need the
+    // internal UUID so they can't fan out before this completes.
+    const patientResult = await this.client.query<PatientRow>(
+      `SELECT
+         p.id,
+         u.id AS user_id,
+         u.name,
+         COALESCE(EXTRACT(YEAR FROM AGE(p.date_of_birth))::int, 0) AS age,
+         p.gender,
+         p.language AS primary_language,
+         p.medical_conditions AS conditions,
+         NULL::text AS medical_history_summary
+       FROM patients p
+       JOIN users u ON u.id = p.user_id
+       WHERE u.cognito_sub = $1`,
+      [cognitoSub],
+    );
+
+    if (patientResult.rows.length === 0) {
+      throw new Error(`No patient row found for cognito_sub ${cognitoSub}`);
+    }
+    const p = patientResult.rows[0];
+    const internalPatientId = p.id;
+
+    // Phase 2: four parallel queries against the internal patient ID.
+    const [configRows, topicRows, sessionRows, recRows] = await Promise.all([
       this.client.query<ParameterConfigRow>(
-        `SELECT parameter_name, loinc_code, unit, frequency_days, daily_deadline, timezone,
-                threshold_min, threshold_max, threshold_set_by, active
+        `SELECT parameter_name,
+                COALESCE(loinc_codes[1], '') AS loinc_code,
+                unit,
+                frequency_days,
+                to_char(daily_deadline, 'HH24:MI') AS daily_deadline,
+                timezone,
+                threshold_min[1] AS threshold_min,
+                threshold_max[1] AS threshold_max,
+                NULL::text AS threshold_set_by,
+                active
          FROM parameter_configs
          WHERE patient_id = $1 AND active = TRUE
          ORDER BY parameter_name`,
-        [patientId],
+        [internalPatientId],
       ),
       this.client.query<PatientTopicRow>(
-        `SELECT t.topic_name, pt.status, pt.last_updated, pt.summary
-         FROM patient_topics pt JOIN topics t ON t.id = pt.topic_id
+        `SELECT t.name AS topic_name,
+                pt.status,
+                pt.last_updated,
+                NULL::text AS summary
+         FROM patient_topics pt
+         JOIN topics t ON t.id = pt.topic_id
          WHERE pt.patient_id = $1
-         ORDER BY t.topic_name`,
-        [patientId],
+         ORDER BY t.name`,
+        [internalPatientId],
       ),
       this.client.query<SessionSummaryRow>(
-        `SELECT id AS session_id, session_type, language, started_at, ended_at, status,
-                extracted_parameters AS captured_values, incomplete_reason
+        `SELECT id AS session_id,
+                session_type,
+                language,
+                started_at,
+                ended_at,
+                CASE WHEN status = 'complete' THEN 'complete' ELSE 'incomplete' END AS status,
+                '[]'::jsonb AS captured_values,
+                NULL::text AS incomplete_reason
          FROM interaction_sessions
          WHERE patient_id = $1
          ORDER BY started_at DESC
          LIMIT 3`,
-        [patientId],
+        [internalPatientId],
       ),
       this.client.query<RecommendationRow>(
-        `SELECT parameter_name, source, rationale, suggested_frequency_days,
-                requires_gentle_introduction
+        `SELECT parameter_name,
+                source,
+                rationale,
+                suggested_frequency_days,
+                FALSE AS requires_gentle_introduction
          FROM recommendations
          WHERE patient_id = $1 AND status = 'pending'
          ORDER BY created_at`,
-        [patientId],
+        [internalPatientId],
       ),
     ]);
-
-    if (patientRows.rows.length === 0) {
-      throw new Error(`No patient row found for id ${patientId}`);
-    }
-    const p = patientRows.rows[0];
 
     return {
       patient: {
@@ -143,11 +201,45 @@ export class PgPatientContextLoader implements PatientContextLoader {
         conditions: p.conditions ?? [],
         medicalHistorySummary: p.medical_history_summary,
       },
+      userId: p.user_id,
       protocol: configRows.rows.map(mapParameterConfig),
       topics: topicRows.rows.map(mapPatientTopic),
       recentSessions: sessionRows.rows.map(mapSessionSummary),
       pendingRecommendations: recRows.rows.map(mapRecommendation),
     };
+  }
+}
+
+// ---------- Session creator ----------
+//
+// Inserts a fresh interaction_sessions row when the handler encounters a
+// sessionId that doesn't exist (first turn of a new session). All fields not
+// passed in here are picked up from the schema defaults (status='in_progress',
+// turn_count=0, fsm_state='CREATED', etc.). The ON CONFLICT (id) DO NOTHING
+// clause makes this idempotent if two concurrent first turns race.
+
+export interface SessionCreator {
+  create(params: SessionCreateParams): Promise<void>;
+}
+
+export interface SessionCreateParams {
+  sessionId: string;
+  patientId: string; // internal patients.id UUID
+  userId: string; // internal users.id UUID
+  sessionType: SessionType;
+  language: SupportedLanguage;
+}
+
+export class PgSessionCreator implements SessionCreator {
+  constructor(private client: PgClient) {}
+
+  async create(params: SessionCreateParams): Promise<void> {
+    await this.client.query(
+      `INSERT INTO interaction_sessions (id, patient_id, user_id, session_type, language)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (id) DO NOTHING`,
+      [params.sessionId, params.patientId, params.userId, params.sessionType, params.language],
+    );
   }
 }
 

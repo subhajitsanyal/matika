@@ -73,6 +73,10 @@ export interface Recommendation {
 
 export interface PatientContext {
   patient: PatientProfile;
+  // Internal users.id resolved from the cognito sub. Used by the handler when
+  // INSERTing a fresh interaction_sessions row (which has user_id NOT NULL).
+  // Not rendered into the prompt.
+  userId: string;
   protocol: ParameterConfig[]; // active configs only
   topics: PatientTopic[];
   recentSessions: SessionSummary[]; // most recent first; up to 3 entries

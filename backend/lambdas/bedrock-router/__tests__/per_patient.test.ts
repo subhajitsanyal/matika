@@ -36,6 +36,7 @@ function activeBp(): ParameterConfig {
 function fullContext(overrides: Partial<PatientContext> = {}): PatientContext {
   return {
     patient: basePatient(),
+    userId: 'user-1',
     protocol: [activeBp()],
     topics: [
       { topicName: 'medications', status: 'complete', lastUpdated: new Date('2026-04-30'), summary: 'Metformin 500mg BD; Amlodipine 5mg OD' },

@@ -108,6 +108,18 @@ variable "bedrock_sonnet_model_arn" {
   default     = ""
 }
 
+variable "bedrock_haiku_foundation_model_arn" {
+  description = "Wildcard-region foundation-model ARN underlying the Haiku 4.5 inference profile (required alongside the inference-profile ARN in IAM)"
+  type        = string
+  default     = ""
+}
+
+variable "bedrock_sonnet_foundation_model_arn" {
+  description = "Wildcard-region foundation-model ARN underlying the Sonnet 4.6 inference profile"
+  type        = string
+  default     = ""
+}
+
 variable "bedrock_guardrail_arn" {
   description = "ARN of the Matika Bedrock Guardrail"
   type        = string

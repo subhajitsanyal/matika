@@ -192,10 +192,23 @@ export function parseInvokeOutput(
     throw new Error(`Bedrock response was not valid JSON: ${(e as Error).message}`);
   }
 
-  const responseText = parsed.content.map((c) => c.text).join('');
-  const cacheCreation = parsed.usage.cache_creation_input_tokens ?? 0;
-  const cacheRead = parsed.usage.cache_read_input_tokens ?? 0;
-  const totalInput = parsed.usage.input_tokens + cacheCreation + cacheRead;
+  // Bedrock occasionally returns responses without a `usage` block —
+  // guardrail-intervened responses, certain error payloads, and (observed
+  // 2026-05-02) responses routed through global inference profiles in some
+  // configurations. Default missing fields to 0 rather than crashing on the
+  // common path; log the raw shape once so we can investigate offline.
+  const responseText = (parsed.content ?? []).map((c) => c.text).join('');
+  if (!parsed.usage) {
+    console.warn('Bedrock response missing usage block', {
+      stop_reason: parsed.stop_reason,
+      content_blocks: parsed.content?.length ?? 0,
+      keys: Object.keys(parsed),
+    });
+  }
+  const usage = parsed.usage ?? { input_tokens: 0, output_tokens: 0 };
+  const cacheCreation = usage.cache_creation_input_tokens ?? 0;
+  const cacheRead = usage.cache_read_input_tokens ?? 0;
+  const totalInput = (usage.input_tokens ?? 0) + cacheCreation + cacheRead;
 
   // Guardrail-intervention indicator: stop_reason of 'guardrail_intervened'
   // (Bedrock convention) plus presence of guardrail trace metadata. We only
@@ -213,7 +226,7 @@ export function parseInvokeOutput(
     responseText,
     inputTokens: totalInput,
     cachedInputTokens: cacheRead,
-    outputTokens: parsed.usage.output_tokens,
+    outputTokens: usage.output_tokens ?? 0,
     guardrailBlocked,
     inferenceRegion,
     rawStopReason: parsed.stop_reason,

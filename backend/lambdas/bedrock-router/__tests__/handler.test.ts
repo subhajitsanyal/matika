@@ -15,8 +15,10 @@ import type {
   TurnContextLoader,
   PatientContext,
   TurnContext,
+  SessionType,
+  SupportedLanguage,
 } from '../src/context/types';
-import type { SessionPersister, ModelCallRecorder, SessionUpdate } from '../src/db';
+import type { SessionPersister, ModelCallRecorder, SessionUpdate, SessionCreateParams } from '../src/db';
 import type { ModelCallRecord } from '../src/telemetry';
 
 const SYSTEM_PROMPT_PATH = resolve(__dirname, '..', 'prompts', 'system_v2.md');
@@ -35,6 +37,7 @@ function basePatientCtx(): PatientContext {
       conditions: ['hypertension'],
       medicalHistorySummary: null,
     },
+    userId: 'user-1',
     protocol: [
       {
         parameterName: 'blood_pressure_systolic',
@@ -124,6 +127,7 @@ interface CapturedCalls {
   invokeCalls: InvokeInput[];
   patientLoadCalls: string[];
   turnLoadCalls: Array<{ sessionId: string; transcript: string }>;
+  sessionCreates: SessionCreateParams[];
   persisterUpdates: Array<{ sessionId: string; patch: SessionUpdate }>;
   modelCallRecords: ModelCallRecord[];
   alertsEnqueued: EmergencyAlertMessage[];
@@ -145,6 +149,7 @@ function makeDeps(opts: {
     invokeCalls: [],
     patientLoadCalls: [],
     turnLoadCalls: [],
+    sessionCreates: [],
     persisterUpdates: [],
     modelCallRecords: [],
     alertsEnqueued: [],
@@ -186,6 +191,17 @@ function makeDeps(opts: {
       calls.persisterUpdates.push({ sessionId, patch });
     },
   };
+  const sessionCreator = {
+    async create(params: {
+      sessionId: string;
+      patientId: string;
+      userId: string;
+      sessionType: SessionType;
+      language: SupportedLanguage;
+    }) {
+      calls.sessionCreates.push(params);
+    },
+  };
   const modelCallRecorder: ModelCallRecorder = {
     async record(record) {
       calls.modelCallRecords.push(record);
@@ -217,6 +233,7 @@ function makeDeps(opts: {
       bedrock,
       patientLoader,
       turnLoader,
+      sessionCreator,
       sessionPersister,
       modelCallRecorder,
       alertEnqueuer,
@@ -524,6 +541,7 @@ describe('handleTurn — parser retry on parse failure', () => {
       invokeCalls: [],
       patientLoadCalls: [],
       turnLoadCalls: [],
+      sessionCreates: [],
       persisterUpdates: [],
       modelCallRecords: [],
       alertsEnqueued: [],
@@ -553,6 +571,7 @@ describe('handleTurn — parser retry on parse failure', () => {
           return baseTurnCtx();
         },
       },
+      sessionCreator: { async create(params) { calls.sessionCreates.push(params); } },
       sessionPersister: { async update(sessionId, patch) { calls.persisterUpdates.push({ sessionId, patch }); } },
       modelCallRecorder: { async record(record) { calls.modelCallRecords.push(record); } },
       config: {

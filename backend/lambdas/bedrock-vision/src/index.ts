@@ -36,7 +36,8 @@ function buildDeps(): VisionHandlerDeps {
       guardrailVersion: process.env.BEDROCK_GUARDRAIL_VERSION,
       inferenceRegion,
       maxTokens: parseInt(process.env.BEDROCK_MAX_TOKENS ?? '512', 10),
-      promptPath: resolvePath(__dirname, '..', 'prompts', 'extract_value.md'),
+      // src/index.ts → dist/src/index.js; prompts/ at deploy root → ../..
+      promptPath: resolvePath(__dirname, '..', '..', 'prompts', 'extract_value.md'),
       haikuConfidenceThreshold: parseFloat(
         process.env.HAIKU_CONFIDENCE_THRESHOLD ?? '0.80',
       ),

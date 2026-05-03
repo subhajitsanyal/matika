@@ -15,6 +15,7 @@ import { AwsBedrockInvoker } from './bedrock_client';
 import {
   PgPatientContextLoader,
   PgTurnContextLoader,
+  PgSessionCreator,
   PgSessionPersister,
   PgModelCallRecorder,
 } from './db';
@@ -54,12 +55,18 @@ function buildDeps(): HandlerDeps {
     ? new SqsAlertEnqueuer(new SQSClient({ region: awsRegion }), alertQueueUrl)
     : undefined;
 
+  // Lambda zip layout: prompts/ + escalation_subprompts/ live at the deploy
+  // root (/var/task/), while compiled handler code lives at
+  // /var/task/dist/src/index.js. Two `..` segments take us from src/ → dist/
+  // → deploy root.
+  const LAMBDA_ROOT = resolvePath(__dirname, '..', '..');
+
   const haikuModelId = requiredEnv('BEDROCK_HAIKU_MODEL_ID');
   const summarizer = new HaikuSummarizer(
     bedrock,
     haikuModelId,
     inferenceRegion,
-    resolvePath(__dirname, '..', 'prompts', 'summarize.md'),
+    resolvePath(LAMBDA_ROOT, 'prompts', 'summarize.md'),
   );
 
   const softLimit = parseInt(process.env.SOFT_RATE_LIMIT_PER_PATIENT ?? '100', 10);
@@ -70,6 +77,7 @@ function buildDeps(): HandlerDeps {
     bedrock,
     patientLoader: new PgPatientContextLoader(pool),
     turnLoader: new PgTurnContextLoader(pool),
+    sessionCreator: new PgSessionCreator(pool),
     sessionPersister: new PgSessionPersister(pool),
     modelCallRecorder: new PgModelCallRecorder(pool),
     alertEnqueuer,
@@ -82,14 +90,13 @@ function buildDeps(): HandlerDeps {
       guardrailVersion: process.env.BEDROCK_GUARDRAIL_VERSION,
       inferenceRegion,
       maxTokens: parseInt(process.env.BEDROCK_MAX_TOKENS ?? '1024', 10),
-      systemPromptPath: resolvePath(__dirname, '..', 'prompts', 'system_v2.md'),
+      systemPromptPath: resolvePath(LAMBDA_ROOT, 'prompts', 'system_v2.md'),
       caregiverOnboardingPromptPath: resolvePath(
-        __dirname,
-        '..',
+        LAMBDA_ROOT,
         'prompts',
         'system_v2_caregiver_onboarding.md',
       ),
-      escalationSubpromptDir: resolvePath(__dirname, '..', 'escalation_subprompts'),
+      escalationSubpromptDir: resolvePath(LAMBDA_ROOT, 'escalation_subprompts'),
       hardRateLimitPerPatient: hardLimit,
     },
   };
@@ -161,6 +168,11 @@ async function handleProxyInvocation(
     const isClientError = /required|invalid|forbidden|not.allowed|rate.limit|exceeded/i.test(
       message,
     );
+    // Log the full error with stack so CloudWatch surfaces it; the response
+    // body only carries the message string.
+    if (!isClientError) {
+      console.error('handleTurn failed', err);
+    }
     return jsonResponse(isClientError ? 400 : 500, {
       error: isClientError ? 'invalid_request' : 'internal_error',
       message,

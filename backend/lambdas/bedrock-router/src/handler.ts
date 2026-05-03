@@ -23,12 +23,13 @@ import type {
 } from './bedrock_client';
 import type { AlertEnqueuer, AlertTrigger } from './alert_queue';
 import { buildEmergencyAlert, buildRateLimitAlert } from './alert_queue';
-import type { ModelCallRecorder, SessionPersister } from './db';
+import type { ModelCallRecorder, SessionCreator, SessionPersister } from './db';
 import type { Summarizer } from './summarizer';
 import type { RateLimiter } from './rate_limiter';
 import type {
   PatientContextLoader,
   TurnContextLoader,
+  TurnContext,
   PatientContext,
   SessionState,
   SessionType,
@@ -109,6 +110,7 @@ export interface HandlerDeps {
   bedrock: BedrockInvoker;
   patientLoader: PatientContextLoader;
   turnLoader: TurnContextLoader;
+  sessionCreator: SessionCreator; // INSERTs an interaction_sessions row on first turn
   sessionPersister: SessionPersister;
   modelCallRecorder: ModelCallRecorder;
   alertEnqueuer?: AlertEnqueuer; // optional — handler still works without SQS
@@ -130,11 +132,13 @@ export async function handleTurn(event: TurnRequest, deps: HandlerDeps): Promise
   // 0.5. Rate limit check (spec §11.6) — fail fast before any expensive work.
   const softCapReached = await checkRateLimit(event.patientId, deps, now);
 
-  // 1. Load contexts in parallel.
-  const [patientCtx, turnCtx] = await Promise.all([
-    deps.patientLoader.load(event.patientId),
-    deps.turnLoader.load(event.sessionId, event.transcript),
-  ]);
+  // 1. Load patient context, then try to load turn context. If the session
+  //    doesn't exist yet (first turn), INSERT a fresh interaction_sessions
+  //    row and use empty defaults. Sequential rather than parallel so a
+  //    rejecting turn-load promise can't escape unhandled while we await
+  //    the patient load (Node treats those as fatal exits).
+  const patientCtx = await deps.patientLoader.load(event.patientId);
+  const turnCtx = await loadOrCreateTurnContext(event, patientCtx, deps);
 
   // 2. Pre-model regex pass for plausibility short-circuiting.
   const preModelHints = extractPreModelHints(event.transcript);
@@ -238,7 +242,7 @@ export async function handleTurn(event: TurnRequest, deps: HandlerDeps): Promise
     deps.modelCallRecorder.record(
       buildModelCallRecord({
         sessionId: event.sessionId,
-        patientId: event.patientId,
+        patientId: patientCtx.patient.id, // internal patients.id UUID (FK target)
         tier,
         model: modelId,
         streamed: false,
@@ -310,6 +314,48 @@ export async function handleTurn(event: TurnRequest, deps: HandlerDeps): Promise
 }
 
 // ---------- Helpers ----------
+
+// Loads the TurnContext for this session. If the session row doesn't exist
+// yet (= first turn of a fresh session), INSERTs a fresh interaction_sessions
+// row and returns a default empty TurnContext. Other errors propagate.
+async function loadOrCreateTurnContext(
+  event: TurnRequest,
+  patientCtx: PatientContext,
+  deps: HandlerDeps,
+): Promise<TurnContext> {
+  try {
+    return await deps.turnLoader.load(event.sessionId, event.transcript);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (!/No interaction_sessions row/.test(message)) throw err;
+
+    // First turn — create the session row using the resolved internal IDs.
+    // Default sessionType is 'patient_logging' for direct /conversation/turn
+    // calls; caregiver sessions are created via a different upstream path.
+    const sessionType: SessionType = 'patient_logging';
+    await deps.sessionCreator.create({
+      sessionId: event.sessionId,
+      patientId: patientCtx.patient.id,
+      userId: patientCtx.userId,
+      sessionType,
+      language: event.language,
+    });
+    return {
+      sessionState: {
+        sessionId: event.sessionId,
+        sessionType,
+        language: event.language,
+        fsmState: 'CREATED',
+        capturedThisSession: [],
+        pendingConfirmation: [],
+        stillNeeded: [],
+      },
+      recentTurns: [],
+      conversationSummary: null,
+      currentTranscript: event.transcript,
+    };
+  }
+}
 
 export class HandlerError extends Error {
   public readonly code: string;
@@ -643,10 +689,9 @@ export async function handleTurnStream(
     // Rate limit check before context load — same as handleTurn.
     const softCapReached = await checkRateLimit(event.patientId, deps, now);
 
-    const [patientCtx, turnCtx] = await Promise.all([
-      deps.patientLoader.load(event.patientId),
-      deps.turnLoader.load(event.sessionId, event.transcript),
-    ]);
+    // Same sequential get-or-create flow as handleTurn.
+    const patientCtx = await deps.patientLoader.load(event.patientId);
+    const turnCtx = await loadOrCreateTurnContext(event, patientCtx, deps);
 
     const preModelHints = extractPreModelHints(event.transcript);
     const routing = detectEscalation({
@@ -775,7 +820,7 @@ export async function handleTurnStream(
       deps.modelCallRecorder.record(
         buildModelCallRecord({
           sessionId: event.sessionId,
-          patientId: event.patientId,
+          patientId: patientCtx.patient.id, // internal patients.id UUID (FK target)
           tier,
           model: modelId,
           streamed: true,
@@ -790,7 +835,7 @@ export async function handleTurnStream(
         ? deps.modelCallRecorder.record(
             buildModelCallRecord({
               sessionId: event.sessionId,
-              patientId: event.patientId,
+              patientId: patientCtx.patient.id, // internal UUID
               tier: 'T2',
               model: deps.config.haikuModelId,
               streamed: false,
