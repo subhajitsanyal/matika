@@ -398,12 +398,20 @@ async function invokeWithRetry<R>(
     if (!(e instanceof StructuredOutputParseError) || !RETRIABLE_PARSE_FAILURES.has(e.kind)) {
       throw e;
     }
+    console.warn('parse_failed_first_attempt', {
+      kind: e.kind,
+      rawSnippet: first.text.slice(0, 800),
+    });
     const stricterBody = appendStrictnessReminder(body);
     const retry = await invoke(stricterBody);
     try {
       return { parsed: parseStructuredOutput(retry.text), meta: retry.meta };
     } catch (e2) {
       const kind = e2 instanceof StructuredOutputParseError ? e2.kind : 'unknown';
+      console.warn('parse_failed_after_retry', {
+        kind,
+        rawSnippet: retry.text.slice(0, 800),
+      });
       throw new HandlerError(
         503,
         `parse_failed_after_retry_${kind}`,

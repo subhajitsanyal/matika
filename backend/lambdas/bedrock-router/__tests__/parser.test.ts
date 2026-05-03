@@ -118,4 +118,63 @@ describe('parseStructuredOutput', () => {
       expect((e as StructuredOutputParseError).kind).toBe('schema_validation');
     }
   });
+
+  it('parses a confirmation turn that re-emits values with status=confirmed', () => {
+    const block = `<output>
+{
+  "responseText": "Wonderful, I have recorded your blood pressure. How is your sugar today?",
+  "ttsHints": { "language": "en-IN", "spellOutNumbers": false },
+  "extractedValues": [
+    { "parameter": "blood_pressure_systolic", "value": 130, "unit": "mmHg", "loincCode": "8480-6", "status": "confirmed", "confidence": 0.95 },
+    { "parameter": "blood_pressure_diastolic", "value": 85, "unit": "mmHg", "loincCode": "8462-4", "status": "confirmed", "confidence": 0.95 }
+  ],
+  "actions": [],
+  "stateTransition": "PENDING_CONFIRMATION -> EXTRACTING",
+  "escalationReason": null
+}
+</output>`;
+    const result = parseStructuredOutput(block);
+    expect(result.extractedValues.every((v) => v.status === 'confirmed')).toBe(true);
+    expect(result.stateTransition).toBe('PENDING_CONFIRMATION -> EXTRACTING');
+  });
+
+  it('parses a correction turn with mixed rejected + pending_confirmation values', () => {
+    const block = `<output>
+{
+  "responseText": "I heard one thirty two over eighty five. Is that correct?",
+  "ttsHints": { "language": "en-IN", "spellOutNumbers": false },
+  "extractedValues": [
+    { "parameter": "blood_pressure_systolic", "value": 130, "unit": "mmHg", "loincCode": "8480-6", "status": "rejected", "confidence": 0.95 },
+    { "parameter": "blood_pressure_systolic", "value": 132, "unit": "mmHg", "loincCode": "8480-6", "status": "pending_confirmation", "confidence": 0.92 },
+    { "parameter": "blood_pressure_diastolic", "value": 85, "unit": "mmHg", "loincCode": "8462-4", "status": "pending_confirmation", "confidence": 0.92 }
+  ],
+  "actions": [],
+  "stateTransition": "PENDING_CONFIRMATION -> PENDING_CONFIRMATION",
+  "escalationReason": null
+}
+</output>`;
+    const result = parseStructuredOutput(block);
+    expect(result.extractedValues).toHaveLength(3);
+    expect(result.extractedValues[0].status).toBe('rejected');
+    expect(result.extractedValues[1].status).toBe('pending_confirmation');
+    expect(result.stateTransition).toBe('PENDING_CONFIRMATION -> PENDING_CONFIRMATION');
+  });
+
+  it('parses a session-completion turn with complete_session action', () => {
+    const block = `<output>
+{
+  "responseText": "Thank you, that is everything for today.",
+  "ttsHints": { "language": "en-IN", "spellOutNumbers": false },
+  "extractedValues": [
+    { "parameter": "blood_pressure_systolic", "value": 130, "unit": "mmHg", "loincCode": "8480-6", "status": "confirmed", "confidence": 0.95 }
+  ],
+  "actions": [{ "type": "complete_session", "reason": "all_required_parameters_captured" }],
+  "stateTransition": "PENDING_CONFIRMATION -> COMPLETE",
+  "escalationReason": null
+}
+</output>`;
+    const result = parseStructuredOutput(block);
+    expect(result.actions[0].type).toBe('complete_session');
+    expect(result.stateTransition).toBe('PENDING_CONFIRMATION -> COMPLETE');
+  });
 });
