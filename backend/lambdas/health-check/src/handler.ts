@@ -9,6 +9,7 @@
 
 import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
 import { S3Client, ListObjectsV2Command } from '@aws-sdk/client-s3';
+import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { Pool } from 'pg';
 
 export interface HealthCheckResponse {
@@ -45,16 +46,36 @@ const inferenceRegion = process.env.INFERENCE_PROFILE_REGION ?? 'ap-south-1';
 const haikuModelId = process.env.BEDROCK_HAIKU_MODEL_ID;
 const rawInteractionsBucket = process.env.RAW_INTERACTIONS_BUCKET;
 
+const awsRegion = process.env.AWS_REGION ?? 'ap-south-1';
 const bedrockClient = new BedrockRuntimeClient({ region: inferenceRegion });
-const s3Client = new S3Client({ region: process.env.AWS_REGION ?? 'ap-south-1' });
+const s3Client = new S3Client({ region: awsRegion });
+const secretsClient = new SecretsManagerClient({ region: awsRegion });
 
-// Pool stays warm across invocations. RDS forces SSL (rds.force_ssl=1)
-// — we accept the AWS-issued cert without verify-full as in bedrock-router.
-const pool = new Pool({
-  max: 1,
-  ssl: { rejectUnauthorized: false },
-  connectionTimeoutMillis: RDS_TIMEOUT_MS,
-});
+// Pool is built lazily on first RDS probe so DB credentials can be fetched
+// from Secrets Manager at runtime instead of sitting in Lambda env vars
+// (see bedrock-router/src/db_secret.ts for the rationale). The fetch +
+// pool init happens once per cold start.
+let _pool: Pool | null = null;
+
+async function getPool(): Promise<Pool> {
+  if (_pool) return _pool;
+  const secretArn = process.env.DB_SECRET_ARN;
+  if (!secretArn) throw new Error('DB_SECRET_ARN environment variable not set');
+  const response = await secretsClient.send(new GetSecretValueCommand({ SecretId: secretArn }));
+  if (!response.SecretString) throw new Error(`Secret ${secretArn} has empty SecretString`);
+  const creds = JSON.parse(response.SecretString);
+  _pool = new Pool({
+    host: creds.host,
+    port: typeof creds.port === 'string' ? parseInt(creds.port, 10) : creds.port,
+    user: creds.username,
+    password: creds.password,
+    database: creds.dbname,
+    max: 1,
+    ssl: { rejectUnauthorized: false },
+    connectionTimeoutMillis: RDS_TIMEOUT_MS,
+  });
+  return _pool;
+}
 
 async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
@@ -70,6 +91,7 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): P
 
 async function probeRds(): Promise<{ status: ProbeStatus; error?: string }> {
   try {
+    const pool = await withTimeout(getPool(), RDS_TIMEOUT_MS, 'rds-secret-fetch');
     await withTimeout(pool.query('SELECT 1'), RDS_TIMEOUT_MS, 'rds');
     return { status: 'up' };
   } catch (e) {

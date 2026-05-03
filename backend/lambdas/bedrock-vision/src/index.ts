@@ -2,28 +2,25 @@
 
 import { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
 import { S3Client } from '@aws-sdk/client-s3';
-import { Pool } from 'pg';
 import { resolve as resolvePath } from 'node:path';
 
 import { handlePhotoExtract, PhotoExtractRequest, PhotoExtractResponse, VisionHandlerDeps } from './handler';
 import { AwsBedrockVisionInvoker } from './bedrock_client';
 import { S3PhotoLoader } from './s3_loader';
 import { PgVisionModelCallRecorder } from './telemetry';
+import { getPgPool } from './db_secret';
 
 let _deps: VisionHandlerDeps | null = null;
 
-function buildDeps(): VisionHandlerDeps {
+async function buildDeps(): Promise<VisionHandlerDeps> {
   if (_deps) return _deps;
 
   const inferenceRegion = process.env.INFERENCE_PROFILE_REGION ?? 'ap-southeast-1';
   const bedrockClient = new BedrockRuntimeClient({ region: inferenceRegion });
   const s3Client = new S3Client({ region: process.env.AWS_REGION ?? 'ap-south-1' });
-  const pool = new Pool({
-    connectionString: process.env.DATABASE_URL, // undefined → falls back to PG* env vars
-    max: 1,
-    // See bedrock-router/src/index.ts — RDS rds.force_ssl on PG15.
-    ssl: { rejectUnauthorized: false },
-  });
+  // Pg credentials fetched at cold-start from Secrets Manager — see
+  // db_secret.ts.
+  const pool = await getPgPool();
 
   _deps = {
     bedrock: new AwsBedrockVisionInvoker(bedrockClient),
@@ -114,7 +111,7 @@ async function handleProxyInvocation(
 export async function handler(
   event: PhotoExtractRequest | ApiGatewayProxyEvent,
 ): Promise<PhotoExtractResponse | ApiGatewayProxyResponse> {
-  const deps = buildDeps();
+  const deps = await buildDeps();
   if (isProxyEvent(event)) {
     return handleProxyInvocation(event, deps);
   }

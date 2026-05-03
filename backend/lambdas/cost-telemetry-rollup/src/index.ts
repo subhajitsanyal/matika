@@ -1,21 +1,15 @@
 // Lambda entry point. Constructs pg pool + reader/writer on cold start;
 // reuses across warm invocations. Triggered by EventBridge daily.
 
-import { Pool } from 'pg';
-
 import { handleRollup, RollupEvent, RollupResult, HandlerDeps } from './handler';
 import { PgRollupReader, PgRollupWriter } from './db';
+import { getPgPool } from './db_secret';
 
 let _deps: HandlerDeps | null = null;
 
-function buildDeps(): HandlerDeps {
+async function buildDeps(): Promise<HandlerDeps> {
   if (_deps) return _deps;
-
-  const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    max: 1,
-  });
-
+  const pool = await getPgPool();
   _deps = {
     reader: new PgRollupReader(pool),
     writer: new PgRollupWriter(pool),
@@ -27,7 +21,7 @@ function buildDeps(): HandlerDeps {
 // optional `rollupDate` accepted via a manual invoke for backfill.
 export async function handler(event: unknown): Promise<RollupResult> {
   const rollupEvent: RollupEvent = isRollupEvent(event) ? event : {};
-  return handleRollup(rollupEvent, buildDeps());
+  return handleRollup(rollupEvent, await buildDeps());
 }
 
 function isRollupEvent(input: unknown): input is RollupEvent {

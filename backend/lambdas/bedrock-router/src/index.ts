@@ -7,7 +7,6 @@
 
 import { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
 import { SQSClient } from '@aws-sdk/client-sqs';
-import { Pool } from 'pg';
 import { resolve as resolvePath } from 'node:path';
 
 import { handleTurn, TurnRequest, TurnResponse, HandlerDeps } from './handler';
@@ -22,11 +21,12 @@ import {
 import { SqsAlertEnqueuer } from './alert_queue';
 import { HaikuSummarizer } from './summarizer';
 import { PgRateLimiter } from './rate_limiter';
+import { getPgPool } from './db_secret';
 
 // Cold-start: build deps once, reuse across warm invocations.
 let _deps: HandlerDeps | null = null;
 
-function buildDeps(): HandlerDeps {
+async function buildDeps(): Promise<HandlerDeps> {
   if (_deps !== null) return _deps;
 
   const inferenceRegion = process.env.INFERENCE_PROFILE_REGION ?? 'ap-southeast-1';
@@ -35,17 +35,10 @@ function buildDeps(): HandlerDeps {
   const bedrockClient = new BedrockRuntimeClient({ region: inferenceRegion });
   const bedrock = new AwsBedrockInvoker(bedrockClient);
 
-  // Pg connection — credentials sourced from Secrets Manager via env at
-  // deploy time. The actual env-var → connection-string plumbing is owned
-  // by devops in `infrastructure/terraform/modules/lambda` (T-V2-023).
-  const pool = new Pool({
-    connectionString: process.env.DATABASE_URL, // undefined → falls back to PG* env vars
-    max: 1, // Lambdas should keep a small pool — increment 5 will tune.
-    // RDS PostgreSQL 15 enforces SSL on incoming connections (rds.force_ssl).
-    // We accept the AWS-issued cert without validation in v2.0; bundling the
-    // AWS RDS CA bundle for verify-full is a follow-up (T-V2-046).
-    ssl: { rejectUnauthorized: false },
-  });
+  // Pg credentials are fetched at runtime from Secrets Manager (see
+  // db_secret.ts). The Lambda's env var DB_SECRET_ARN points at the secret;
+  // no PG password ever sits in the function's environment configuration.
+  const pool = await getPgPool();
 
   // Alert queue — optional. Only wired when MATIKA_ALERT_QUEUE_URL is set.
   // Without it, emergency triggers are detected but not enqueued (telemetry
@@ -183,7 +176,7 @@ async function handleProxyInvocation(
 export async function handler(
   event: TurnRequest | ApiGatewayProxyEvent,
 ): Promise<TurnResponse | ApiGatewayProxyResponse> {
-  const deps = buildDeps();
+  const deps = await buildDeps();
   if (isProxyEvent(event)) {
     return handleProxyInvocation(event, deps);
   }
