@@ -6,14 +6,17 @@
 terraform {
   required_version = ">= 1.5.0"
 
-  # Backend configuration for dev
-  # backend "s3" {
-  #   bucket         = "carelog-terraform-state"
-  #   key            = "dev/terraform.tfstate"
-  #   region         = "ap-south-1"
-  #   encrypt        = true
-  #   dynamodb_table = "carelog-terraform-locks"
-  # }
+  # Remote state backend. The bucket and lock table are bootstrapped by
+  # `infrastructure/terraform/bootstrap/` (run once per AWS account before
+  # touching any environment). Versioning is on, so a corrupted state
+  # object can always be rolled back via `aws s3api list-object-versions`.
+  backend "s3" {
+    bucket         = "carelog-terraform-state"
+    key            = "dev/terraform.tfstate"
+    region         = "ap-south-1"
+    encrypt        = true
+    dynamodb_table = "carelog-terraform-locks"
+  }
 }
 
 module "carelog" {
