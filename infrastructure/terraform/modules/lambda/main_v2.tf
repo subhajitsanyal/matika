@@ -142,7 +142,8 @@ resource "aws_iam_role_policy" "bedrock_router_inline" {
   })
 }
 
-# Role: bedrock-vision — invokes Haiku for photo OCR, reads photo from raw bucket
+# Role: bedrock-vision — invokes Haiku (T2) and Sonnet (T3 escalation) for
+# photo OCR, reads photo from raw bucket
 resource "aws_iam_role" "lambda_bedrock_vision" {
   name               = "${local.v2_function_prefix}-bedrock-vision-role"
   assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
@@ -161,12 +162,16 @@ resource "aws_iam_role_policy" "bedrock_vision_inline" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid    = "InvokeHaikuVision"
+        # Vision T2 default; T3 (Sonnet) is the escalation target when
+        # Haiku's confidence is below the configured threshold.
+        Sid    = "InvokeVisionModels"
         Effect = "Allow"
         Action = ["bedrock:InvokeModel"]
         Resource = [
           var.bedrock_haiku_model_arn,
           var.bedrock_haiku_foundation_model_arn,
+          var.bedrock_sonnet_model_arn,
+          var.bedrock_sonnet_foundation_model_arn,
         ]
       },
       {

@@ -8,6 +8,7 @@ import { handlePhotoExtract, PhotoExtractRequest, PhotoExtractResponse, VisionHa
 import { AwsBedrockVisionInvoker } from './bedrock_client';
 import { S3PhotoLoader } from './s3_loader';
 import { PgVisionModelCallRecorder } from './telemetry';
+import { PgPatientResolver } from './patient_resolver';
 import { getPgPool } from './db_secret';
 
 let _deps: VisionHandlerDeps | null = null;
@@ -26,6 +27,7 @@ async function buildDeps(): Promise<VisionHandlerDeps> {
     bedrock: new AwsBedrockVisionInvoker(bedrockClient),
     photoLoader: new S3PhotoLoader(s3Client, requiredEnv('RAW_INTERACTIONS_BUCKET')),
     modelCallRecorder: new PgVisionModelCallRecorder(pool),
+    patientResolver: new PgPatientResolver(pool),
     config: {
       haikuModelId: requiredEnv('BEDROCK_HAIKU_MODEL_ID'),
       sonnetModelId: requiredEnv('BEDROCK_SONNET_MODEL_ID'),

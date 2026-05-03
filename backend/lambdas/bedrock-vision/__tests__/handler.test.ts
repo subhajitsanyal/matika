@@ -9,6 +9,7 @@ import {
 import type { BedrockVisionInvoker, VisionInvokeInput, VisionInvokeResult } from '../src/bedrock_client';
 import type { PhotoLoader } from '../src/s3_loader';
 import type { VisionModelCallRecord, VisionModelCallRecorder } from '../src/telemetry';
+import type { PatientResolver } from '../src/patient_resolver';
 
 const PROMPT_PATH = resolve(__dirname, '..', 'prompts', 'extract_value.md');
 
@@ -28,6 +29,7 @@ interface CapturedCalls {
   photoLoadCalls: string[];
   invokeCalls: VisionInvokeInput[];
   modelCallRecords: VisionModelCallRecord[];
+  resolveCalls: string[];
 }
 
 function makeDeps(opts: {
@@ -36,7 +38,7 @@ function makeDeps(opts: {
   photoLoadError?: Error;
   haikuConfidenceThreshold?: number;
 } = {}): { deps: VisionHandlerDeps; calls: CapturedCalls } {
-  const calls: CapturedCalls = { photoLoadCalls: [], invokeCalls: [], modelCallRecords: [] };
+  const calls: CapturedCalls = { photoLoadCalls: [], invokeCalls: [], modelCallRecords: [], resolveCalls: [] };
   let invokeIdx = 0;
   const bedrock: BedrockVisionInvoker = {
     async invoke(input) {
@@ -59,6 +61,12 @@ function makeDeps(opts: {
       calls.modelCallRecords.push(record);
     },
   };
+  const patientResolver: PatientResolver = {
+    async resolveInternalId(cognitoSub) {
+      calls.resolveCalls.push(cognitoSub);
+      return `internal-${cognitoSub}`;
+    },
+  };
 
   let counter = 1_000_000;
   const now = () => (counter += 100);
@@ -68,6 +76,7 @@ function makeDeps(opts: {
       bedrock,
       photoLoader,
       modelCallRecorder,
+      patientResolver,
       config: {
         haikuModelId: 'apac.anthropic.claude-haiku-4-5-v1:0',
         sonnetModelId: 'apac.anthropic.claude-sonnet-4-x-v1:0',
@@ -127,6 +136,16 @@ describe('handlePhotoExtract — Haiku confident (no escalation)', () => {
     expect(calls.photoLoadCalls).toEqual([
       'interactions/p1/2026/05/02/s1/photos/uuid.jpg',
     ]);
+  });
+
+  it('resolves cognito sub to internal patients.id and records that as model_call.patient_id', async () => {
+    // Regression guard: bedrock-vision used to write event.patientId (the
+    // cognito sub) directly to model_call.patient_id, which violates the
+    // FK to patients.id. The patientResolver step is what fixes this.
+    const { deps, calls } = makeDeps();
+    await handlePhotoExtract(baseRequest, deps);
+    expect(calls.resolveCalls).toEqual(['patient-1']);
+    expect(calls.modelCallRecords[0].patientId).toBe('internal-patient-1');
   });
 
   it('passes the image bytes and media type to Bedrock', async () => {

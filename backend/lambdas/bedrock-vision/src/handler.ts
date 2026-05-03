@@ -19,6 +19,7 @@ import { resolve as resolvePath } from 'node:path';
 
 import type { BedrockVisionInvoker } from './bedrock_client';
 import type { PhotoLoader } from './s3_loader';
+import type { PatientResolver } from './patient_resolver';
 import { parseVisionOutput, VisionExtraction, VisionParseError } from './parser';
 import {
   VisionModelCallRecorder,
@@ -78,6 +79,7 @@ export interface VisionHandlerDeps {
   bedrock: BedrockVisionInvoker;
   photoLoader: PhotoLoader;
   modelCallRecorder: VisionModelCallRecorder;
+  patientResolver: PatientResolver;
   config: VisionHandlerConfig;
   now?: () => number;
 }
@@ -127,6 +129,11 @@ export async function handlePhotoExtract(
     );
   }
 
+  // Resolve cognito sub → internal patients.id once. The model_call FK
+  // references patients.id, not the Cognito sub passed in via the API.
+  // Same pattern as bedrock-router/src/handler.ts (PgPatientContextLoader).
+  const internalPatientId = await deps.patientResolver.resolveInternalId(event.patientId);
+
   // Load photo bytes from S3.
   const { bytes, mediaType } = await deps.photoLoader.load(event.photoS3Key);
 
@@ -169,7 +176,7 @@ export async function handlePhotoExtract(
   await deps.modelCallRecorder.record(
     buildVisionModelCallRecord({
       sessionId: event.sessionId,
-      patientId: event.patientId,
+      patientId: internalPatientId,
       tier: 'T2_VISION',
       model: deps.config.haikuModelId,
       guardrailBlocked: haikuResult.guardrailBlocked,
@@ -250,7 +257,7 @@ export async function handlePhotoExtract(
   await deps.modelCallRecorder.record(
     buildVisionModelCallRecord({
       sessionId: event.sessionId,
-      patientId: event.patientId,
+      patientId: internalPatientId,
       tier: 'T3_VISION',
       model: deps.config.sonnetModelId,
       guardrailBlocked: sonnetResult.guardrailBlocked,
