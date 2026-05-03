@@ -49,6 +49,7 @@ import { SseEmitter, emitParsedOutput } from './sse_events';
 import type { ProtocolExtractor } from './protocol_extractor';
 import { ProtocolExtractionError } from './protocol_extractor';
 import type { ProtocolPersister } from './protocol_persister';
+import type { UserResolver } from './user_resolver';
 
 // ---------- Public types ----------
 
@@ -64,6 +65,13 @@ export interface TurnRequest {
   // been updated to the v2 caregiver flow continue to work.
   // Ignored on subsequent turns: a session's type is fixed at creation.
   sessionType?: SessionType;
+  // Cognito sub of the user actually making the call. For patient_logging
+  // sessions this equals patientId (the patient is logging their own
+  // vitals). For caregiver_* sessions this is the caregiver's sub, used
+  // to populate parameter_configs.threshold_set_by when the protocol-
+  // extraction pass runs at session close (T-V2-303).
+  // Optional for now — only populates threshold_set_by when present.
+  actorCognitoSub?: string;
   clientHints?: {
     preferStreaming?: boolean;
     deviceLatencyEstimateMs?: number;
@@ -142,6 +150,11 @@ export interface HandlerDeps {
   // pre-T-V2-302 behavior).
   protocolExtractor?: ProtocolExtractor;
   protocolPersister?: ProtocolPersister;
+  // Caregiver attribution (T-V2-303). Resolves event.actorCognitoSub to a
+  // users.id UUID so the protocol persister can populate
+  // parameter_configs.threshold_set_by. Optional — when not provided,
+  // threshold_set_by stays null and protocols are still persisted.
+  userResolver?: UserResolver;
   config: HandlerConfig;
   // Pluggable clock for tests; defaults to Date.now
   now?: () => number;
@@ -244,6 +257,7 @@ export async function handleTurn(event: TurnRequest, deps: HandlerDeps): Promise
     actions: parsed.actions,
     transcriptHistory: newHistory,
     patientId: patientCtx.patient.id,
+    actorCognitoSub: event.actorCognitoSub,
     deps,
   });
 
@@ -519,6 +533,12 @@ function validateRequest(event: TurnRequest): void {
   ) {
     throw new Error(`Invalid sessionType: ${event.sessionType}`);
   }
+  if (event.actorCognitoSub !== undefined && typeof event.actorCognitoSub !== 'string') {
+    throw new Error(`Invalid actorCognitoSub: must be a string`);
+  }
+  if (typeof event.actorCognitoSub === 'string' && event.actorCognitoSub.trim() === '') {
+    throw new Error(`Invalid actorCognitoSub: empty string`);
+  }
 }
 
 // Loads the system prompt from disk. Cached after first load — Lambda warm
@@ -764,6 +784,7 @@ async function maybeExtractAndPersistProtocol(args: {
   actions: StructuredOutput['actions'];
   transcriptHistory: Turn[];
   patientId: string; // internal patients.id UUID
+  actorCognitoSub: string | undefined;
   deps: HandlerDeps;
 }): Promise<{
   persisted: { parametersConfigured: number; topicsConfigured: number; topicsSkipped: string[] } | null;
@@ -786,15 +807,37 @@ async function maybeExtractAndPersistProtocol(args: {
     return null;
   }
 
+  // Resolve the caregiver's users.id from their Cognito sub (T-V2-303).
+  // If actorCognitoSub is missing OR the resolver isn't wired OR the
+  // cognito sub doesn't match a users row, threshold_set_by stays null —
+  // not an error condition; just an audit-trail gap that downstream
+  // tooling already tolerates (the column is nullable).
+  let caregiverUserId: string | null = null;
+  if (args.actorCognitoSub && args.deps.userResolver) {
+    try {
+      caregiverUserId = await args.deps.userResolver.resolveInternalId(args.actorCognitoSub);
+      if (caregiverUserId === null) {
+        console.warn('protocol_actor_unresolved', {
+          actorCognitoSub: args.actorCognitoSub,
+          patientId: args.patientId,
+        });
+      }
+    } catch (e) {
+      console.warn('protocol_actor_resolve_failed', {
+        message: e instanceof Error ? e.message : String(e),
+      });
+      // Fall through with null — better to record the protocol with a
+      // missing attribution than to fail the whole turn.
+    }
+  }
+
   const now = args.deps.now ?? Date.now;
   const start = now();
   try {
     const { draft, meta } = await args.deps.protocolExtractor.extract(args.transcriptHistory);
     const persisted = await args.deps.protocolPersister.persist(
       args.patientId,
-      // Caregiver attribution gap: T-V2-303 — bedrock-router doesn't yet
-      // receive the caregiver's user_id in the TurnRequest.
-      null,
+      caregiverUserId,
       draft,
     );
     return {
@@ -952,6 +995,7 @@ export async function handleTurnStream(
       actions: parsed.actions,
       transcriptHistory: newHistory,
       patientId: patientCtx.patient.id,
+      actorCognitoSub: event.actorCognitoSub,
       deps,
     });
 

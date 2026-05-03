@@ -24,6 +24,7 @@ import { HaikuSummarizer } from './summarizer';
 import { PgRateLimiter } from './rate_limiter';
 import { SonnetProtocolExtractor } from './protocol_extractor';
 import { PgProtocolPersister } from './protocol_persister';
+import { PgUserResolver } from './user_resolver';
 import { getPgPool } from './db_secret';
 
 // Cold-start: build deps once, reuse across warm invocations.
@@ -93,6 +94,7 @@ async function buildDeps(): Promise<HandlerDeps> {
     rateLimiter,
     protocolExtractor,
     protocolPersister,
+    userResolver: new PgUserResolver(pool),
     config: {
       haikuModelId,
       sonnetModelId,

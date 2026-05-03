@@ -1459,6 +1459,148 @@ describe('handleTurn — caregiver session routing', () => {
   });
 });
 
+describe('TurnRequest.actorCognitoSub validation', () => {
+  it('accepts an undefined actorCognitoSub (current default)', async () => {
+    const { deps } = makeDeps();
+    const result = await handleTurn(baseRequest, deps);
+    expect(result.statusCode).toBe(200);
+  });
+
+  it('rejects a non-string actorCognitoSub', async () => {
+    const { deps } = makeDeps();
+    await expect(
+      handleTurn(
+        { ...baseRequest, actorCognitoSub: 12345 as unknown as string },
+        deps,
+      ),
+    ).rejects.toThrow('actorCognitoSub: must be a string');
+  });
+
+  it('rejects an empty actorCognitoSub', async () => {
+    const { deps } = makeDeps();
+    await expect(
+      handleTurn({ ...baseRequest, actorCognitoSub: '   ' as unknown as string }, deps),
+    ).rejects.toThrow('actorCognitoSub: empty string');
+  });
+});
+
+describe('Caregiver protocol attribution (T-V2-303)', () => {
+  // Mock LLM emits complete_session so the protocol-extraction pass fires.
+  function makeCompleteSessionResult(): InvokeResult {
+    return makeInvokeResult({
+      responseText: `<output>
+{"responseText":"All set.","ttsHints":{"language":"en-IN","spellOutNumbers":false},"extractedValues":[],"actions":[{"type":"complete_session","reason":"caregiver_confirmed_setup"}],"stateTransition":"PENDING_CONFIRMATION -> COMPLETE","escalationReason":null}
+</output>`,
+    });
+  }
+
+  function caregiverTurnCtx(): TurnContext {
+    const ctx = baseTurnCtx();
+    ctx.sessionState.sessionType = 'caregiver_onboarding';
+    ctx.sessionState.fsmState = 'PENDING_CONFIRMATION';
+    return ctx;
+  }
+
+  function attachProtocolDeps(opts: {
+    deps: HandlerDeps;
+    resolveTo: string | null | 'throw';
+  }): { deps: HandlerDeps; persistCalls: Array<{ caregiverUserId: string | null }> } {
+    const persistCalls: Array<{ caregiverUserId: string | null }> = [];
+    const protocolExtractor = {
+      async extract() {
+        return {
+          draft: { parameters: [], topics: [] },
+          meta: makeInvokeResult(),
+        };
+      },
+    };
+    const protocolPersister = {
+      async persist(_patientId: string, caregiverUserId: string | null) {
+        persistCalls.push({ caregiverUserId });
+        return { parametersConfigured: 0, topicsConfigured: 0, topicsSkipped: [] };
+      },
+    };
+    const userResolver = {
+      async resolveInternalId(_sub: string): Promise<string | null> {
+        if (opts.resolveTo === 'throw') throw new Error('resolver boom');
+        return opts.resolveTo;
+      },
+    };
+    const wired: HandlerDeps = {
+      ...opts.deps,
+      protocolExtractor,
+      protocolPersister,
+      userResolver,
+    };
+    return { deps: wired, persistCalls };
+  }
+
+  it('resolves actorCognitoSub and passes the user_id to the persister', async () => {
+    const base = makeDeps({
+      turnCtx: caregiverTurnCtx(),
+      invokeResult: makeCompleteSessionResult(),
+    });
+    const { deps, persistCalls } = attachProtocolDeps({
+      deps: base.deps,
+      resolveTo: 'caregiver-user-uuid-42',
+    });
+    const req: TurnRequest = {
+      ...baseRequest,
+      actorCognitoSub: 'caregiver-cognito-sub-X',
+    };
+    await handleTurn(req, deps);
+    expect(persistCalls).toHaveLength(1);
+    expect(persistCalls[0].caregiverUserId).toBe('caregiver-user-uuid-42');
+  });
+
+  it('passes null when actorCognitoSub is missing', async () => {
+    const base = makeDeps({
+      turnCtx: caregiverTurnCtx(),
+      invokeResult: makeCompleteSessionResult(),
+    });
+    const { deps, persistCalls } = attachProtocolDeps({
+      deps: base.deps,
+      resolveTo: 'should-not-be-called',
+    });
+    await handleTurn(baseRequest, deps); // no actorCognitoSub
+    expect(persistCalls[0].caregiverUserId).toBeNull();
+  });
+
+  it('passes null when the resolver returns null (sub not in users table)', async () => {
+    const base = makeDeps({
+      turnCtx: caregiverTurnCtx(),
+      invokeResult: makeCompleteSessionResult(),
+    });
+    const { deps, persistCalls } = attachProtocolDeps({
+      deps: base.deps,
+      resolveTo: null,
+    });
+    await handleTurn(
+      { ...baseRequest, actorCognitoSub: 'unknown-sub' },
+      deps,
+    );
+    expect(persistCalls[0].caregiverUserId).toBeNull();
+  });
+
+  it('passes null and still persists when the resolver throws', async () => {
+    const base = makeDeps({
+      turnCtx: caregiverTurnCtx(),
+      invokeResult: makeCompleteSessionResult(),
+    });
+    const { deps, persistCalls } = attachProtocolDeps({
+      deps: base.deps,
+      resolveTo: 'throw',
+    });
+    await handleTurn(
+      { ...baseRequest, actorCognitoSub: 'caregiver-sub' },
+      deps,
+    );
+    // Persister still ran (no hard failure on resolver error)
+    expect(persistCalls).toHaveLength(1);
+    expect(persistCalls[0].caregiverUserId).toBeNull();
+  });
+});
+
 describe('TurnRequest.sessionType passthrough', () => {
   // Mock LLM result that emits a transition valid from CREATED (the state a
   // newly-created session is in before the first state transition).
