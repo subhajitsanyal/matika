@@ -46,11 +46,26 @@ resource "aws_bedrock_guardrail" "matika" {
   }
 
   topic_policy_config {
-    # NOTE: the medical_advice topic was originally broader ("interpreting lab
-    # results", "Is my heart rate dangerous?", "What does this lab result
-    # mean?") but blocked legitimate vital acknowledgment turns where the
-    # model briefly classified a BP reading. Narrowed to prescriptive advice
-    # only; the broader interpretation guard now lives in the system prompt.
+    # NOTES on iteration history:
+    #   1. The original `medical_advice` topic ("interpreting lab results",
+    #      "Is my heart rate dangerous?") blocked legitimate vital
+    #      acknowledgment turns where the model briefly classified a BP
+    #      reading. Narrowed to prescriptive advice only.
+    #   2. A separate `medication_dosage` topic ("Specific dosing
+    #      instructions, drug interactions") was originally added in
+    #      addition. We removed it after discovering it triggered on
+    #      caregiver_onboarding turns where caregivers DESCRIBED the
+    #      patient's existing regimen ("he takes Amlodipine 5mg every
+    #      morning, Metformin 500mg twice a day"). Bedrock topic DENY
+    #      filters apply symmetrically to input and output, so the
+    #      caregiver's contextual mention triggered just as readily as
+    #      a patient asking for dosing advice. The remaining
+    #      `medical_diagnosis_or_prescription` topic already covers the
+    #      assistant GIVING dosing advice ("Take 50mg of amlodipine
+    #      twice a day."), which is the actual concern. Asking for
+    #      dosing advice ("Can I take 200mg instead?") is handled by
+    #      the system prompt's refusal rules — blocking it at the
+    #      Guardrail layer was redundant and caused real false positives.
     topics_config {
       name       = "medical_diagnosis_or_prescription"
       definition = "Telling the patient they have a diagnosis, prescribing medication, or recommending starting/stopping/changing medication doses without a doctor's direction."
@@ -59,16 +74,6 @@ resource "aws_bedrock_guardrail" "matika" {
         "Take 50mg of amlodipine twice a day.",
         "Stop taking your statin immediately.",
         "Do I have diabetes?",
-      ]
-      type = "DENY"
-    }
-    topics_config {
-      name       = "medication_dosage"
-      definition = "Specific dosing instructions, drug interactions, or changes to medication regimens."
-      examples = [
-        "Can I take 200mg of metformin instead?",
-        "Should I stop taking my statin?",
-        "Is it safe to take ibuprofen with my blood thinner?",
       ]
       type = "DENY"
     }

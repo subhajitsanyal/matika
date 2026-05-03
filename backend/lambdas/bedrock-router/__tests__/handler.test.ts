@@ -1484,6 +1484,36 @@ describe('TurnRequest.actorCognitoSub validation', () => {
   });
 });
 
+describe('Caregiver sessions bypass the Bedrock Guardrail', () => {
+  it('passes guardrailId/Version on patient_logging sessions', async () => {
+    const { deps, calls } = makeDeps();
+    await handleTurn(baseRequest, deps);
+    const invoke = calls.invokeCalls[0];
+    expect(invoke.guardrailId).toBe('matika-test-guardrail');
+    expect(invoke.guardrailVersion).toBe('DRAFT');
+  });
+
+  it('omits guardrailId/Version on caregiver_onboarding sessions', async () => {
+    const ctx = baseTurnCtx();
+    ctx.sessionState.sessionType = 'caregiver_onboarding';
+    const { deps, calls } = makeDeps({ turnCtx: ctx });
+    await handleTurn(baseRequest, deps);
+    const invoke = calls.invokeCalls[0];
+    expect(invoke.guardrailId).toBeUndefined();
+    expect(invoke.guardrailVersion).toBeUndefined();
+  });
+
+  it('omits guardrailId/Version on caregiver_config sessions', async () => {
+    const ctx = baseTurnCtx();
+    ctx.sessionState.sessionType = 'caregiver_config';
+    const { deps, calls } = makeDeps({ turnCtx: ctx });
+    await handleTurn(baseRequest, deps);
+    const invoke = calls.invokeCalls[0];
+    expect(invoke.guardrailId).toBeUndefined();
+    expect(invoke.guardrailVersion).toBeUndefined();
+  });
+});
+
 describe('Caregiver protocol attribution (T-V2-303)', () => {
   // Mock LLM emits complete_session so the protocol-extraction pass fires.
   function makeCompleteSessionResult(): InvokeResult {

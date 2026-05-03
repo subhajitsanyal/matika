@@ -211,13 +211,26 @@ export async function handleTurn(event: TurnRequest, deps: HandlerDeps): Promise
   // 5. Invoke Bedrock + parse with one retry on parse failure (spec §6.4).
   const tier: Tier = routing.tier;
   const modelId = tier === 'T3' ? deps.config.sonnetModelId : deps.config.haikuModelId;
+  // Guardrail policy is targeted at patient-logging interactions —
+  // medical-diagnosis-or-prescription topics fire fuzzily on caregivers
+  // describing a patient's existing regimen ("he takes Amlodipine 5mg
+  // every morning"), which is a necessary part of caregiver onboarding.
+  // The caregiver system prompt already forbids vital-logging or
+  // prescriptive output, so dropping the Guardrail here doesn't widen
+  // any meaningful threat surface for v2.0.
+  const guardrailId = isCaregiverSession(turnCtx.sessionState.sessionType)
+    ? undefined
+    : deps.config.guardrailId;
+  const guardrailVersion = isCaregiverSession(turnCtx.sessionState.sessionType)
+    ? undefined
+    : deps.config.guardrailVersion;
   const invokeStart = now();
   const { parsed, meta: result } = await invokeWithRetry(body, async (b) => {
     const r = await deps.bedrock.invoke({
       modelId,
       body: b,
-      guardrailId: deps.config.guardrailId,
-      guardrailVersion: deps.config.guardrailVersion,
+      guardrailId,
+      guardrailVersion,
       configuredRegion: deps.config.inferenceRegion,
     });
     return { text: r.responseText, meta: r };
@@ -574,6 +587,13 @@ function selectSystemPromptPath(
   return config.systemPromptPath;
 }
 
+// Caregiver sessions skip the Guardrail (see comment on the call site in
+// handleTurn). Both caregiver_onboarding and caregiver_config qualify
+// because both are setup conversations, not patient-facing health advice.
+function isCaregiverSession(sessionType: SessionType): boolean {
+  return sessionType === 'caregiver_onboarding' || sessionType === 'caregiver_config';
+}
+
 // Loads an escalation-specific sub-prompt from disk, cached after first read.
 // Returns null if no sub-prompt file exists for the given reason — that's
 // intentional; only some escalation reasons (emergency, implausible_value)
@@ -928,6 +948,14 @@ export async function handleTurnStream(
       maxTokens: deps.config.maxTokens,
     });
 
+    // Same caregiver-session bypass as handleTurn — see comment there.
+    const guardrailId = isCaregiverSession(turnCtx.sessionState.sessionType)
+      ? undefined
+      : deps.config.guardrailId;
+    const guardrailVersion = isCaregiverSession(turnCtx.sessionState.sessionType)
+      ? undefined
+      : deps.config.guardrailVersion;
+
     const invokeStart = now();
 
     // Streaming aggregator — collects text deltas until message_stop, then
@@ -941,8 +969,8 @@ export async function handleTurnStream(
       for await (const chunk of deps.bedrock.invokeStream({
         modelId,
         body: bodyToUse,
-        guardrailId: deps.config.guardrailId,
-        guardrailVersion: deps.config.guardrailVersion,
+        guardrailId,
+        guardrailVersion,
         configuredRegion: deps.config.inferenceRegion,
       })) {
         if (chunk.type === 'text_delta') {
