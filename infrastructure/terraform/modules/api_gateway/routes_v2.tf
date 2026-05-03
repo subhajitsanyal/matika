@@ -1,9 +1,10 @@
 # Matika v2 — API Gateway routes
 #
-# Adds four routes to the existing carelog-${env}-api REST API:
+# Adds five routes to the existing carelog-${env}-api REST API:
 #   POST /conversation/turn           → matika-${env}-bedrock-router
 #   POST /conversation/turn-stream    → matika-${env}-bedrock-router (SSE)
 #   POST /conversation/photo-extract  → matika-${env}-bedrock-vision
+#   POST /conversation/photo-presign  → matika-${env}-photo-presign
 #   GET  /health                      → matika-${env}-health-check (NO AUTH)
 #
 # All conversation routes use the existing Cognito authorizer (decision Q0.2:
@@ -45,6 +46,14 @@ resource "aws_api_gateway_resource" "conversation_photo_extract" {
   rest_api_id = aws_api_gateway_rest_api.main.id
   parent_id   = aws_api_gateway_resource.conversation.id
   path_part   = "photo-extract"
+}
+
+# /conversation/photo-presign — issues short-lived S3 PUT URLs for the
+# JPEG upload that precedes /conversation/photo-extract.
+resource "aws_api_gateway_resource" "conversation_photo_presign" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  parent_id   = aws_api_gateway_resource.conversation.id
+  path_part   = "photo-presign"
 }
 
 # /health
@@ -110,6 +119,24 @@ resource "aws_api_gateway_integration" "conversation_photo_extract_post" {
   integration_http_method = "POST"
   type                    = "AWS_PROXY"
   uri                     = var.bedrock_vision_invoke_arn
+}
+
+# POST /conversation/photo-presign
+resource "aws_api_gateway_method" "conversation_photo_presign_post" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.conversation_photo_presign.id
+  http_method   = "POST"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+}
+
+resource "aws_api_gateway_integration" "conversation_photo_presign_post" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.conversation_photo_presign.id
+  http_method             = aws_api_gateway_method.conversation_photo_presign_post.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = var.photo_presign_invoke_arn
 }
 
 # GET /health — unauthenticated by design

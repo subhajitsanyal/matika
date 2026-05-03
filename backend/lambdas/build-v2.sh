@@ -20,6 +20,7 @@ V2_LAMBDAS=(
   "bedrock-vision"
   "cost-telemetry-rollup"
   "health-check"
+  "photo-presign"
 )
 
 echo "==> Building v2 Lambdas in ${LAMBDAS_DIR}"

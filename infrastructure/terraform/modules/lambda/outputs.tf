@@ -205,3 +205,12 @@ output "health_check_invoke_arn" {
 output "health_check_function_name" {
   value = aws_lambda_function.health_check.function_name
 }
+
+output "photo_presign_invoke_arn" {
+  description = "Invoke ARN for photo-presign (used by API Gateway integration)"
+  value       = aws_lambda_function.photo_presign.invoke_arn
+}
+
+output "photo_presign_function_name" {
+  value = aws_lambda_function.photo_presign.function_name
+}

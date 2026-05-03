@@ -1058,6 +1058,7 @@ resource "aws_api_gateway_deployment" "main" {
       aws_api_gateway_resource.conversation_turn.id,
       aws_api_gateway_resource.conversation_turn_stream.id,
       aws_api_gateway_resource.conversation_photo_extract.id,
+      aws_api_gateway_resource.conversation_photo_presign.id,
       aws_api_gateway_resource.health.id,
       aws_api_gateway_method.conversation_turn_post.id,
       aws_api_gateway_integration.conversation_turn_post.id,
@@ -1065,6 +1066,8 @@ resource "aws_api_gateway_deployment" "main" {
       aws_api_gateway_integration.conversation_turn_stream_post.id,
       aws_api_gateway_method.conversation_photo_extract_post.id,
       aws_api_gateway_integration.conversation_photo_extract_post.id,
+      aws_api_gateway_method.conversation_photo_presign_post.id,
+      aws_api_gateway_integration.conversation_photo_presign_post.id,
       aws_api_gateway_method.health_get.id,
       aws_api_gateway_integration.health_get.id,
     ]))

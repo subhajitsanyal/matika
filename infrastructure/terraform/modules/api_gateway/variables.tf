@@ -141,3 +141,9 @@ variable "health_check_invoke_arn" {
   type        = string
   default     = ""
 }
+
+variable "photo_presign_invoke_arn" {
+  description = "Invoke ARN for matika-<env>-photo-presign (POST /conversation/photo-presign)"
+  type        = string
+  default     = ""
+}

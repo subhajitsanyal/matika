@@ -112,6 +112,7 @@ module "api_gateway" {
   bedrock_router_invoke_arn = module.lambda.bedrock_router_invoke_arn
   bedrock_vision_invoke_arn = module.lambda.bedrock_vision_invoke_arn
   health_check_invoke_arn   = module.lambda.health_check_invoke_arn
+  photo_presign_invoke_arn  = module.lambda.photo_presign_invoke_arn
 }
 
 # HealthLake Module

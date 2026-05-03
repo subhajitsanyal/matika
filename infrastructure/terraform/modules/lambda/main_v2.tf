@@ -3,10 +3,11 @@
 # Owner: devops agent. Function code, prompts, and runtime config owned by
 # backend + inference-platform agents (see AGENTS.md §3).
 #
-# Four functions land here:
+# Five functions land here:
 #   - matika-${env}-bedrock-router       → POST /conversation/turn,
 #                                          POST /conversation/turn-stream
 #   - matika-${env}-bedrock-vision       → POST /conversation/photo-extract
+#   - matika-${env}-photo-presign        → POST /conversation/photo-presign
 #   - matika-${env}-cost-telemetry-rollup → EventBridge daily cron
 #   - matika-${env}-health-check         → GET /health
 #
@@ -276,6 +277,51 @@ resource "aws_iam_role_policy" "health_check_inline" {
   })
 }
 
+# Role: photo-presign — issues short-lived S3 PUT URLs for client photo
+# uploads. Pure URL signing; no VPC, no DB, no Bedrock.
+resource "aws_iam_role" "lambda_photo_presign" {
+  name               = "${local.v2_function_prefix}-photo-presign-role"
+  assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
+}
+
+resource "aws_iam_role_policy_attachment" "photo_presign_basic_logs" {
+  role       = aws_iam_role.lambda_photo_presign.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+resource "aws_iam_role_policy" "photo_presign_inline" {
+  name = "photo-presign-access"
+  role = aws_iam_role.lambda_photo_presign.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        # Pre-signed URLs inherit the signer's permissions. Scoping the
+        # signer's PutObject to the photos/ subtree under interactions/
+        # means a leaked or mis-targeted pre-sign can only land in that
+        # path — it cannot overwrite Bedrock invocation transcripts or
+        # other session artifacts under interactions/.
+        Sid    = "PutObjectInteractionsPhotos"
+        Effect = "Allow"
+        Action = ["s3:PutObject"]
+        Resource = [
+          "arn:aws:s3:::${var.raw_interactions_bucket_name}/interactions/*/photos/*",
+        ]
+      },
+      {
+        # KMS encrypt is needed because the bucket is configured with
+        # SSE-KMS (the PutObject inherits the bucket's SSE config, but
+        # the SDK's pre-sign generation also needs to be able to specify
+        # `ServerSideEncryption: "aws:kms"` on the PutObjectCommand).
+        Effect   = "Allow"
+        Action   = ["kms:GenerateDataKey", "kms:Encrypt"]
+        Resource = [var.s3_kms_key_arn]
+      },
+    ]
+  })
+}
+
 # ============================================================
 # ARCHIVE FILES — packaged after `backend/lambdas/build-v2.sh`
 # ============================================================
@@ -305,6 +351,13 @@ data "archive_file" "health_check" {
   type        = "zip"
   source_dir  = "${var.lambdas_source_path}/health-check"
   output_path = "${path.module}/archives/health-check.zip"
+  excludes    = local.v2_archive_excludes
+}
+
+data "archive_file" "photo_presign" {
+  type        = "zip"
+  source_dir  = "${var.lambdas_source_path}/photo-presign"
+  output_path = "${path.module}/archives/photo-presign.zip"
   excludes    = local.v2_archive_excludes
 }
 
@@ -430,6 +483,24 @@ resource "aws_lambda_function" "health_check" {
   }
 }
 
+# Photo-presign — pure URL signer, no VPC. Lower memory + fast cold start.
+resource "aws_lambda_function" "photo_presign" {
+  function_name    = "${local.v2_function_prefix}-photo-presign"
+  role             = aws_iam_role.lambda_photo_presign.arn
+  handler          = "dist/src/index.handler"
+  runtime          = "nodejs20.x"
+  timeout          = 5
+  memory_size      = 128
+  filename         = data.archive_file.photo_presign.output_path
+  source_code_hash = data.archive_file.photo_presign.output_base64sha256
+
+  environment {
+    variables = {
+      RAW_INTERACTIONS_BUCKET = var.raw_interactions_bucket_name
+    }
+  }
+}
+
 # ============================================================
 # CLOUDWATCH LOG GROUPS (HIPAA: 365-day retention)
 # ============================================================
@@ -451,6 +522,11 @@ resource "aws_cloudwatch_log_group" "cost_telemetry_rollup" {
 
 resource "aws_cloudwatch_log_group" "health_check" {
   name              = "/aws/lambda/${aws_lambda_function.health_check.function_name}"
+  retention_in_days = 365
+}
+
+resource "aws_cloudwatch_log_group" "photo_presign" {
+  name              = "/aws/lambda/${aws_lambda_function.photo_presign.function_name}"
   retention_in_days = 365
 }
 
@@ -482,6 +558,14 @@ resource "aws_lambda_permission" "health_check_apigw" {
   statement_id  = "AllowAPIGateway"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.health_check.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${var.api_execution_arn}/*"
+}
+
+resource "aws_lambda_permission" "photo_presign_apigw" {
+  statement_id  = "AllowAPIGateway"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.photo_presign.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${var.api_execution_arn}/*"
 }
