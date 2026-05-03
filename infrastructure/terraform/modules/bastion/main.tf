@@ -6,14 +6,20 @@
 
 data "aws_region" "current" {}
 
-# Latest Amazon Linux 2023 ARM64 AMI
+# Latest Amazon Linux 2023 (standard, NOT minimal) ARM64 AMI.
+#
+# The minimal variant — al2023-ami-minimal-* — does not include
+# amazon-ssm-agent preinstalled, which causes the bastion to never
+# register with SSM Session Manager. The filter below pins to the
+# standard AL2023 line (name starts with `al2023-ami-2023.`) so the
+# data source can never silently pick a minimal AMI again.
 data "aws_ami" "amazon_linux" {
   most_recent = true
   owners      = ["amazon"]
 
   filter {
     name   = "name"
-    values = ["al2023-ami-*-arm64"]
+    values = ["al2023-ami-2023.*-arm64"]
   }
 
   filter {
@@ -99,6 +105,23 @@ resource "aws_instance" "bastion" {
     http_tokens   = "required" # IMDSv2 only
     http_endpoint = "enabled"
   }
+
+  # Defense in depth: even on the standard AL2023 AMI the SSM agent ships
+  # preinstalled and enabled, but explicitly enabling+starting it here means
+  # the bastion will work the same way if the AMI ever gets switched (e.g.,
+  # to a minimal variant where the agent is absent). The script is idempotent
+  # and silently no-ops when the agent is already running.
+  user_data = <<-EOT
+    #!/bin/bash
+    set -eux
+    if ! command -v amazon-ssm-agent >/dev/null 2>&1; then
+      dnf install -y amazon-ssm-agent || yum install -y amazon-ssm-agent
+    fi
+    systemctl enable amazon-ssm-agent
+    systemctl start amazon-ssm-agent
+  EOT
+
+  user_data_replace_on_change = true
 
   tags = {
     Name        = "carelog-${var.environment}-bastion"
