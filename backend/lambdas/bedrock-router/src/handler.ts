@@ -46,6 +46,9 @@ import { applyTransition } from './state_machine';
 import { buildModelCallRecord } from './telemetry';
 import type { Tier } from './pricing';
 import { SseEmitter, emitParsedOutput } from './sse_events';
+import type { ProtocolExtractor } from './protocol_extractor';
+import { ProtocolExtractionError } from './protocol_extractor';
+import type { ProtocolPersister } from './protocol_persister';
 
 // ---------- Public types ----------
 
@@ -84,6 +87,16 @@ export interface TurnResponseBody {
     escalationReason: EscalationSignal | null;
     softCapReached: boolean; // true when rate limit's soft cap reached (warn but allow)
   };
+  // Present only on caregiver_onboarding turns that triggered the protocol
+  // extraction pass (T-V2-302). `extracted: false` means extraction ran but
+  // failed — see `error`. Absent on every other turn.
+  protocol?: {
+    extracted: boolean;
+    parametersConfigured: number;
+    topicsConfigured: number;
+    topicsSkipped: string[];
+    error: string | null;
+  };
 }
 
 export interface TurnResponse {
@@ -116,6 +129,13 @@ export interface HandlerDeps {
   alertEnqueuer?: AlertEnqueuer; // optional — handler still works without SQS
   summarizer?: Summarizer; // optional — overflow summarization is skipped if not provided
   rateLimiter?: RateLimiter; // optional — rate limit is skipped if not provided
+  // Caregiver-onboarding protocol extraction (T-V2-302). Runs only when a
+  // caregiver_onboarding session emits a `complete_session` action. Both
+  // are required for the extraction to fire; if either is missing, the
+  // handler logs a warning and skips, leaving the session lossy (matches
+  // pre-T-V2-302 behavior).
+  protocolExtractor?: ProtocolExtractor;
+  protocolPersister?: ProtocolPersister;
   config: HandlerConfig;
   // Pluggable clock for tests; defaults to Date.now
   now?: () => number;
@@ -209,6 +229,18 @@ export async function handleTurn(event: TurnRequest, deps: HandlerDeps): Promise
       deps.summarizer,
     );
 
+  // 8c. Caregiver-onboarding protocol extraction (T-V2-302). Fires only on
+  //     caregiver_onboarding sessions when the model emits complete_session.
+  //     Synchronous so failures and telemetry land in this turn's response;
+  //     adds ~3-5s tail latency, which is acceptable for the close-out turn.
+  const protocolResult = await maybeExtractAndPersistProtocol({
+    sessionType: turnCtx.sessionState.sessionType,
+    actions: parsed.actions,
+    transcriptHistory: newHistory,
+    patientId: patientCtx.patient.id,
+    deps,
+  });
+
   // 9. Persist session, record telemetry, and (if emergency) enqueue caregiver
   //    alert — all in parallel.
   const emergencyTriggers = detectEmergencyTriggers(routing.reason, parsed.escalationReason, result.guardrailBlocked);
@@ -261,7 +293,7 @@ export async function handleTurn(event: TurnRequest, deps: HandlerDeps): Promise
       ? deps.modelCallRecorder.record(
           buildModelCallRecord({
             sessionId: event.sessionId,
-            patientId: event.patientId,
+            patientId: patientCtx.patient.id, // internal UUID (FK target)
             tier: 'T2',
             model: deps.config.haikuModelId,
             streamed: false,
@@ -270,6 +302,22 @@ export async function handleTurn(event: TurnRequest, deps: HandlerDeps): Promise
             latencyMs: summarizerTelemetry.latencyMs,
             inferenceRegion: summarizerTelemetry.inferenceRegion,
             escalationReason: 'summarizer_overflow',
+          }),
+        )
+      : Promise.resolve(),
+    protocolResult?.telemetry
+      ? deps.modelCallRecorder.record(
+          buildModelCallRecord({
+            sessionId: event.sessionId,
+            patientId: patientCtx.patient.id,
+            tier: 'T3',
+            model: deps.config.sonnetModelId,
+            streamed: false,
+            guardrailBlocked: protocolResult.telemetry.guardrailBlocked,
+            usage: protocolResult.telemetry.usage,
+            latencyMs: protocolResult.telemetry.latencyMs,
+            inferenceRegion: protocolResult.telemetry.inferenceRegion,
+            escalationReason: 'caregiver_protocol_design',
           }),
         )
       : Promise.resolve(),
@@ -300,6 +348,17 @@ export async function handleTurn(event: TurnRequest, deps: HandlerDeps): Promise
       escalationReason: routing.reason,
       softCapReached,
     },
+    ...(protocolResult
+      ? {
+          protocol: {
+            extracted: protocolResult.persisted !== null,
+            parametersConfigured: protocolResult.persisted?.parametersConfigured ?? 0,
+            topicsConfigured: protocolResult.persisted?.topicsConfigured ?? 0,
+            topicsSkipped: protocolResult.persisted?.topicsSkipped ?? [],
+            error: protocolResult.error ?? null,
+          },
+        }
+      : {}),
   };
 
   // Record total turn latency in CloudWatch by stamping it in the response
@@ -676,6 +735,86 @@ async function maybeSummarizeOverflow(
   };
 }
 
+// Caregiver-onboarding protocol extraction helper (T-V2-302).
+//
+// Fires only when ALL of the following hold:
+//   - sessionType === 'caregiver_onboarding'
+//   - parsed actions include a `complete_session`
+//   - both protocolExtractor and protocolPersister are wired in deps
+//
+// Errors here NEVER throw out — a failed extraction is reported as
+// `extracted: false` in the response and logged to CloudWatch, but the
+// parent turn still returns 200. The transcript stays preserved in
+// interaction_sessions.transcript_history so the extraction can be
+// re-attempted post-hoc against the same conversation if needed.
+async function maybeExtractAndPersistProtocol(args: {
+  sessionType: SessionType;
+  actions: StructuredOutput['actions'];
+  transcriptHistory: Turn[];
+  patientId: string; // internal patients.id UUID
+  deps: HandlerDeps;
+}): Promise<{
+  persisted: { parametersConfigured: number; topicsConfigured: number; topicsSkipped: string[] } | null;
+  error: string | null;
+  telemetry: {
+    usage: { inputTokens: number; cachedInputTokens: number; outputTokens: number };
+    latencyMs: number;
+    guardrailBlocked: boolean;
+    inferenceRegion: string;
+  } | null;
+} | null> {
+  if (args.sessionType !== 'caregiver_onboarding') return null;
+  const completes = args.actions.some((a) => a.type === 'complete_session');
+  if (!completes) return null;
+  if (!args.deps.protocolExtractor || !args.deps.protocolPersister) {
+    console.warn('protocol_extraction_skipped', {
+      reason: 'extractor_or_persister_missing_from_deps',
+      patientId: args.patientId,
+    });
+    return null;
+  }
+
+  const now = args.deps.now ?? Date.now;
+  const start = now();
+  try {
+    const { draft, meta } = await args.deps.protocolExtractor.extract(args.transcriptHistory);
+    const persisted = await args.deps.protocolPersister.persist(
+      args.patientId,
+      // Caregiver attribution gap: T-V2-303 — bedrock-router doesn't yet
+      // receive the caregiver's user_id in the TurnRequest.
+      null,
+      draft,
+    );
+    return {
+      persisted,
+      error: null,
+      telemetry: {
+        usage: {
+          inputTokens: meta.inputTokens,
+          cachedInputTokens: meta.cachedInputTokens,
+          outputTokens: meta.outputTokens,
+        },
+        latencyMs: now() - start,
+        guardrailBlocked: meta.guardrailBlocked,
+        inferenceRegion: meta.inferenceRegion,
+      },
+    };
+  } catch (e) {
+    const code =
+      e instanceof ProtocolExtractionError ? `extraction_${e.kind}` : 'persist_or_unknown_error';
+    console.error('protocol_extraction_failed', {
+      code,
+      message: e instanceof Error ? e.message : String(e),
+      patientId: args.patientId,
+    });
+    return {
+      persisted: null,
+      error: code,
+      telemetry: null,
+    };
+  }
+}
+
 // ---------- Streaming handler ----------
 //
 // SSE-based variant. Architecture is in place; events emit AFTER the full
@@ -795,6 +934,15 @@ export async function handleTurnStream(
         deps.summarizer,
       );
 
+    // Caregiver-onboarding protocol extraction — same flow as handleTurn.
+    const protocolResult = await maybeExtractAndPersistProtocol({
+      sessionType: turnCtx.sessionState.sessionType,
+      actions: parsed.actions,
+      transcriptHistory: newHistory,
+      patientId: patientCtx.patient.id,
+      deps,
+    });
+
     const escalationsTriggered = routing.reason ? [routing.reason] : [];
     const guardrailBlocked = meta.stopReason === 'guardrail_intervened';
     const inferenceRegion = deps.config.inferenceRegion;
@@ -852,6 +1000,22 @@ export async function handleTurnStream(
               latencyMs: summarizerTelemetry.latencyMs,
               inferenceRegion: summarizerTelemetry.inferenceRegion,
               escalationReason: 'summarizer_overflow',
+            }),
+          )
+        : Promise.resolve(),
+      protocolResult?.telemetry
+        ? deps.modelCallRecorder.record(
+            buildModelCallRecord({
+              sessionId: event.sessionId,
+              patientId: patientCtx.patient.id,
+              tier: 'T3',
+              model: deps.config.sonnetModelId,
+              streamed: false,
+              guardrailBlocked: protocolResult.telemetry.guardrailBlocked,
+              usage: protocolResult.telemetry.usage,
+              latencyMs: protocolResult.telemetry.latencyMs,
+              inferenceRegion: protocolResult.telemetry.inferenceRegion,
+              escalationReason: 'caregiver_protocol_design',
             }),
           )
         : Promise.resolve(),

@@ -22,6 +22,8 @@ import {
 import { SqsAlertEnqueuer } from './alert_queue';
 import { HaikuSummarizer } from './summarizer';
 import { PgRateLimiter } from './rate_limiter';
+import { SonnetProtocolExtractor } from './protocol_extractor';
+import { PgProtocolPersister } from './protocol_persister';
 import { getPgPool } from './db_secret';
 
 // Cold-start: build deps once, reuse across warm invocations.
@@ -67,6 +69,18 @@ async function buildDeps(): Promise<HandlerDeps> {
   const hardLimit = parseInt(process.env.HARD_RATE_LIMIT_PER_PATIENT ?? '500', 10);
   const rateLimiter = new PgRateLimiter(pool, { softLimit, hardLimit });
 
+  // Caregiver-onboarding protocol extractor (T-V2-302). Sonnet handles the
+  // structured-extraction pass at session close; persister upserts into
+  // parameter_configs + patient_topics in one transaction.
+  const sonnetModelId = requiredEnv('BEDROCK_SONNET_MODEL_ID');
+  const protocolExtractor = new SonnetProtocolExtractor(
+    bedrock,
+    sonnetModelId,
+    inferenceRegion,
+    resolvePath(LAMBDA_ROOT, 'prompts', 'extract_caregiver_protocol.md'),
+  );
+  const protocolPersister = new PgProtocolPersister(pool);
+
   const deps: HandlerDeps = {
     bedrock,
     patientLoader: new PgPatientContextLoader(pool),
@@ -77,9 +91,11 @@ async function buildDeps(): Promise<HandlerDeps> {
     alertEnqueuer,
     summarizer,
     rateLimiter,
+    protocolExtractor,
+    protocolPersister,
     config: {
       haikuModelId,
-      sonnetModelId: requiredEnv('BEDROCK_SONNET_MODEL_ID'),
+      sonnetModelId,
       guardrailId: process.env.BEDROCK_GUARDRAIL_ID,
       guardrailVersion: process.env.BEDROCK_GUARDRAIL_VERSION,
       inferenceRegion,

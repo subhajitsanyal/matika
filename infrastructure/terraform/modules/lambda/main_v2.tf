@@ -95,20 +95,26 @@ resource "aws_iam_role_policy" "bedrock_router_inline" {
           var.bedrock_sonnet_foundation_model_arn,
         ]
       },
-      # NOTE: aws-marketplace:Subscribe / ViewSubscriptions were previously
-      # attached on Resource = "*" to handle Bedrock's first-use auto-
-      # subscribe flow against the Anthropic Marketplace listing. The
-      # account is now subscribed (verified 2026-05-03 via
-      # `aws bedrock list-foundation-models --region ap-south-1`,
-      # all Anthropic models reported as ACTIVE), so the permissions
-      # are no longer needed at runtime.
-      #
-      # If a NEW Anthropic model variant ships in the future and Bedrock
-      # rejects InvokeModel with "model use case details have not been
-      # submitted" or "AWS Marketplace actions" errors, temporarily
-      # re-add this block, run one invocation manually as the
-      # bedrock-router role to trigger the auto-subscribe, then remove
-      # the block again.
+      {
+        # AWS Bedrock's auto-subscribe flow triggers per (principal, model,
+        # operation) the first time it's exercised — NOT just the first
+        # time per account. We learned this the hard way after removing the
+        # block once: Haiku-only paths kept working, but the first Sonnet
+        # 4.6 call from this role failed with "AWS Marketplace actions"
+        # because the bedrock-router role hadn't yet exercised that exact
+        # path. Keeping the block in place is cheaper than discovering
+        # the same gap on every new model variant.
+        #
+        # Resource = "*" is required — AWS does not document narrower ARNs
+        # for Marketplace operations.
+        Sid    = "MarketplaceAutoSubscribe"
+        Effect = "Allow"
+        Action = [
+          "aws-marketplace:ViewSubscriptions",
+          "aws-marketplace:Subscribe",
+        ]
+        Resource = "*"
+      },
       {
         Sid      = "ApplyGuardrail"
         Effect   = "Allow"
