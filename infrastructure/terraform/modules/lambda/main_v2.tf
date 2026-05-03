@@ -17,7 +17,31 @@
 # leaving dist/ + production-only node_modules/ in place for archive_file
 # to pick up. Source dirs (src/, __tests__/) are excluded from the zip.
 
+# Fetch the RDS master credentials so we can pass connection params as env
+# vars. The v2 Lambdas use node-postgres's Pool which falls back to
+# PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE env vars when no connection
+# string is provided. This keeps secrets in Terraform state (already
+# sensitive) rather than stored long-term in Lambda config.
+#
+# Follow-up (T-V2-046): replace with a runtime SecretsManager fetch on
+# Lambda cold-start so credentials don't sit in env vars at all.
+data "aws_secretsmanager_secret_version" "v2_db_credentials" {
+  secret_id = var.db_secret_arn
+}
+
 locals {
+  v2_db_creds = jsondecode(data.aws_secretsmanager_secret_version.v2_db_credentials.secret_string)
+
+  # PG* env vars consumed by node-postgres when Pool({ connectionString })
+  # is undefined.
+  pg_env = {
+    PGHOST     = local.v2_db_creds.host
+    PGPORT     = tostring(local.v2_db_creds.port)
+    PGUSER     = local.v2_db_creds.username
+    PGPASSWORD = local.v2_db_creds.password
+    PGDATABASE = local.v2_db_creds.dbname
+  }
+
   v2_function_prefix = "matika-${var.environment}"
 
   # Common excludes: source files, test fixtures, configs not needed at runtime.
@@ -297,7 +321,7 @@ resource "aws_lambda_function" "bedrock_router" {
   }
 
   environment {
-    variables = merge(local.bedrock_env_common, {
+    variables = merge(local.bedrock_env_common, local.pg_env, {
       DB_SECRET_NAME              = var.db_secret_name
       MATIKA_ALERT_QUEUE_URL      = var.alerts_queue_url
       SOFT_RATE_LIMIT_PER_PATIENT = var.soft_rate_limit_per_patient
@@ -347,7 +371,7 @@ resource "aws_lambda_function" "bedrock_vision" {
   }
 
   environment {
-    variables = merge(local.bedrock_env_common, {
+    variables = merge(local.bedrock_env_common, local.pg_env, {
       DB_SECRET_NAME          = var.db_secret_name
       RAW_INTERACTIONS_BUCKET = var.raw_interactions_bucket_name
     })
@@ -370,9 +394,9 @@ resource "aws_lambda_function" "cost_telemetry_rollup" {
   }
 
   environment {
-    variables = {
+    variables = merge(local.pg_env, {
       DB_SECRET_NAME = var.db_secret_name
-    }
+    })
   }
 }
 
@@ -392,7 +416,7 @@ resource "aws_lambda_function" "health_check" {
   }
 
   environment {
-    variables = merge(local.bedrock_env_common, {
+    variables = merge(local.bedrock_env_common, local.pg_env, {
       DB_SECRET_NAME          = var.db_secret_name
       RAW_INTERACTIONS_BUCKET = var.raw_interactions_bucket_name
     })

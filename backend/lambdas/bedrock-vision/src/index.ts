@@ -18,7 +18,12 @@ function buildDeps(): VisionHandlerDeps {
   const inferenceRegion = process.env.INFERENCE_PROFILE_REGION ?? 'ap-southeast-1';
   const bedrockClient = new BedrockRuntimeClient({ region: inferenceRegion });
   const s3Client = new S3Client({ region: process.env.AWS_REGION ?? 'ap-south-1' });
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
+  const pool = new Pool({
+    connectionString: process.env.DATABASE_URL, // undefined → falls back to PG* env vars
+    max: 1,
+    // See bedrock-router/src/index.ts — RDS rds.force_ssl on PG15.
+    ssl: { rejectUnauthorized: false },
+  });
 
   _deps = {
     bedrock: new AwsBedrockVisionInvoker(bedrockClient),

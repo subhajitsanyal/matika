@@ -38,8 +38,12 @@ function buildDeps(): HandlerDeps {
   // deploy time. The actual env-var → connection-string plumbing is owned
   // by devops in `infrastructure/terraform/modules/lambda` (T-V2-023).
   const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
+    connectionString: process.env.DATABASE_URL, // undefined → falls back to PG* env vars
     max: 1, // Lambdas should keep a small pool — increment 5 will tune.
+    // RDS PostgreSQL 15 enforces SSL on incoming connections (rds.force_ssl).
+    // We accept the AWS-issued cert without validation in v2.0; bundling the
+    // AWS RDS CA bundle for verify-full is a follow-up (T-V2-046).
+    ssl: { rejectUnauthorized: false },
   });
 
   // Alert queue — optional. Only wired when MATIKA_ALERT_QUEUE_URL is set.
