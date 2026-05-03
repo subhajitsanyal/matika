@@ -1,65 +1,75 @@
-# Matika v2 — prod Terraform tree TODO
+# Matika v2 — prod Terraform tree TODO (DEFERRED)
 
-The dev environment under `infrastructure/terraform/environments/dev/` is fully provisioned and running. There is **no `prod/` equivalent yet** — the path to a real production deploy is undefined. This doc tracks what to build.
+**Status as of 2026-05-03:** Deferred. Plan is to run limited trials against dev first, then revisit prod stand-up afterwards.
 
-## Plan
+The prod environment is **scaffolded in source but not applied** — `infrastructure/terraform/environments/prod/main.tf` and `variables.tf` exist with production-grade settings (Multi-AZ RDS, 3 AZs, HealthLake on, deletion protection, backup retention 35 days). The S3 backend is configured with `key = "prod/terraform.tfstate"` and the backing bucket + lock table already exist (provisioned during dev cycle).
 
-1. **Copy the env scaffold:**
+When ready to resume, see commit `906260e` for the scaffold and the rest of this doc for the apply procedure.
+
+## Resuming from the scaffold
+
+1. **Set tfvars in `environments/prod/terraform.tfvars`** (gitignored):
+
+   ```hcl
+   ses_email_arn  = "arn:aws:ses:ap-south-1:<account-id>:identity/<verified-prod-sender>"
+   ses_from_email = "Matika <noreply@<your-prod-domain>>"
+   alert_email    = "<ops-alias@your-domain>"   # NOT a personal inbox
    ```
-   cp -R infrastructure/terraform/environments/dev infrastructure/terraform/environments/prod
-   ```
-   Then strip the local state files (`terraform.tfstate*`) and the cached `.terraform/` if any — prod gets a fresh state.
 
-2. **Edit `environments/prod/main.tf`:**
-   - Backend block: same bucket (`carelog-terraform-state`), but `key = "prod/terraform.tfstate"` instead of `dev/`.
-   - VPC sizing: `vpc_cidr = "10.1.0.0/16"` (don't collide with dev's `10.0.0.0/16`).
-   - AZs: 3 instead of 2 — `["ap-south-1a", "ap-south-1b", "ap-south-1c"]` plus matching `public_subnet_cidrs` and `private_subnet_cidrs`.
-   - Database: `db_instance_class = "db.r6g.large"` (Multi-AZ), `db_allocated_storage` bumped, automated backups enabled.
-   - S3 bucket prefix: `carelog-v2-prod` (or whatever — must be unique).
-   - Feature flags: `enable_healthlake = true`, `enable_bastion = true` (still useful for prod debugging via SSM).
-   - bedrock-router provisioned concurrency: bump from 0 to N once the Lambda concurrency quota increase lands (currently filed at request ID `b654fb014ff241d9b211ab0dee3e371cvCB0VBF4`).
+   Skipping any of these: Cognito falls back to its 50/day built-in mail (fine for limited testing, not for scale); empty `alert_email` skips the entire monitoring module.
 
-3. **Edit `environments/prod/variables.tf`:** mirror dev (no shape changes), just default values where prod needs them.
+2. **Verify the plan still holds:**
 
-4. **Edit `environments/prod/terraform.tfvars`** (gitignored):
-   - `alert_email` — operations alias, NOT a personal inbox. Sometime like `oncall@matika.health` or whatever the real op address is.
-   - `ses_email_arn` — production verified SES identity (separate from the dev one).
-   - `ses_from_email` — production sender format.
-
-5. **Bootstrap state:** the S3 bucket + DynamoDB lock table already exist (created during dev cycle from `infrastructure/terraform/bootstrap/`). No need to re-bootstrap.
-
-6. **First apply:**
-   ```
+   ```bash
    cd infrastructure/terraform/environments/prod
-   terraform init    # initializes the S3 backend with prod/ key
-   terraform plan    # should show ~all-create (fresh env)
+   terraform init    # safe to re-run; idempotent
+   terraform plan    # should show ~370 resources to create
+   ```
+
+   If anything has drifted in the modules since 2026-05-03, the plan output will surface it. Read the diff before applying.
+
+3. **Apply** — provisions ~370 resources, takes 10–15 min:
+
+   ```bash
    terraform apply
    ```
-   Expect 200+ resource creates. Watch for ordering issues (Cognito post-confirmation trigger needs Lambdas to exist first; usually resolves in a single apply).
 
-7. **Pre-prod migrations:** V001-V005 Flyway migrations need to run against the new RDS. Same SSM port-forward path as dev:
-   ```
-   aws ssm start-session --target <prod-bastion> \
+4. **Run V001-V005 Flyway migrations** against the new RDS via the SSM bastion port-forward (same pattern as dev):
+
+   ```bash
+   aws ssm start-session --target $(terraform output -raw bastion_instance_id) \
      --document-name AWS-StartPortForwardingSessionToRemoteHost \
      --parameters '{"host":["<prod-rds>"],"portNumber":["5432"],"localPortNumber":["5432"]}' \
      --region ap-south-1
    cd backend/database && flyway migrate
    ```
 
-8. **Bedrock model subscriptions:** the prod account may need to re-subscribe to Anthropic Marketplace listings (Haiku 4.5, Sonnet 4.6) on first use. If the dev account and prod account are the same AWS account, no action needed. If different accounts, expect "AWS Marketplace actions" denials on first invoke and follow the same pattern as dev (Marketplace IAM is already attached to bedrock-router's role; just trigger first invoke as the role).
+5. **Confirm the SNS subscription email** AWS sends to the `alert_email` value before relying on alarm delivery.
 
-9. **Lambda quota:** the concurrent-execution quota is per-account-per-region. If prod is in a separate account, file a separate quota increase request before pilot.
+6. **Consider bumping `bedrock_router_provisioned_concurrency`** in `prod/main.tf` once the Lambda concurrent-executions quota increase has landed (request id `b654fb014ff241d9b211ab0dee3e371cvCB0VBF4`). Default is 0; bump to 5+ for prod once the quota allows.
 
-10. **CloudWatch alarms:** `alert_email` set in step 4 will activate the same 45 alarms that dev has. Confirm the SNS subscription email when AWS sends it.
+## Cost expectation when resumed
 
-11. **Smoke-test:** repeat the `/conversation/turn` end-to-end smoke against the prod API Gateway URL with a real prod-Cognito test user.
+Idle floor at the configured prod sizing:
+- RDS `db.r6g.large` Multi-AZ in ap-south-1: ~$280–320/month
+- 3 NAT gateways (one per AZ): ~$95/month
+- KMS keys: ~$10/month
+- HealthLake: ~$5–50/month at low volume
+- Lambdas, Cognito, S3 idle: nominal
+- CloudWatch logs: small fixed + per-byte ingestion
 
-## Pre-flight questions before starting
+**Rough idle floor: ~$400–500/month** before any pilot traffic.
 
-- **Same AWS account as dev, or separate?** Affects Marketplace subscription, quota, and naming uniqueness.
-- **Same region (ap-south-1) only, or also ap-southeast-1 / us-east-1 for cross-region inference fallback?** Today the dev `INFERENCE_PROFILE_REGION` is `ap-south-1` and we route via `global.*` profiles. If DPDP review (legal) requires in-region only, prod will also need to switch to `apac.*` profiles.
-- **Multi-AZ RDS or single-AZ?** Multi-AZ doubles cost but is the right call for prod. Spec assumes Multi-AZ.
+## Notes from the dev-for-trials phase
+
+While running limited trials on dev, watch for issues that should change the prod scaffold before applying:
+
+- **Bedrock model availability under load** — if dev surfaces sporadic Marketplace-subscription denials at scale, document the IAM and model-access pattern that worked.
+- **RDS sizing** — dev runs on `db.t3.micro`, which is genuinely tiny. Trial traffic should stress more than the dev hardware. If you see CPU/IOPS hot at low load, prod's `db.r6g.large` may be undersized too (one tier larger if so).
+- **CloudWatch alarm thresholds** — current values (router p99 > 15s, vision p99 > 18s) were guessed pre-traffic. If trials show those firing on healthy operation, retune *before* prod applies them.
+- **Caregiver flow Sonnet reliability** — known to occasionally drop `<output>` envelopes. Trial volume will surface how rare that really is.
+- **DPDP review of `global.*` Bedrock inference profiles** — get the legal answer before prod, not after. If the answer is "in-region only," prod's bedrock_*_model_id needs to switch to `apac.*` profiles, which currently lag the latest model versions.
 
 ---
 
-*Generated 2026-05-03 — final outstanding backend-tree task before pilot.*
+*Generated 2026-05-03. Prod work paused at commit `906260e`; resume from this doc.*
