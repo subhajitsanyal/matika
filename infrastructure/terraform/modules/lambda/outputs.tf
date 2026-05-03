@@ -163,6 +163,7 @@ output "all_function_names" {
     aws_lambda_function.bedrock_vision.function_name,
     aws_lambda_function.cost_telemetry_rollup.function_name,
     aws_lambda_function.health_check.function_name,
+    aws_lambda_function.photo_presign.function_name,
   ]
 }
 
