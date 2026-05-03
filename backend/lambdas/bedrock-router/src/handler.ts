@@ -58,6 +58,12 @@ export interface TurnRequest {
   transcript: string;
   language: 'en-IN' | 'hi-IN' | 'bn-IN';
   turnSequence: number;
+  // Determines which conversation prompt + session-state machine variant
+  // is loaded when the session is first created. Defaults to
+  // 'patient_logging' for backwards compatibility — clients that haven't
+  // been updated to the v2 caregiver flow continue to work.
+  // Ignored on subsequent turns: a session's type is fixed at creation.
+  sessionType?: SessionType;
   clientHints?: {
     preferStreaming?: boolean;
     deviceLatencyEstimateMs?: number;
@@ -389,9 +395,9 @@ async function loadOrCreateTurnContext(
     if (!/No interaction_sessions row/.test(message)) throw err;
 
     // First turn — create the session row using the resolved internal IDs.
-    // Default sessionType is 'patient_logging' for direct /conversation/turn
-    // calls; caregiver sessions are created via a different upstream path.
-    const sessionType: SessionType = 'patient_logging';
+    // Honor sessionType from the request (caregiver_onboarding,
+    // caregiver_config) and default to patient_logging when unset.
+    const sessionType: SessionType = event.sessionType ?? 'patient_logging';
     await deps.sessionCreator.create({
       sessionId: event.sessionId,
       patientId: patientCtx.patient.id,
@@ -506,6 +512,12 @@ function validateRequest(event: TurnRequest): void {
   }
   if (!Number.isFinite(event.turnSequence) || event.turnSequence < 1) {
     throw new Error(`Invalid turnSequence: ${event.turnSequence}`);
+  }
+  if (
+    event.sessionType !== undefined &&
+    !['patient_logging', 'caregiver_config', 'caregiver_onboarding'].includes(event.sessionType)
+  ) {
+    throw new Error(`Invalid sessionType: ${event.sessionType}`);
   }
 }
 

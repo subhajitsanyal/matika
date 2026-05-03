@@ -1458,3 +1458,52 @@ describe('handleTurn — caregiver session routing', () => {
     expect(systemPrompt).not.toContain('Stage 1');
   });
 });
+
+describe('TurnRequest.sessionType passthrough', () => {
+  // Mock LLM result that emits a transition valid from CREATED (the state a
+  // newly-created session is in before the first state transition).
+  const firstTurnInvokeResult: InvokeResult = makeInvokeResult({
+    responseText: `<output>
+{"responseText":"Hello.","ttsHints":{"language":"en-IN","spellOutNumbers":false},"extractedValues":[],"actions":[],"stateTransition":"CREATED -> EXTRACTING","escalationReason":null}
+</output>`,
+  });
+
+  function makeFirstTurnDeps() {
+    return makeDeps({
+      // Force the loadOrCreateTurnContext path to take the "first turn —
+      // create session" branch by having turnLoader throw the magic message.
+      turnLoadError: new Error('No interaction_sessions row for sessionId session-1'),
+      invokeResult: firstTurnInvokeResult,
+    });
+  }
+
+  it('defaults to patient_logging when sessionType is not provided', async () => {
+    const { deps, calls } = makeFirstTurnDeps();
+    await handleTurn(baseRequest, deps);
+    expect(calls.sessionCreates).toHaveLength(1);
+    expect(calls.sessionCreates[0].sessionType).toBe('patient_logging');
+  });
+
+  it('honors sessionType=caregiver_onboarding when provided', async () => {
+    const { deps, calls } = makeFirstTurnDeps();
+    await handleTurn({ ...baseRequest, sessionType: 'caregiver_onboarding' }, deps);
+    expect(calls.sessionCreates).toHaveLength(1);
+    expect(calls.sessionCreates[0].sessionType).toBe('caregiver_onboarding');
+  });
+
+  it('honors sessionType=caregiver_config when provided', async () => {
+    const { deps, calls } = makeFirstTurnDeps();
+    await handleTurn({ ...baseRequest, sessionType: 'caregiver_config' }, deps);
+    expect(calls.sessionCreates[0].sessionType).toBe('caregiver_config');
+  });
+
+  it('rejects an unknown sessionType in validateRequest (HTTP-level fail-fast)', async () => {
+    const { deps } = makeFirstTurnDeps();
+    await expect(
+      handleTurn(
+        { ...baseRequest, sessionType: 'malicious_value' as unknown as 'patient_logging' },
+        deps,
+      ),
+    ).rejects.toThrow('Invalid sessionType');
+  });
+});
