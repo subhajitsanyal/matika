@@ -101,6 +101,75 @@ function requiredEnv(name: string): string {
   return value;
 }
 
-export async function handler(event: TurnRequest): Promise<TurnResponse> {
-  return handleTurn(event, buildDeps());
+// Lambda is invoked through API Gateway proxy integration, which delivers
+// the body as a JSON-stringified `body` field on the event (not as the event
+// itself). Detect that shape, unwrap it, and emit a proxy-shaped response.
+// Direct invocation (tests, manual aws lambda invoke) is still supported
+// when the event already looks like a TurnRequest.
+
+interface ApiGatewayProxyEvent {
+  body: string | null;
+  isBase64Encoded?: boolean;
+}
+
+interface ApiGatewayProxyResponse {
+  statusCode: number;
+  headers: Record<string, string>;
+  body: string;
+}
+
+function isProxyEvent(event: unknown): event is ApiGatewayProxyEvent {
+  return (
+    event !== null &&
+    typeof event === 'object' &&
+    'body' in event &&
+    !('sessionId' in event)
+  );
+}
+
+function jsonResponse(statusCode: number, body: unknown): ApiGatewayProxyResponse {
+  return {
+    statusCode,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  };
+}
+
+async function handleProxyInvocation(
+  event: ApiGatewayProxyEvent,
+  deps: HandlerDeps,
+): Promise<ApiGatewayProxyResponse> {
+  let payload: TurnRequest;
+  try {
+    payload = JSON.parse(event.body ?? '{}') as TurnRequest;
+  } catch (err) {
+    return jsonResponse(400, {
+      error: 'invalid_json',
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  try {
+    const result = await handleTurn(payload, deps);
+    return jsonResponse(200, result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const isClientError = /required|invalid|forbidden|not.allowed|rate.limit|exceeded/i.test(
+      message,
+    );
+    return jsonResponse(isClientError ? 400 : 500, {
+      error: isClientError ? 'invalid_request' : 'internal_error',
+      message,
+    });
+  }
+}
+
+export async function handler(
+  event: TurnRequest | ApiGatewayProxyEvent,
+): Promise<TurnResponse | ApiGatewayProxyResponse> {
+  const deps = buildDeps();
+  if (isProxyEvent(event)) {
+    return handleProxyInvocation(event, deps);
+  }
+  return handleTurn(event, deps);
 }

@@ -46,6 +46,71 @@ function requiredEnv(name: string): string {
   return value;
 }
 
-export async function handler(event: PhotoExtractRequest): Promise<PhotoExtractResponse> {
-  return handlePhotoExtract(event, buildDeps());
+// API Gateway proxy event-shape unwrap (see bedrock-router/src/index.ts for
+// the full rationale). Direct invocation is still supported.
+
+interface ApiGatewayProxyEvent {
+  body: string | null;
+  isBase64Encoded?: boolean;
+}
+
+interface ApiGatewayProxyResponse {
+  statusCode: number;
+  headers: Record<string, string>;
+  body: string;
+}
+
+function isProxyEvent(event: unknown): event is ApiGatewayProxyEvent {
+  return (
+    event !== null &&
+    typeof event === 'object' &&
+    'body' in event &&
+    !('photoS3Key' in event) &&
+    !('s3Key' in event)
+  );
+}
+
+function jsonResponse(statusCode: number, body: unknown): ApiGatewayProxyResponse {
+  return {
+    statusCode,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  };
+}
+
+async function handleProxyInvocation(
+  event: ApiGatewayProxyEvent,
+  deps: VisionHandlerDeps,
+): Promise<ApiGatewayProxyResponse> {
+  let payload: PhotoExtractRequest;
+  try {
+    payload = JSON.parse(event.body ?? '{}') as PhotoExtractRequest;
+  } catch (err) {
+    return jsonResponse(400, {
+      error: 'invalid_json',
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  try {
+    const result = await handlePhotoExtract(payload, deps);
+    return jsonResponse(200, result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const isClientError = /required|invalid|forbidden|not.allowed/i.test(message);
+    return jsonResponse(isClientError ? 400 : 500, {
+      error: isClientError ? 'invalid_request' : 'internal_error',
+      message,
+    });
+  }
+}
+
+export async function handler(
+  event: PhotoExtractRequest | ApiGatewayProxyEvent,
+): Promise<PhotoExtractResponse | ApiGatewayProxyResponse> {
+  const deps = buildDeps();
+  if (isProxyEvent(event)) {
+    return handleProxyInvocation(event, deps);
+  }
+  return handlePhotoExtract(event, deps);
 }
