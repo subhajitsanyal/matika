@@ -4,6 +4,7 @@ import com.carelog.core.config.AppSettings
 import com.carelog.network.AuthInterceptor
 import com.carelog.network.CloudApiService
 import com.carelog.network.MacMiniApiService
+import com.carelog.network.MatikaCloudApi
 import com.carelog.network.MacMiniLlmApi
 import com.carelog.network.MacMiniSttApi
 import com.carelog.network.MacMiniTtsApi
@@ -162,6 +163,20 @@ object DualNetworkModule {
         @CloudApi retrofit: Retrofit
     ): CloudApiService {
         return retrofit.create(CloudApiService::class.java)
+    }
+
+    /**
+     * Matika v2 Bedrock surface (`/conversation/turn`, `/health`,
+     * `/conversation/photo-presign`, `/conversation/photo-extract`).
+     * Shares the v1 cloud Retrofit instance — same base URL, same
+     * Cognito auth interceptor.
+     */
+    @Provides
+    @Singleton
+    fun provideMatikaCloudApi(
+        @CloudApi retrofit: Retrofit
+    ): MatikaCloudApi {
+        return retrofit.create(MatikaCloudApi::class.java)
     }
 
     @Provides

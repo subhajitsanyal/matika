@@ -50,6 +50,7 @@ import com.carelog.conversation.ConversationViewModel
 import com.carelog.conversation.ui.ConversationScreen
 import com.carelog.conversation.ui.SessionSummaryScreen
 import com.carelog.conversation.photo.DevicePhotoCaptureScreen
+import com.carelog.inference.ui.MatikaConversationScreen
 import com.carelog.ui.chat.ChatPlaceholderScreen
 import com.carelog.ui.consent.ConsentScreen
 import com.carelog.ui.dashboard.DashboardScreen
@@ -639,21 +640,44 @@ fun CareLogNavHost() {
         }
 
         // ── Conversation Session (P1) ──────────────────────────
+        // BuildConfig.USE_V2_INFERENCE switches between the v2 Bedrock
+        // path (MatikaConversationScreen, default for pilot) and the
+        // legacy Mac-Mini path (ConversationScreen). The flag dissolves
+        // in Phase E when v1 surface is deleted.
         composable(
             route = CareLogRoutes.CONVERSATION,
             arguments = listOf(navArgument("patientId") { type = NavType.StringType })
         ) {
-            ConversationScreen(
-                onNavigateBack = { navController.popBackStack() },
-                onNavigateToPhoto = {
-                    navController.navigate(CareLogRoutes.DEVICE_PHOTO_CAPTURE)
-                },
-                onSessionEnded = {
-                    navController.navigate(CareLogRoutes.SESSION_SUMMARY) {
-                        popUpTo(CareLogRoutes.CONVERSATION) { inclusive = true }
+            if (com.carelog.core.BuildConfig.USE_V2_INFERENCE) {
+                MatikaConversationScreen(
+                    onNavigateBack = { navController.popBackStack() },
+                    // The v2 screen shows captured values inline via
+                    // SessionCompleteCard before Done is tapped, so we
+                    // skip the v1 SessionSummaryScreen (which reads
+                    // from v1 in-memory state and would mis-report
+                    // "no clinical values captured"). Just pop back to
+                    // wherever the user came from (typically the
+                    // patient home).
+                    onSessionEnded = {
+                        navController.popBackStack(
+                            route = CareLogRoutes.CONVERSATION,
+                            inclusive = true,
+                        )
+                    },
+                )
+            } else {
+                ConversationScreen(
+                    onNavigateBack = { navController.popBackStack() },
+                    onNavigateToPhoto = {
+                        navController.navigate(CareLogRoutes.DEVICE_PHOTO_CAPTURE)
+                    },
+                    onSessionEnded = {
+                        navController.navigate(CareLogRoutes.SESSION_SUMMARY) {
+                            popUpTo(CareLogRoutes.CONVERSATION) { inclusive = true }
+                        }
                     }
-                }
-            )
+                )
+            }
         }
 
         composable(CareLogRoutes.SESSION_SUMMARY) {

@@ -35,6 +35,23 @@
     <!-- Biometric authentication -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
 
+    <!--
+        Package visibility: Android 11+ (API 30) requires apps to declare
+        the intents they want to query. SpeechRecognizer.isRecognitionAvailable()
+        and the language-pack broadcast both depend on the system being
+        able to find a service that handles these actions — without
+        these <queries> entries the v2 SttManager reports the device as
+        having no recognition service even when one is installed.
+    -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+        <intent>
+            <action android:name="android.speech.action.GET_LANGUAGE_DETAILS" />
+        </intent>
+    </queries>
+
     <application
         android:name=".core.CareLogApplication"
         android:allowBackup="false"
