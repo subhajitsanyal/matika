@@ -198,7 +198,18 @@ async function handleProxyInvocation(
 
   try {
     const result = await handleTurn(payload, deps);
-    return jsonResponse(200, result);
+    // `handleTurn` already returns `{ statusCode, body: <stringified
+    // TurnResponseBody> }` — the API Gateway proxy shape minus the
+    // headers field. Pass `result.body` through directly: re-wrapping
+    // it with jsonResponse(200, result) would double-stringify and
+    // ship `{"statusCode":200,"body":"..."}` to the client, where the
+    // outer envelope's keys don't match TurnResponseBody and Gson
+    // silently drops every field.
+    return {
+      statusCode: result.statusCode,
+      headers: { 'Content-Type': 'application/json' },
+      body: result.body,
+    };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const isClientError = /required|invalid|forbidden|not.allowed|rate.limit|exceeded/i.test(

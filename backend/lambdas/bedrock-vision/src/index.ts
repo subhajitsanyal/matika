@@ -99,7 +99,16 @@ async function handleProxyInvocation(
 
   try {
     const result = await handlePhotoExtract(payload, deps);
-    return jsonResponse(200, result);
+    // `handlePhotoExtract` already returns the API Gateway proxy
+    // shape (statusCode + stringified body). Pass through directly;
+    // re-wrapping with jsonResponse(200, result) would double-stringify
+    // and break client deserialization (same bug pattern as the
+    // bedrock-router fix in its index.ts).
+    return {
+      statusCode: result.statusCode,
+      headers: { 'Content-Type': 'application/json' },
+      body: result.body,
+    };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const isClientError = /required|invalid|forbidden|not.allowed/i.test(message);
