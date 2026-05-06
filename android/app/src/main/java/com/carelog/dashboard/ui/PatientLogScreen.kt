@@ -294,7 +294,12 @@ private fun InteractionCard(
                             fontWeight = FontWeight.Medium
                         )
                         Text(
-                            text = "${interaction.type.replace("_", " ")} | ${interaction.turn_count} turns | ${formatDuration(interaction.duration_ms)}",
+                            // `interaction.type` is declared non-null in
+                            // the DTO but Gson can land it as null when
+                            // the wire payload omits the field. Guard at
+                            // the render site rather than mutate the
+                            // DTO (would cascade to other call sites).
+                            text = "${(interaction.type as String?)?.replace("_", " ") ?: "session"} | ${interaction.turn_count} turns | ${formatDuration(interaction.duration_ms)}",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
