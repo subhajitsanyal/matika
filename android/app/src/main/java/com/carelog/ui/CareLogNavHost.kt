@@ -145,6 +145,15 @@ object CareLogRoutes {
     const val PATIENT_ONBOARDING_CONVERSATION = "patient_onboarding_conversation"
     const val PATIENT_PROFILE_CONFIRMATION = "patient_profile_confirmation"
     const val PROTOCOL_CONFIG_CONVERSATION = "protocol_config_conversation/{patientId}/{patientName}"
+    /**
+     * v2 caregiver onboarding (Phase C). Replaces PROTOCOL_CONFIG_CONVERSATION
+     * when [com.carelog.core.BuildConfig.USE_V2_INFERENCE] is true. Carries
+     * the patient's Cognito sub instead of the internal `patient_id` UUID
+     * because the v2 backend takes the sub on the wire and resolves the
+     * internal id server-side.
+     */
+    const val MATIKA_PROTOCOL_CONFIG_CONVERSATION =
+        "matika_protocol_config_conversation/{patientCognitoSub}/{patientName}"
     const val CAREGIVER_INVITE = "caregiver_invite/{patientId}/{patientName}/{temporaryPassword}"
 
     // Caregiver dashboard routes (P2)
@@ -156,6 +165,8 @@ object CareLogRoutes {
     fun conversation(patientId: String) = "conversation/$patientId"
     fun protocolConfig(patientId: String, patientName: String) =
         "protocol_config_conversation/$patientId/$patientName"
+    fun matikaProtocolConfig(patientCognitoSub: String, patientName: String) =
+        "matika_protocol_config_conversation/$patientCognitoSub/$patientName"
     fun caregiverInvite(patientId: String, patientName: String, temporaryPassword: String) =
         "caregiver_invite/$patientId/$patientName/$temporaryPassword"
     fun patientLogs(patientId: String) = "patient_logs/$patientId"
@@ -464,10 +475,21 @@ fun CareLogNavHost() {
         composable(CareLogRoutes.PATIENT_PROFILE_CONFIRMATION) {
             PatientProfileConfirmationScreen(
                 onNavigateBack = { navController.popBackStack() },
-                onPatientCreated = { patientId, temporaryPassword ->
-                    navController.navigate(
-                        CareLogRoutes.protocolConfig(patientId, "Patient")
+                onPatientCreated = { patientId, temporaryPassword, patientCognitoSub ->
+                    // Phase C: route to the v2 protocol-config conversation
+                    // when the flag is on AND the backend returned the new
+                    // patient's Cognito sub (post-Phase-C `create-patient`).
+                    // Otherwise fall back to the v1 protocol-config flow so
+                    // pre-Phase-C deployments keep working.
+                    val v2Route = if (
+                        com.carelog.core.BuildConfig.USE_V2_INFERENCE &&
+                        !patientCognitoSub.isNullOrBlank()
                     ) {
+                        CareLogRoutes.matikaProtocolConfig(patientCognitoSub, "Patient")
+                    } else {
+                        CareLogRoutes.protocolConfig(patientId, "Patient")
+                    }
+                    navController.navigate(v2Route) {
                         popUpTo(CareLogRoutes.PATIENT_ONBOARDING_CONVERSATION) { inclusive = true }
                     }
                 }
@@ -493,6 +515,36 @@ fun CareLogNavHost() {
                         popUpTo(CareLogRoutes.CAREGIVER_DASHBOARD) { inclusive = false }
                     }
                 }
+            )
+        }
+
+        // ── v2 Caregiver Onboarding Conversation (Phase C) ──────
+        // Routes the caregiver-driven protocol setup through the same
+        // MatikaConversationScreen as patient_logging, but with
+        // sessionType=caregiver_onboarding and patient/actor Cognito
+        // subs decoupled. The Sonnet end-of-session protocol-extraction
+        // pass on the backend (T-V2-302) writes parameter_configs +
+        // patient_topics; the screen surfaces the result via the
+        // protocol block on the final TurnResponse.
+        composable(
+            route = CareLogRoutes.MATIKA_PROTOCOL_CONFIG_CONVERSATION,
+            arguments = listOf(
+                navArgument("patientCognitoSub") { type = NavType.StringType },
+                navArgument("patientName") { type = NavType.StringType },
+            ),
+        ) {
+            MatikaConversationScreen(
+                onNavigateBack = { navController.popBackStack() },
+                onSessionEnded = {
+                    // After protocol setup completes, drop back to the
+                    // caregiver dashboard. Pop everything in this
+                    // onboarding sub-flow off the stack so the back
+                    // button doesn't replay it.
+                    navController.popBackStack(
+                        route = CareLogRoutes.MATIKA_PROTOCOL_CONFIG_CONVERSATION,
+                        inclusive = true,
+                    )
+                },
             )
         }
 

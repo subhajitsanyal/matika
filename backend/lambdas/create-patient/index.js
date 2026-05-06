@@ -494,6 +494,11 @@ exports.handler = async (event) => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         patientId,
+        // Phase C (Android v2 caregiver onboarding) needs the patient's
+        // Cognito sub to drive /conversation/turn — the v2 backend takes
+        // patientId-as-Cognito-sub on the wire and resolves the internal
+        // UUID server-side. Pre-Phase-C clients can ignore this field.
+        cognito_sub: cognitoSub,
         temporary_password: tempPassword,
         email: patientLoginEmail,
         message: "Patient created successfully",

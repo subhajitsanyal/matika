@@ -130,7 +130,8 @@ class PatientSetupViewModel @Inject constructor(
                     it.copy(
                         isSubmitting = false,
                         patientId = response.patient_id,
-                        temporaryPassword = response.temporary_password
+                        temporaryPassword = response.temporary_password,
+                        patientCognitoSub = response.cognito_sub
                     )
                 }
 

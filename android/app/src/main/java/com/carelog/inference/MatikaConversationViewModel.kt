@@ -1,6 +1,7 @@
 package com.carelog.inference
 
 import android.util.Log
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.carelog.auth.AuthRepository
@@ -11,6 +12,7 @@ import com.carelog.conversation.audio.tts.NumberFormatter
 import com.carelog.conversation.audio.tts.TtsManager
 import com.carelog.conversation.audio.tts.TtsQueueMode
 import com.carelog.core.config.AppSettings
+import com.carelog.network.ProtocolResult
 import com.carelog.network.SessionType
 import com.carelog.network.TtsHints
 import com.carelog.network.TurnActionType
@@ -51,7 +53,17 @@ class MatikaConversationViewModel @Inject constructor(
     private val stateMachine: ConversationStateMachine,
     private val authRepository: AuthRepository,
     private val appSettings: AppSettings,
+    savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
+
+    /**
+     * Patient's Cognito sub from the nav graph. Present on the
+     * caregiver-onboarding route (Phase C); absent on the
+     * patient_logging route, in which case the patient is the
+     * authenticated user themselves.
+     */
+    private val navPatientCognitoSub: String? =
+        savedStateHandle.get<String>("patientCognitoSub")
 
     private companion object {
         const val TAG = "MatikaConversationVM"
@@ -62,6 +74,13 @@ class MatikaConversationViewModel @Inject constructor(
     private val sttError = MutableStateFlow<String?>(null)
     private val sessionEnded = MutableStateFlow(false)
     private val isListening = MutableStateFlow(false)
+    /**
+     * Caregiver-onboarding sessions emit a `protocol` block on the
+     * turn that fires `complete_session`. Pin it here so the
+     * SessionCompleteCard can show the extraction summary
+     * ("X parameters and Y topics configured").
+     */
+    private val lastProtocolResult = MutableStateFlow<ProtocolResult?>(null)
 
     /**
      * Single observable for the screen. Composed from the state
@@ -77,6 +96,7 @@ class MatikaConversationViewModel @Inject constructor(
             ttsManager.isSpeaking,
             isListening,
             sessionEnded,
+            lastProtocolResult,
         ) { values ->
             @Suppress("UNCHECKED_CAST")
             MatikaConversationUiState(
@@ -87,6 +107,7 @@ class MatikaConversationViewModel @Inject constructor(
                 isSpeaking = values[4] as Boolean,
                 isListening = values[5] as Boolean,
                 sessionEnded = values[6] as Boolean,
+                protocolResult = values[7] as ProtocolResult?,
             )
         }.stateIn(
             scope = viewModelScope,
@@ -117,7 +138,18 @@ class MatikaConversationViewModel @Inject constructor(
                 return@launch
             }
             val languageTag = toBcp47(appSettings.language.first().code)
-            val cognitoSub = user.userId
+            val actorCognitoSub = user.userId
+
+            // Caregiver mode: nav graph supplied the patient's Cognito
+            // sub; the actor (current user) is a different person.
+            // Patient mode: actor and patient are the same — the
+            // authenticated user logging their own vitals.
+            val isCaregiverMode = !navPatientCognitoSub.isNullOrBlank()
+            val patientCognitoSub = if (isCaregiverMode) navPatientCognitoSub!! else actorCognitoSub
+            val sessionType =
+                if (isCaregiverMode) SessionType.CAREGIVER_ONBOARDING
+                else SessionType.PATIENT_LOGGING
+
             // Clear any lingering UI state from a prior session so the
             // SessionCompleteCard doesn't render over the new
             // conversation when this screen is re-entered.
@@ -125,14 +157,19 @@ class MatikaConversationViewModel @Inject constructor(
             sttPartialTranscript.value = ""
             lastUserUtterance.value = ""
             sttError.value = null
+            lastProtocolResult.value = null
             stateMachine.start(
-                patientCognitoSub = cognitoSub,
-                actorCognitoSub = cognitoSub,
+                patientCognitoSub = patientCognitoSub,
+                actorCognitoSub = actorCognitoSub,
                 languageTag = languageTag,
-                sessionType = SessionType.PATIENT_LOGGING,
+                sessionType = sessionType,
             )
             sessionStarted = true
-            Log.i(TAG, "Started v2 session sub=$cognitoSub language=$languageTag")
+            Log.i(
+                TAG,
+                "Started v2 session sessionType=$sessionType actor=$actorCognitoSub " +
+                    "patient=$patientCognitoSub language=$languageTag",
+            )
         }
     }
 
@@ -267,9 +304,11 @@ class MatikaConversationViewModel @Inject constructor(
                     TAG,
                     "submitTurn ok fsm=${response.sessionState.fsmState} " +
                         "extracted=${response.extractedValues.size} " +
-                        "actions=${response.actions.map { it.type }}",
+                        "actions=${response.actions.map { it.type }} " +
+                        "protocol=${response.protocol?.let { "${it.parametersConfigured}p+${it.topicsConfigured}t" }}",
                 )
                 stateMachine.applyTurnResponse(response)
+                response.protocol?.let { lastProtocolResult.value = it }
                 speakResponse(response.responseText, response.ttsHints)
                 if (response.actions.any { it.type == TurnActionType.COMPLETE_SESSION }) {
                     sessionEnded.value = true
@@ -355,4 +394,10 @@ data class MatikaConversationUiState(
     val isSpeaking: Boolean = false,
     val isListening: Boolean = false,
     val sessionEnded: Boolean = false,
+    /**
+     * Present only after a caregiver_onboarding session ends — the
+     * Lambda's Sonnet protocol extractor returns its result on the
+     * `complete_session` turn. Null on patient_logging sessions.
+     */
+    val protocolResult: ProtocolResult? = null,
 )

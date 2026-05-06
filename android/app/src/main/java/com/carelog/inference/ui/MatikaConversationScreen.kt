@@ -61,6 +61,7 @@ import com.carelog.inference.MatikaConversationUiState
 import com.carelog.inference.MatikaConversationViewModel
 import com.carelog.network.ExtractedValue
 import com.carelog.network.ExtractedValueStatus
+import com.carelog.network.ProtocolResult
 
 /**
  * v2 conversation screen — minimal Compose UI for the patient
@@ -183,7 +184,13 @@ private fun SessionCompleteCard(
     uiState: MatikaConversationUiState,
     onDone: () -> Unit,
 ) {
+    // Caregiver onboarding sessions surface a protocolResult on the
+    // turn that fires complete_session. Render the protocol summary
+    // when present; otherwise render the patient_logging summary
+    // (captured values).
+    val protocol = uiState.protocolResult
     val captured = uiState.conversation.capturedThisSession
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -197,45 +204,11 @@ private fun SessionCompleteCard(
                 fontWeight = FontWeight.Bold,
             )
             Spacer(Modifier.height(4.dp))
-            // Server-side persistence is independent of this UI: the
-            // bedrock-router Lambda already wrote each confirmed value
-            // to S3 as a FHIR Observation and recorded the model_call
-            // telemetry. This card is just a visual receipt for the
-            // patient — the source of truth is the backend.
-            Text(
-                "Thank you. The readings below have been recorded.",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            Spacer(Modifier.height(16.dp))
 
-            if (captured.isEmpty()) {
-                // Edge case: server completed the session without any
-                // confirmed value (e.g. patient asked for help, then
-                // explicitly ended). Surface honestly rather than lie.
-                Text(
-                    "No values were confirmed during this session.",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
+            if (protocol != null) {
+                CaregiverProtocolSummary(protocol)
             } else {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    captured.forEach { v ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                v.parameter,
-                                style = MaterialTheme.typography.bodyLarge,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.weight(1f),
-                            )
-                            Text(
-                                "${formatNumber(v.value)} ${v.unit}",
-                                style = MaterialTheme.typography.bodyLarge,
-                            )
-                        }
-                    }
-                }
+                PatientLoggingSummary(captured)
             }
 
             Spacer(Modifier.height(20.dp))
@@ -246,6 +219,110 @@ private fun SessionCompleteCard(
                 Text("Done")
             }
         }
+    }
+}
+
+@Composable
+private fun PatientLoggingSummary(captured: List<ExtractedValue>) {
+    // Server-side persistence is independent of this UI: the
+    // bedrock-router Lambda already wrote each confirmed value to S3
+    // as a FHIR Observation and recorded the model_call telemetry.
+    // This block is just a visual receipt for the patient.
+    Text(
+        "Thank you. The readings below have been recorded.",
+        style = MaterialTheme.typography.bodyMedium,
+    )
+    Spacer(Modifier.height(16.dp))
+
+    if (captured.isEmpty()) {
+        // Edge case: server completed the session without any
+        // confirmed value (e.g. patient asked for help, then
+        // explicitly ended). Surface honestly rather than lie.
+        Text(
+            "No values were confirmed during this session.",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+    } else {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            captured.forEach { v ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        v.parameter,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        "${formatNumber(v.value)} ${v.unit}",
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CaregiverProtocolSummary(protocol: ProtocolResult) {
+    if (!protocol.extracted) {
+        // Sonnet extraction was attempted but failed. Honest message
+        // rather than fake success — caregivers will need to retry
+        // and may want to know something went wrong.
+        Text(
+            "We couldn't extract the monitoring protocol. Please contact support — your conversation is saved.",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        protocol.error?.let { reason ->
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Reason: $reason",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        return
+    }
+
+    Text(
+        "Thanks. The patient's monitoring plan has been saved.",
+        style = MaterialTheme.typography.bodyMedium,
+    )
+    Spacer(Modifier.height(16.dp))
+
+    Row(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            "Parameters configured",
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            protocol.parametersConfigured.toString(),
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
+    Spacer(Modifier.height(4.dp))
+    Row(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            "Topics configured",
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            protocol.topicsConfigured.toString(),
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
+
+    if (protocol.topicsSkipped.isNotEmpty()) {
+        Spacer(Modifier.height(12.dp))
+        Text(
+            "Skipped (unknown topic names): ${protocol.topicsSkipped.joinToString(", ")}",
+            style = MaterialTheme.typography.bodySmall,
+        )
     }
 }
 

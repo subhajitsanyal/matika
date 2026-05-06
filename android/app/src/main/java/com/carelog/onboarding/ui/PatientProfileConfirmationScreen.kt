@@ -28,7 +28,13 @@ import com.carelog.onboarding.PatientSetupViewModel
 @Composable
 fun PatientProfileConfirmationScreen(
     onNavigateBack: () -> Unit,
-    onPatientCreated: (patientId: String, temporaryPassword: String) -> Unit,
+    /**
+     * Fired once the new patient is created via `POST /patients`.
+     * `patientCognitoSub` is null when running against a pre-Phase-C
+     * backend that doesn't return the sub yet — in that case the
+     * caller should fall back to the v1 protocol-config route.
+     */
+    onPatientCreated: (patientId: String, temporaryPassword: String, patientCognitoSub: String?) -> Unit,
     modifier: Modifier = Modifier,
     viewModel: PatientSetupViewModel = hiltViewModel()
 ) {
@@ -38,7 +44,11 @@ fun PatientProfileConfirmationScreen(
     // Navigate when patient is created
     LaunchedEffect(uiState.patientId) {
         uiState.patientId?.let { patientId ->
-            onPatientCreated(patientId, uiState.temporaryPassword ?: "")
+            onPatientCreated(
+                patientId,
+                uiState.temporaryPassword ?: "",
+                uiState.patientCognitoSub,
+            )
         }
     }
 

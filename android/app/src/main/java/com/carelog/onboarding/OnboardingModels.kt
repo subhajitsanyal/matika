@@ -141,6 +141,14 @@ data class PatientSetupUiState(
     val isSubmitting: Boolean = false,
     val patientId: String? = null,
     val temporaryPassword: String? = null,
+    /**
+     * Patient's Cognito sub from the create-patient response. Required
+     * to launch the v2 caregiver-onboarding conversation in Phase C —
+     * the v2 backend takes Cognito sub on the wire. Null when running
+     * against pre-Phase-C backends; the caller falls back to the v1
+     * route in that case.
+     */
+    val patientCognitoSub: String? = null,
     val errorMessage: String? = null
 )
 

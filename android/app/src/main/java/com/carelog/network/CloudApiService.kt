@@ -194,7 +194,15 @@ data class EmergencyContact(
 data class CreatePatientResponse(
     val patient_id: String,
     val temporary_password: String,
-    val email: String?
+    val email: String?,
+    /**
+     * Patient's Cognito sub. Required by the v2 caregiver-onboarding
+     * flow (Phase C) — `MatikaConversationViewModel` sends this as
+     * `patientId` on the wire and the backend resolves the internal
+     * UUID server-side. Nullable so older deployments of the
+     * `create-patient` Lambda (pre-Phase-C) still parse cleanly.
+     */
+    val cognito_sub: String?
 )
 
 data class PatientsResponse(
