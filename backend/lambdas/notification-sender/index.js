@@ -158,9 +158,14 @@ async function handleThresholdBreachNotification(client, message) {
   // Find caregiver device endpoints
   const endpoints = await getCaregiverDeviceEndpoints(client, patientId, caregiverId);
 
+  if (endpoints.length === 0) {
+    console.warn('No active caregiver device tokens found', { patientId, caregiverId, alertId });
+  }
+
+  let anyDelivered = false;
   for (const endpoint of endpoints) {
     try {
-      await sendPushNotification(endpoint.endpoint_arn, endpoint.platform, title, body, {
+      const delivered = await sendPushNotification(endpoint.device_token, endpoint.platform, title, body, {
         alert_type: P2_ALERT_TYPES.THRESHOLD_BREACH,
         patient_id: patientId,
         parameter,
@@ -168,11 +173,16 @@ async function handleThresholdBreachNotification(client, message) {
         threshold: String(threshold),
       });
 
-      console.log(`Sent threshold breach notification to caregiver ${endpoint.user_name || endpoint.user_id}`);
+      if (delivered) {
+        anyDelivered = true;
+        console.log(`Sent threshold breach notification to caregiver ${endpoint.user_name || endpoint.user_id}`);
+      }
     } catch (error) {
       console.error(`Failed to send threshold breach notification:`, error);
     }
   }
+
+  await markAlertSent(client, alertId, anyDelivered);
 }
 
 /**
@@ -197,9 +207,14 @@ async function handleMissedMeasurementNotification(client, message) {
   // Find caregiver device endpoints
   const endpoints = await getCaregiverDeviceEndpoints(client, patientId, caregiverId);
 
+  if (endpoints.length === 0) {
+    console.warn('No active caregiver device tokens found', { patientId, caregiverId, alertId: message.alert_id });
+  }
+
+  let anyDelivered = false;
   for (const endpoint of endpoints) {
     try {
-      await sendPushNotification(endpoint.endpoint_arn, endpoint.platform, title, body, {
+      const delivered = await sendPushNotification(endpoint.device_token, endpoint.platform, title, body, {
         alert_type: P2_ALERT_TYPES.MISSED_MEASUREMENT,
         patient_id: patientId,
         parameter,
@@ -207,11 +222,16 @@ async function handleMissedMeasurementNotification(client, message) {
         configured_frequency_days: String(frequencyDays),
       });
 
-      console.log(`Sent missed measurement notification for ${parameter} to caregiver`);
+      if (delivered) {
+        anyDelivered = true;
+        console.log(`Sent missed measurement notification for ${parameter} to caregiver`);
+      }
     } catch (error) {
       console.error(`Failed to send missed measurement notification:`, error);
     }
   }
+
+  await markAlertSent(client, message.alert_id, anyDelivered);
 }
 
 /**
@@ -232,44 +252,65 @@ async function handleReminderNotification(client, message) {
   // Get patient's device endpoint
   const patientEndpoints = await getPatientDeviceEndpoints(client, patientId);
 
+  if (patientEndpoints.length === 0) {
+    console.warn('No active patient device tokens found', { patientId, alertId: message.alert_id });
+  }
+
+  let anyDelivered = false;
   for (const endpoint of patientEndpoints) {
     try {
-      await sendPushNotification(endpoint.endpoint_arn, endpoint.platform, title, body, {
+      const delivered = await sendPushNotification(endpoint.device_token, endpoint.platform, title, body, {
         alert_type: P2_ALERT_TYPES.REMINDER,
         patient_id: patientId,
         action: action || 'open_conversation',
       });
 
-      console.log(`Sent reminder notification to patient ${patientId}`);
+      if (delivered) {
+        anyDelivered = true;
+        console.log(`Sent reminder notification to patient ${patientId}`);
+      }
     } catch (error) {
       console.error(`Failed to send reminder notification:`, error);
     }
   }
+
+  await markAlertSent(client, message.alert_id, anyDelivered);
 }
 
 /**
  * Get caregiver device endpoints for a patient.
+ *
+ * Schema notes (V001+):
+ *   device_tokens.user_id is users.id (UUID), NOT users.cognito_sub. Earlier
+ *   versions of this lambda joined `dt.user_id = u.cognito_sub` which always
+ *   returned 0 rows due to the UUID-vs-text type mismatch.
+ *
+ *   The platform-specific transport credential is `device_tokens.device_token`
+ *   (raw FCM/APNs token). The SNS-Platform-Endpoint-ARN column referenced by
+ *   the older code (`endpoint_arn`) does not exist in the live schema.
  */
 async function getCaregiverDeviceEndpoints(client, patientId, caregiverId) {
   let query;
   let params;
 
   if (caregiverId) {
-    // Direct lookup by caregiver ID
+    // Direct lookup by caregiver ID (the caregiver_id we ship in the SQS
+    // payload is the resolved users.id UUID — see evaluate-thresholds-batch).
     query = `
-      SELECT dt.endpoint_arn, dt.platform, u.name as user_name, u.id as user_id
+      SELECT dt.device_token, dt.platform, u.name AS user_name, u.id AS user_id
       FROM device_tokens dt
-      JOIN users u ON dt.user_id = u.cognito_sub
-      WHERE u.id = $1`;
+      JOIN users u ON dt.user_id = u.id
+      WHERE u.id = $1 AND dt.is_active = true`;
     params = [caregiverId];
   } else {
-    // Find all caregivers linked to the patient
+    // Find all caregivers linked to the patient.
     query = `
-      SELECT dt.endpoint_arn, dt.platform, u.name as user_name, pl.linked_user_id as user_id
+      SELECT dt.device_token, dt.platform, u.name AS user_name, pl.linked_user_id AS user_id
       FROM persona_links pl
       JOIN users u ON pl.linked_user_id = u.id
-      JOIN device_tokens dt ON dt.user_id = u.cognito_sub
-      WHERE pl.patient_id = $1 AND pl.is_active = true AND pl.relationship = 'caregiver'`;
+      JOIN device_tokens dt ON dt.user_id = u.id
+      WHERE pl.patient_id = $1 AND pl.is_active = true AND pl.relationship = 'caregiver'
+        AND dt.is_active = true`;
     params = [patientId];
   }
 
@@ -278,15 +319,16 @@ async function getCaregiverDeviceEndpoints(client, patientId, caregiverId) {
 }
 
 /**
- * Get patient device endpoints.
+ * Get patient device endpoints. Same schema fix as
+ * getCaregiverDeviceEndpoints.
  */
 async function getPatientDeviceEndpoints(client, patientId) {
   const result = await client.query(
-    `SELECT dt.endpoint_arn, dt.platform, u.cognito_sub
+    `SELECT dt.device_token, dt.platform, u.id AS user_id
      FROM patients p
      JOIN users u ON p.user_id = u.id
-     JOIN device_tokens dt ON dt.user_id = u.cognito_sub
-     WHERE p.id = $1`,
+     JOIN device_tokens dt ON dt.user_id = u.id
+     WHERE p.id = $1 AND dt.is_active = true`,
     [patientId]
   );
   return result.rows;
@@ -560,44 +602,102 @@ async function sendReminderLapseNotification(client, patientId, vitalType) {
 }
 
 /**
- * Send push notification via SNS.
+ * Send push notification.
+ *
+ * Today the dev environment has no SNS Platform Application configured
+ * (`IOS_PLATFORM_ARN` / `ANDROID_PLATFORM_ARN` env vars unset) and the live
+ * device_tokens schema stores the raw FCM/APNs token, not an SNS endpoint
+ * ARN. Until the platform-application infra is provisioned (or this lambda
+ * is rewired to talk directly to FCM HTTP v1 / APNs), there is no transport
+ * to call.
+ *
+ * Behavior:
+ *   - When no transport is wired (env vars unset): log once per call and
+ *     return false. Backend chain still completes (alerts row + sent_at
+ *     bookkeeping); the push side is a no-op.
+ *   - When transport IS wired: build the platform-specific payload and
+ *     hand to SNS. Returns true on success.
  */
-async function sendPushNotification(endpointArn, platform, title, body, data) {
-  let message;
+async function sendPushNotification(deviceToken, platform, title, body, data) {
+  const platformArn =
+    platform === 'ios' ? process.env.IOS_PLATFORM_ARN : process.env.ANDROID_PLATFORM_ARN;
 
-  if (platform === 'ios') {
-    message = JSON.stringify({
-      APNS: JSON.stringify({
-        aps: {
-          alert: {
-            title,
-            body,
-          },
-          sound: 'default',
-          badge: 1,
-        },
-        data,
-      }),
-    });
-  } else {
-    // Android FCM
-    message = JSON.stringify({
-      GCM: JSON.stringify({
-        notification: {
-          title,
-          body,
-          sound: 'default',
-        },
-        data,
-      }),
-    });
+  if (!platformArn) {
+    console.warn(
+      `Push transport not configured (${platform.toUpperCase()}_PLATFORM_ARN unset); skipping delivery`,
+      { platform, hasToken: Boolean(deviceToken) }
+    );
+    return false;
   }
 
-  await snsClient.send(new PublishCommand({
-    TargetArn: endpointArn,
-    Message: message,
-    MessageStructure: 'json',
-  }));
+  if (!deviceToken) {
+    console.warn('No device token to push to; skipping delivery', { platform });
+    return false;
+  }
+
+  // Per-call ad-hoc endpoint: register the token with SNS (idempotent —
+  // re-using an existing endpoint is allowed). We don't persist the
+  // returned ARN today because device_tokens has no endpoint_arn column;
+  // see F15 follow-up to add it + persist.
+  const { CreatePlatformEndpointCommand } = require('@aws-sdk/client-sns');
+  const endpointResp = await snsClient.send(
+    new CreatePlatformEndpointCommand({
+      PlatformApplicationArn: platformArn,
+      Token: deviceToken,
+      Attributes: { Enabled: 'true' },
+    })
+  );
+  const endpointArn = endpointResp.EndpointArn;
+
+  const message =
+    platform === 'ios'
+      ? JSON.stringify({
+          APNS: JSON.stringify({
+            aps: { alert: { title, body }, sound: 'default', badge: 1 },
+            data,
+          }),
+        })
+      : JSON.stringify({
+          GCM: JSON.stringify({
+            notification: { title, body, sound: 'default' },
+            data,
+          }),
+        });
+
+  await snsClient.send(
+    new PublishCommand({
+      TargetArn: endpointArn,
+      Message: message,
+      MessageStructure: 'json',
+    })
+  );
+
+  return true;
+}
+
+/**
+ * Mark an alerts row as sent. Idempotent — safe to call multiple times.
+ *
+ * `delivered` reflects whether at least one push was successfully handed off
+ * to the transport. When false (no caregiver device token, transport not
+ * configured), is_sent stays false and send_error captures the reason so
+ * the row can be retried later.
+ */
+async function markAlertSent(client, alertId, delivered) {
+  if (!alertId) {
+    return;
+  }
+  if (delivered) {
+    await client.query(
+      `UPDATE alerts SET is_sent = true, sent_at = NOW(), send_error = NULL WHERE id = $1`,
+      [alertId]
+    );
+  } else {
+    await client.query(
+      `UPDATE alerts SET send_error = $2 WHERE id = $1`,
+      [alertId, 'no_transport_or_no_device_token']
+    );
+  }
 }
 
 /**

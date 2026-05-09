@@ -23,11 +23,28 @@ jest.mock('@aws-sdk/client-sns', () => ({
   SNSClient: jest.fn().mockImplementation(() => ({
     send: mockSnsSend,
   })),
-  PublishCommand: jest.fn().mockImplementation((params) => params),
+  PublishCommand: jest.fn().mockImplementation((params) => ({ ...params, __cmd: 'Publish' })),
+  CreatePlatformEndpointCommand: jest
+    .fn()
+    .mockImplementation((params) => ({ ...params, __cmd: 'CreatePlatformEndpoint' })),
 }));
 
 process.env.DB_SECRET_NAME = 'test-secret';
 process.env.AWS_REGION = 'ap-south-1';
+// Push transport configured in tests so the SNS publish path is exercised.
+// In real dev these env vars are unset and sendPushNotification short-circuits;
+// see F15 follow-up.
+process.env.IOS_PLATFORM_ARN = 'arn:aws:sns:ap-south-1:123:app/APNS/test';
+process.env.ANDROID_PLATFORM_ARN = 'arn:aws:sns:ap-south-1:123:app/GCM/test';
+
+// Each successful push results in 2 SNS calls: CreatePlatformEndpoint (returns
+// { EndpointArn }) followed by Publish. Test-helper routes that through one
+// mockSnsSend.mock that returns the endpoint ARN on the first call and
+// {MessageId} on subsequent calls.
+function mockPushDelivery() {
+  mockSnsSend.mockResolvedValueOnce({ EndpointArn: 'arn:aws:sns:ap-south-1:123:endpoint/X/test/abc' });
+  mockSnsSend.mockResolvedValueOnce({ MessageId: 'mid-1' });
+}
 
 const { Client } = require('pg');
 const { handler } = require('../index');
@@ -54,15 +71,18 @@ describe('notification-sender Lambda', () => {
 
   describe('threshold_breach SQS message', () => {
     test('sends push notification for threshold breach', async () => {
-      // getCaregiverDeviceEndpoints query
+      // getCaregiverDeviceEndpoints query — F15 schema: device_token, NOT endpoint_arn
       mockQuery.mockResolvedValueOnce({
         rows: [{
-          endpoint_arn: 'arn:aws:sns:ap-south-1:123:endpoint/GCM/app/device-1',
+          device_token: 'fcm-test-token-1',
           platform: 'android',
           user_name: 'Caregiver',
           user_id: 'cg-1',
         }],
       });
+      mockPushDelivery();
+      // markAlertSent UPDATE
+      mockQuery.mockResolvedValueOnce({ rowCount: 1 });
 
       const event = {
         Records: [{
@@ -84,12 +104,33 @@ describe('notification-sender Lambda', () => {
 
       const result = await handler(event);
       expect(result.statusCode).toBe(200);
-      expect(mockSnsSend).toHaveBeenCalledTimes(1);
+      // 1× CreatePlatformEndpoint + 1× Publish = 2 SNS calls
+      expect(mockSnsSend).toHaveBeenCalledTimes(2);
+
+      // F15 regression guard: the row-fetching query must NOT reference
+      // the dropped endpoint_arn column or the wrong-type cognito_sub join.
+      const endpointCall = mockQuery.mock.calls.find(
+        ([sql]) => typeof sql === 'string' && sql.includes('FROM device_tokens')
+      );
+      expect(endpointCall).toBeDefined();
+      expect(endpointCall[0]).toMatch(/dt\.device_token/);
+      expect(endpointCall[0]).toMatch(/dt\.user_id = u\.id/);
+      expect(endpointCall[0]).not.toMatch(/dt\.endpoint_arn/);
+      expect(endpointCall[0]).not.toMatch(/dt\.user_id\s*=\s*u\.cognito_sub/);
+
+      // markAlertSent flips is_sent + sent_at on success
+      const markCall = mockQuery.mock.calls.find(
+        ([sql]) => typeof sql === 'string' && sql.startsWith('UPDATE alerts SET is_sent')
+      );
+      expect(markCall).toBeDefined();
+      expect(markCall[1]).toEqual(['alert-1']);
     });
 
     test('handles threshold breach with no caregiver devices', async () => {
       // getCaregiverDeviceEndpoints - no devices
       mockQuery.mockResolvedValueOnce({ rows: [] });
+      // markAlertSent (failure path: send_error captured)
+      mockQuery.mockResolvedValueOnce({ rowCount: 1 });
 
       const event = {
         Records: [{
@@ -110,20 +151,28 @@ describe('notification-sender Lambda', () => {
       const result = await handler(event);
       expect(result.statusCode).toBe(200);
       expect(mockSnsSend).not.toHaveBeenCalled();
+
+      // markAlertSent UPDATE captures the no-transport reason in send_error
+      const errCall = mockQuery.mock.calls.find(
+        ([sql]) => typeof sql === 'string' && sql.includes('SET send_error')
+      );
+      expect(errCall).toBeDefined();
+      expect(errCall[1]).toEqual(['alert-2', 'no_transport_or_no_device_token']);
     });
   });
 
   describe('missed_measurement SQS message', () => {
     test('sends push notification for missed measurement', async () => {
-      // getCaregiverDeviceEndpoints query
       mockQuery.mockResolvedValueOnce({
         rows: [{
-          endpoint_arn: 'arn:aws:sns:ap-south-1:123:endpoint/GCM/app/device-1',
+          device_token: 'fcm-test-token-1',
           platform: 'android',
           user_name: 'Caregiver',
           user_id: 'cg-1',
         }],
       });
+      mockPushDelivery();
+      mockQuery.mockResolvedValueOnce({ rowCount: 1 });
 
       const event = {
         Records: [{
@@ -136,26 +185,28 @@ describe('notification-sender Lambda', () => {
             patient_name: 'Ramesh',
             days_overdue: 2,
             configured_frequency_days: 1,
+            alert_id: 'alert-mm-1',
           }),
         }],
       };
 
       const result = await handler(event);
       expect(result.statusCode).toBe(200);
-      expect(mockSnsSend).toHaveBeenCalledTimes(1);
+      expect(mockSnsSend).toHaveBeenCalledTimes(2);
     });
   });
 
   describe('reminder SQS message', () => {
     test('sends push notification for reminder', async () => {
-      // getPatientDeviceEndpoints query
       mockQuery.mockResolvedValueOnce({
         rows: [{
-          endpoint_arn: 'arn:aws:sns:ap-south-1:123:endpoint/GCM/app/patient-device',
+          device_token: 'fcm-patient-token',
           platform: 'android',
-          cognito_sub: 'patient-sub-1',
+          user_id: 'patient-uuid-1',
         }],
       });
+      mockPushDelivery();
+      mockQuery.mockResolvedValueOnce({ rowCount: 1 });
 
       const event = {
         Records: [{
@@ -165,18 +216,19 @@ describe('notification-sender Lambda', () => {
             title: 'Health Check Reminder',
             body: "It's time to log your health readings. Tap to start.",
             action: 'open_conversation',
+            alert_id: 'alert-rem-1',
           }),
         }],
       };
 
       const result = await handler(event);
       expect(result.statusCode).toBe(200);
-      expect(mockSnsSend).toHaveBeenCalledTimes(1);
+      expect(mockSnsSend).toHaveBeenCalledTimes(2);
     });
 
     test('handles reminder with no patient devices', async () => {
-      // getPatientDeviceEndpoints - no devices
       mockQuery.mockResolvedValueOnce({ rows: [] });
+      mockQuery.mockResolvedValueOnce({ rowCount: 1 });
 
       const event = {
         Records: [{
@@ -223,21 +275,16 @@ describe('notification-sender Lambda', () => {
     test('processes multiple SQS records', async () => {
       // First record: reminder -> getPatientDeviceEndpoints
       mockQuery.mockResolvedValueOnce({
-        rows: [{
-          endpoint_arn: 'arn:aws:sns:ap-south-1:123:endpoint/GCM/app/patient-device',
-          platform: 'android',
-          cognito_sub: 'patient-sub-1',
-        }],
+        rows: [{ device_token: 'fcm-patient-token', platform: 'android', user_id: 'patient-uuid-1' }],
       });
+      mockPushDelivery();                                  // CreateEndpoint + Publish
+      mockQuery.mockResolvedValueOnce({ rowCount: 1 });    // markAlertSent
       // Second record: missed_measurement -> getCaregiverDeviceEndpoints
       mockQuery.mockResolvedValueOnce({
-        rows: [{
-          endpoint_arn: 'arn:aws:sns:ap-south-1:123:endpoint/GCM/app/cg-device',
-          platform: 'android',
-          user_name: 'Caregiver',
-          user_id: 'cg-1',
-        }],
+        rows: [{ device_token: 'fcm-cg-token', platform: 'android', user_name: 'Caregiver', user_id: 'cg-1' }],
       });
+      mockPushDelivery();
+      mockQuery.mockResolvedValueOnce({ rowCount: 1 });
 
       const event = {
         Records: [
@@ -247,6 +294,7 @@ describe('notification-sender Lambda', () => {
               patient_id: 'patient-1',
               title: 'Reminder',
               body: 'Log your readings',
+              alert_id: 'alert-rem-2',
             }),
           },
           {
@@ -259,6 +307,7 @@ describe('notification-sender Lambda', () => {
               patient_name: 'Ramesh',
               days_overdue: 1,
               configured_frequency_days: 1,
+              alert_id: 'alert-mm-2',
             }),
           },
         ],
@@ -266,7 +315,8 @@ describe('notification-sender Lambda', () => {
 
       const result = await handler(event);
       expect(result.statusCode).toBe(200);
-      expect(mockSnsSend).toHaveBeenCalledTimes(2);
+      // 2 records × (CreatePlatformEndpoint + Publish) = 4 SNS calls
+      expect(mockSnsSend).toHaveBeenCalledTimes(4);
     });
   });
 });

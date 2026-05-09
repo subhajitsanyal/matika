@@ -71,11 +71,11 @@ VALUES ($1, $2, $3, $4, $5, $6, NOW())
 
 ---
 
-### F15 — `notification-sender` device-token resolution is broken: UUID vs cognito_sub join + non-existent `endpoint_arn` column (NEW — surfaced by audit)
+### F15 — `notification-sender` device-token resolution: UUID-vs-cognito_sub join + non-existent `endpoint_arn` column (RESOLVED on the lambda side — verified live 2026-05-09; transport infra still unprovisioned, see F17)
 
-**Severity:** **Critical** for the second-device push verification path (CG-V2-07, CG-V2-08, CG-V2-09, E2E-V2-02 UI side). Even after F11/F12, the FCM push delivery side of the threshold-breach chain cannot work today.
-**Owner:** `backend`.
-**Estimated effort:** Half a day (schema reconcile + SNS endpoint plumbing).
+**Severity:** Was Critical. Now: lambda is schema-clean and observable; the remaining gap is environmental, tracked separately as F17.
+**Owner:** `backend` (done) → `devops` for F17.
+**Status:** notification-sender's three v2 handlers (`handleThresholdBreachNotification`, `handleMissedMeasurementNotification`, `handleReminderNotification`) now correctly resolve device tokens via `dt.user_id = u.id` (UUID) and select `dt.device_token` (the actual transport credential). Each handler ends by stamping `alerts.is_sent / sent_at / send_error` so the row always reflects what happened. The legacy paths (storeAlert / sendThresholdBreachNotification / sendPatientReminder / sendReminderLapseNotification) are still broken but dormant — see F14.
 
 **Reproduction.**
 1. `device_tokens` schema (live):
@@ -94,6 +94,41 @@ VALUES ($1, $2, $3, $4, $5, $6, NOW())
 **Fix sketch.**
 - Decide whether to register SNS platform endpoints (then add an `endpoint_arn` column to `device_tokens` + the registration plumbing), or to skip SNS and call FCM Admin SDK / direct HTTP push from the lambda using `device_token` directly.
 - Either way, fix the join: `dt.user_id = u.id` (UUID = UUID).
+
+**Verification (2026-05-09 21:23Z).** Re-triggered `evaluate-thresholds-batch` for Jane with a 210/- BP payload. notification-sender consumed the SQS message, resolved 0 caregiver device tokens (Jane's caregiver has no device_tokens row in dev, see F17), and updated the alerts row:
+```
+SELECT id, is_sent, sent_at, send_error
+FROM alerts
+WHERE id = 'ab91f73a-...';
+-- ab91f73a-... | f | NULL | no_transport_or_no_device_token
+```
+Lambda completed in 877 ms with zero errors. The CloudWatch entries from earlier in the evening showing `operator does not exist: uuid = character varying` were the *old* code's failures on already-queued messages; SQS redelivered those after the deploy and they processed cleanly.
+
+**Test coverage.** The 8 jest tests in `notification-sender/__tests__/index.test.js` were updated:
+- Mock rows now ship `device_token` (not `endpoint_arn`).
+- `IOS_PLATFORM_ARN` / `ANDROID_PLATFORM_ARN` env vars set in test setup so the SNS publish path is exercised.
+- New regression-guard assertion on the threshold_breach test: SQL must contain `dt.device_token` and `dt.user_id = u.id` and must NOT contain `dt.endpoint_arn` or `dt.user_id = u.cognito_sub`.
+- New assertions on `markAlertSent` UPDATE shape (success → `SET is_sent = true, sent_at = NOW()`; failure → `SET send_error = 'no_transport_or_no_device_token'`).
+
+---
+
+### F17 — Push transport not provisioned in dev (no SNS Platform Applications, no `endpoint_arn` column on `device_tokens`, no caregiver device_tokens rows) (NEW — environmental, surfaced by F15 fix)
+
+**Severity:** Medium. Blocks the FCM/APNs delivery half of every alert journey (CG-V2-07/08/09, E2E-V2-02/03/06 UI side). Backend chain is fully verifiable today (alerts row + `is_sent=false, send_error='no_transport_or_no_device_token'` is the explicit observable state); the device receiving the push is the only thing missing.
+**Owner:** `devops` + `android-app` (token registration) + product (decide SNS Platform Apps vs direct FCM HTTP v1).
+**Estimated effort:** 1 day end-to-end:
+
+1. **SNS Platform Applications** — create one per platform (FCM / APNs) in `ap-south-1`; capture the application ARNs.
+2. **Lambda env vars** — set `IOS_PLATFORM_ARN` and `ANDROID_PLATFORM_ARN` on `notification-sender` *and* `device-token` lambdas (Terraform `modules/lambda/main.tf`).
+3. **Schema follow-up** — add `endpoint_arn VARCHAR(256)` to `device_tokens` (Flyway migration) so `device-token` can persist the SNS endpoint ARN at registration time and `notification-sender` can read it instead of calling `CreatePlatformEndpoint` per message.
+4. **`device-token` Lambda fix** — currently broken for the same reasons as F15; needs UUID-vs-cognito_sub fix + endpoint_arn persistence + the lambda has 0 invocation events ever, so the ANDROID/iOS clients aren't even hitting it. Confirm the client-side token-registration call.
+5. **Android client wiring** — `MatikaApp` / sign-in flow needs to call `POST /device-tokens` with the FCM token after every login. Today there is no such call; `device_tokens` has been empty since dev was provisioned.
+
+**Note vs F15.** F15 was the lambda-side bug (broken SQL + missing column). F17 is the absence of any actual transport. Even after F15, no push will land until F17 is closed because there's no SNS Platform App for the lambda to publish to and no caregiver device tokens registered.
+
+**Today's observable state when F17 unblocks F15 backend half:**
+- `alerts.is_sent=true, sent_at=<timestamp>, send_error=NULL` for every successful delivery.
+- `alerts.is_sent=false, sent_at=NULL, send_error='no_transport_or_no_device_token'` for every alert where infra is missing or no token registered.
 
 ---
 
