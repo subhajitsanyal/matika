@@ -52,3 +52,7 @@ tfplan
 # Maestro debug artefacts (screenshots + view hierarchy dumps)
 .maestro/debug/
 .maestro/.maestro/
+
+# Agentic sweep artefacts — per-sweep evidence trees, gitignored by design
+# (see docs/journeys.md §3.1 + .agents/qa-testing.md "Constraints")
+test-automation/results/
