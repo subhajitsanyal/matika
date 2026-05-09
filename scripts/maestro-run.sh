@@ -86,9 +86,14 @@ fi
 echo "▸ Running maestro: $TARGET"
 # Maestro does not auto-import shell env vars — `${VAR}` references in
 # the YAML resolve to the literal "undefined" unless we pass them
-# explicitly via --env. Forward the four creds we expect.
+# explicitly via --env. Forward the four creds we expect, plus the
+# optional patient-email/name overrides used by
+# .maestro/scripts/generate_patient_email.js when staging a known
+# account (e.g. the Jane Doe test patient).
 exec maestro test "$TARGET" \
     -e "MATIKA_CAREGIVER_EMAIL=$MATIKA_CAREGIVER_EMAIL" \
     -e "MATIKA_CAREGIVER_PASSWORD=$MATIKA_CAREGIVER_PASSWORD" \
     -e "MATIKA_PATIENT_EMAIL=$MATIKA_PATIENT_EMAIL" \
-    -e "MATIKA_PATIENT_PASSWORD=$MATIKA_PATIENT_PASSWORD"
+    -e "MATIKA_PATIENT_PASSWORD=$MATIKA_PATIENT_PASSWORD" \
+    -e "MATIKA_FORCE_PATIENT_EMAIL=${MATIKA_FORCE_PATIENT_EMAIL:-}" \
+    -e "MATIKA_FORCE_PATIENT_NAME=${MATIKA_FORCE_PATIENT_NAME:-}"

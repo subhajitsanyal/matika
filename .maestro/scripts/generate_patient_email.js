@@ -1,17 +1,32 @@
-// Maestro JS hook: generate a Cognito-unique patient email for the
-// caregiver onboarding flow. Cognito user pools enforce email
-// uniqueness, so each test run needs a fresh suffix to avoid the
-// UsernameExistsException 500 we hit during manual testing.
+// Maestro JS hook: pick the patient email + name for the caregiver
+// onboarding flow.
 //
-// Uses Gmail's `+` alias trick: anything after `+` is ignored for
-// delivery but counted as distinct by Cognito. Keep the base email
-// in the env var MATIKA_TEST_EMAIL_BASE — that way one Gmail inbox
-// receives all welcome emails (when SES is verified later).
+// Default behaviour (no overrides) generates a Cognito-unique email
+// via Gmail's `+` alias trick + a timestamp suffix, so the flow is
+// idempotent across CI runs.
 //
-// Output: sets `output.patientEmail` for use later in the flow as
-// `${output.patientEmail}`.
+// Overrides (passed via --env from scripts/maestro-run.sh):
+//   MATIKA_FORCE_PATIENT_EMAIL  - use this exact email instead of an alias
+//   MATIKA_FORCE_PATIENT_NAME   - use this exact name instead of "Test Patient <stamp>"
+//
+// Use overrides for test-data setup runs where the resulting account
+// will be used by downstream patient-side journeys (matika-test-creds.env).
+//
+// Output: sets `output.patientEmail` and `output.patientName` for use
+// later in the flow as `${output.patientEmail}` etc.
 
-const base = MAESTRO_TEST_EMAIL_BASE || 'sanyalsubhajit2010';
-const stamp = Date.now().toString(36); // compact timestamp (8 chars)
-output.patientEmail = `${base}+pt-${stamp}@gmail.com`;
-output.patientName = `Test Patient ${stamp}`;
+if (typeof MATIKA_FORCE_PATIENT_EMAIL !== 'undefined' && MATIKA_FORCE_PATIENT_EMAIL) {
+    output.patientEmail = MATIKA_FORCE_PATIENT_EMAIL;
+    output.patientName =
+        (typeof MATIKA_FORCE_PATIENT_NAME !== 'undefined' && MATIKA_FORCE_PATIENT_NAME)
+            ? MATIKA_FORCE_PATIENT_NAME
+            : 'Test Patient';
+} else {
+    const base =
+        (typeof MATIKA_TEST_EMAIL_BASE !== 'undefined' && MATIKA_TEST_EMAIL_BASE)
+            ? MATIKA_TEST_EMAIL_BASE
+            : 'sanyalsubhajit2010';
+    const stamp = Date.now().toString(36);
+    output.patientEmail = `${base}+pt-${stamp}@gmail.com`;
+    output.patientName = `Test Patient ${stamp}`;
+}
