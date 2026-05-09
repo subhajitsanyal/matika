@@ -48,3 +48,7 @@ GoogleService-Info.plist
 # Terraform plans and Lambda archives
 tfplan
 **/modules/lambda/archives/
+
+# Maestro debug artefacts (screenshots + view hierarchy dumps)
+.maestro/debug/
+.maestro/.maestro/

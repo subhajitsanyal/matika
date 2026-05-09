@@ -1,0 +1,89 @@
+# Phase A end-to-end: patient signs in, opens the conversation screen,
+# logs blood pressure via the text-input fallback, confirms the value,
+# verifies the session-complete card.
+#
+# Why text-input fallback: deterministic, no STT dependency. The voice
+# path is exercised by manual testing.
+#
+# Pre-conditions:
+#   - APK installed.
+#   - Patient creds in shell env.
+#   - Test patient has parameter_configs in dev RDS for at least
+#     blood_pressure_systolic + blood_pressure_diastolic.
+#   - Backend dev /health green.
+#
+# Run:
+#   source ~/.matika-test-creds.env
+#   scripts/maestro-run.sh patient_logging_happy_path
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+# ── Sign in as the patient ──────────────────────────────────
+- extendedWaitUntil:
+    visible:
+      id: login_email
+    timeout: 15000
+- tapOn:
+    id: login_email
+- inputText: ${MATIKA_PATIENT_EMAIL}
+- tapOn:
+    id: login_password
+- inputText: ${MATIKA_PATIENT_PASSWORD}
+- hideKeyboard
+- tapOn:
+    id: login_button
+
+# ── Patient home → Start Conversation ───────────────────────
+- extendedWaitUntil:
+    visible:
+      id: patient_home_start_conversation
+    timeout: 15000
+- tapOn:
+    id: patient_home_start_conversation
+
+# ── Verify v2 conversation screen ───────────────────────────
+- extendedWaitUntil:
+    visible: "Matika"
+    timeout: 15000
+- assertVisible: "v2 (dev)"
+
+# Permission prompt may appear on first launch. `optional: true`
+# keeps the flow going if the prompt was already granted on a
+# previous run (where it won't appear).
+- tapOn:
+    text: "Allow|While using the app"
+    optional: true
+
+# ── Turn 1: log BP via text fallback ────────────────────────
+- tapOn:
+    id: matika_text_fallback
+- inputText: "BP is one thirty over eighty five"
+- tapOn:
+    id: matika_text_send
+
+# Wait for response card. Look for typical confirmation phrasing —
+# substring match because the LLM phrasing varies turn-to-turn.
+- extendedWaitUntil:
+    visible: "Is that correct"
+    timeout: 30000
+
+# ── Turn 2: confirm ────────────────────────────────────────
+- tapOn:
+    id: matika_text_fallback
+- inputText: "Yes that's correct"
+- tapOn:
+    id: matika_text_send
+
+# Allow the LLM to potentially ask for the next parameter; this
+# patient's protocol may include glucose / weight, so the session
+# may continue. The flow ends as soon as we see the completion card.
+# If your test patient's protocol only has BP, this fires after
+# turn 2; if it includes more, you'll need additional turns.
+- extendedWaitUntil:
+    visible: "Session complete"
+    timeout: 90000
+
+- tapOn: "Done"
