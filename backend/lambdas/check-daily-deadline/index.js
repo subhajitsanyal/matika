@@ -165,7 +165,7 @@ exports.handler = async (event) => {
         const recentReminderResult = await dbClient.query(
           `SELECT 1 FROM alerts
            WHERE patient_id = $1
-             AND alert_type = 'PATIENT_REMINDER'
+             AND alert_type = 'patient_reminder'
              AND created_at > NOW() - INTERVAL '1 hour'`,
           [patientId]
         );
@@ -177,7 +177,7 @@ exports.handler = async (event) => {
         // Create alert record for the reminder
         await dbClient.query(
           `INSERT INTO alerts (patient_id, recipient_user_id, alert_type, message, created_at)
-           VALUES ($1, $2, 'PATIENT_REMINDER', $3, NOW())`,
+           VALUES ($1, $2, 'patient_reminder', $3, NOW())`,
           [patientId, row.user_id, 'Health Check Reminder: It\'s time to log your health readings.']
         );
 

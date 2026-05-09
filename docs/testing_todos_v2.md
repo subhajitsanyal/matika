@@ -16,6 +16,107 @@ Items below are ordered by **leverage** (journeys-unblocked-per-effort). Pick fr
 
 ## Sweep harness fixes (highest leverage first)
 
+### Backend-chain audit summary (2026-05-09)
+
+A pass over every Lambda that reads or writes the `alerts` / `alert_reads` / `device_tokens` tables surfaced a partial-migration class of bugs: V001 renamed `alerts.value → vital_value`, `alerts.user_id → recipient_user_id`, dropped `alerts.deleted_at`, dropped `alert_reads`, and lowercased the `alert_type` enum — but most consumer Lambdas were never updated. F11 (resolved) was the first instance; F12-F16 below are siblings discovered tonight by direct SQL replay against the live dev schema.
+
+### F12 — `check-daily-deadline` writes uppercase `'PATIENT_REMINDER'` enum literal (RESOLVED — verified live 2026-05-09)
+
+**Severity:** High. With this bug present, the daily reminder cycle (E2E-V2-06, PT-V2-24) silently fails: the per-patient try/catch swallows the enum error and the lambda returns `0 reminders sent` with no observable failure. No `patient_reminder` row has ever landed in the dev `alerts` table.
+**Owner:** `backend`.
+**Status:** Fixed and verified end-to-end. Lowercased the two `'PATIENT_REMINDER'` literals in `backend/lambdas/check-daily-deadline/index.js` (the dedup `SELECT 1` and the `INSERT INTO alerts`). Replayed the exact INSERT against dev RDS post-fix: succeeds and returns the new row's id + `alert_type='patient_reminder'`. Lambda redeployed via `aws lambda update-function-code`. Existing 14-test jest suite still green.
+
+**Why the lambda hadn't crashed visibly today.** The time-of-day gate (deadline 18:00 IST + Jane's daily_deadline=18:00) only triggers the INSERT branch between 18:00 and 23:59 IST. At the moment of the audit (02:04 IST = 20:34 UTC of 2026-05-09 PT), the gate excluded all patients before reaching the INSERT, so the bug was dormant. The next 18:00–23:59 IST window would have hit the per-patient catch and silently dropped the reminder.
+
+---
+
+### F13 — `alert-crud` reads non-existent `alerts.value` and `alerts.deleted_at` columns (NEW — surfaced by audit)
+
+**Severity:** High. Touches every caregiver/relative alerts UI path: list, detail, soft-delete. With this bug present, `GET /alerts` and `DELETE /alerts/{id}` return HTTP 500 against the current dev schema.
+**Owner:** `backend`.
+**Estimated effort:** 1 hour (column rename across SELECT/UPDATE + a unit test that asserts against the live schema, mirroring the F11 regression guard).
+
+**Reproduction (2026-05-09).** Replayed `SELECT a.value FROM alerts a LIMIT 1;` against dev RDS:
+```
+ERROR: column a.value does not exist
+```
+And `SELECT deleted_at FROM alerts LIMIT 1;`:
+```
+ERROR: column "deleted_at" does not exist
+```
+
+**Fix.** In `backend/lambdas/alert-crud/index.js`:
+- Replace every `a.value` / `row.value` with `a.vital_value` (and update the response field accordingly).
+- Replace the soft-delete `UPDATE alerts SET deleted_at = NOW()` with either an `is_read=true` mark (the schema already has `is_read`) or hard-delete, depending on product intent. Drop any `WHERE deleted_at IS NULL` filters.
+
+---
+
+### F14 — `notification-sender` legacy `storeAlert` writes to `user_id` and `value` columns that no longer exist (NEW — surfaced by audit)
+
+**Severity:** Medium. Dormant in the v2 hot path: the new `evaluate-thresholds-batch` produces lowercase `type:'threshold_breach'` SQS messages, which the v2 handlers in this Lambda consume *without* writing to `alerts`. The legacy paths (`sendThresholdBreachNotification`, `sendPatientReminder`, `sendReminderLapseNotification`) all funnel through `storeAlert` and would crash if invoked with a legacy SQS payload.
+**Owner:** `backend`.
+**Estimated effort:** 2 hours (collapse legacy paths or rewrite `storeAlert` against the live schema).
+
+**Reproduction.** `backend/lambdas/notification-sender/index.js` line 608:
+```js
+INSERT INTO alerts (patient_id, user_id, alert_type, vital_type, value, message, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, NOW())
+```
+- `user_id` → live schema is `recipient_user_id`.
+- `value` → live schema is `vital_value`.
+- Same uppercase-enum trap on the legacy `'PATIENT_REMINDER'` literal in lines 452, 481, 489.
+
+**Recommendation.** Either delete the legacy paths entirely (the v1 sender flow they targeted is gone in v2), or fold them into the v2 handlers. Today they are pure dead code that keeps reappearing in audits.
+
+---
+
+### F15 — `notification-sender` device-token resolution is broken: UUID vs cognito_sub join + non-existent `endpoint_arn` column (NEW — surfaced by audit)
+
+**Severity:** **Critical** for the second-device push verification path (CG-V2-07, CG-V2-08, CG-V2-09, E2E-V2-02 UI side). Even after F11/F12, the FCM push delivery side of the threshold-breach chain cannot work today.
+**Owner:** `backend`.
+**Estimated effort:** Half a day (schema reconcile + SNS endpoint plumbing).
+
+**Reproduction.**
+1. `device_tokens` schema (live):
+   - `user_id` is `uuid NOT NULL`
+   - The platform-token column is `device_token VARCHAR(512)` — there is **no `endpoint_arn` column**
+2. `notification-sender` queries (multiple call sites):
+   ```sql
+   SELECT dt.endpoint_arn, dt.platform, ...
+   FROM users u JOIN device_tokens dt ON dt.user_id = u.cognito_sub
+   ```
+   - Joins UUID-typed `device_tokens.user_id` against `users.cognito_sub` (varchar). Always returns 0 rows.
+   - Selects `dt.endpoint_arn` which doesn't exist; even if the join worked, the SELECT would error.
+
+**Net effect.** When E2E-V2-02 enqueues a `threshold_breach` SQS message (now correctly populated post-F11), notification-sender consumes it but `getCaregiverDeviceEndpoints` returns `[]` → no `sendPushNotification` call → caregiver phone never rings. Tonight's "SQS messages went `NotVisible=2`" log line tells us notification-sender accepted the message; it does *not* tell us a push was sent.
+
+**Fix sketch.**
+- Decide whether to register SNS platform endpoints (then add an `endpoint_arn` column to `device_tokens` + the registration plumbing), or to skip SNS and call FCM Admin SDK / direct HTTP push from the lambda using `device_token` directly.
+- Either way, fix the join: `dt.user_id = u.id` (UUID = UUID).
+
+---
+
+### F16 — `doctor-patients` references non-existent `alert_reads` table and `alerts.deleted_at` column (NEW — surfaced by audit)
+
+**Severity:** Low (today). All 8 DR-V2-* journeys are already blocked on `data-testid` and Playwright-runner work. Once the web portal is unblocked, this lambda will crash on the doctor's patient list.
+**Owner:** `backend`.
+**Estimated effort:** 30 min.
+
+**Reproduction.** `backend/lambdas/doctor-patients/index.js` line 92 builds:
+```sql
+SELECT COUNT(*)
+FROM alerts a
+LEFT JOIN alert_reads ar ON ar.alert_id = a.id AND ar.user_id = $1
+WHERE a.patient_id = p.id AND ar.id IS NULL AND a.deleted_at IS NULL
+```
+- `alert_reads` doesn't exist (`Did not find any relation named "alert_reads"`).
+- `a.deleted_at` doesn't exist (same as F13).
+- Plus uses `pl.role = 'doctor'` and `pl.status = 'active'` — `persona_links` schema actually exposes `relationship` and `is_active` (verified earlier when I ran the persona_links lookup for Jane).
+
+**Fix.** Use the schema-correct columns: `recipient_user_id`-based unread count (per `patient-summary` already does this correctly), `relationship='doctor'`, `is_active=true`, drop the deleted_at filter.
+
+---
+
 ### F11 — `evaluate-thresholds-batch` writes `alerts` row with the wrong column name and no recipient (RESOLVED — verified live 2026-05-09)
 
 **Severity:** High. Was: **no `threshold_breach` alert could ever land in the `alerts` table** — the entire E2E-V2-02 / E2E-V2-03 caregiver-notification chain was silently broken end-to-end.
