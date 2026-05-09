@@ -19,10 +19,10 @@ For voice journeys that genuinely require Mac-speaker injection, see `docs/journ
 | ID | Title | Status today | Test path |
 |---|---|---|---|
 | **PT-V2-01** | First login | **PASS** (sweep `20260508_215314`) | Maestro `patient_logging_happy_path` first half. |
-| **PT-V2-02** | Patient home orientation | **blocked** | Needs new flow asserting tab bar + a11y. |
+| **PT-V2-02** | Patient home orientation | **PASS (2026-05-09)** | `patient_dashboard_orientation.yaml` — login as patient, assert `patient_home_start_conversation` testTag + brand chrome render cleanly. |
 | **PT-V2-07** | Text-input fallback (deterministic) | **PASS** | `patient_logging_happy_path.yaml`. The CI gate. |
-| **PT-V2-08** | Implausible value challenge (T3) | blocked → **runnable via text** | New flow tapping `matika_text_fallback`, type `"my BP is 300 over 200"`, expect Sonnet escalation in `model_call.escalation_reason='implausible_value'`. |
-| **PT-V2-09** | Emergency keyword detection | blocked → **runnable via text** | New flow typing `"I have severe chest pain"` via fallback. Expect emergency UI + caregiver FCM (verifying push needs second device → manual). |
+| **PT-V2-08** | Implausible value challenge (T3) | **PASS (2026-05-09, post-F10)** | `patient_implausible_text.yaml` — types "BP is 300 over 200" via `matika_text_fallback`. RDS `interaction_sessions.fsm_state='PLAUSIBILITY_CHALLENGE'`. T2 Haiku alone proposes the transition (cheaper than the spec assumed T3). |
+| **PT-V2-09** | Emergency keyword detection | **PASS (2026-05-09)** | `patient_emergency_text.yaml` — types "I have severe chest pain". RDS session ends with `escalations_triggered=["emergency_keyword"]`. UI shows emergency response. Push receipt is the F17 device-side gap; backend chain is complete. |
 | **PT-V2-10** | Photo OCR happy path (ML Kit) | manual | Needs real glucometer or printed mock. Out of agentic scope. |
 | **PT-V2-11** | Photo OCR Bedrock vision fallback | manual | Glare condition; needs real photo. |
 | **PT-V2-12** | Photo extraction failure (422) | manual | Needs blank surface photo. |
@@ -88,8 +88,8 @@ All 8 are gated on `web-portal` agent shipping `data-testid` attributes + `web-j
 
 | ID | Title | Status today | Test path |
 |---|---|---|---|
-| **EDGE-V2-01** | Registration validation | blocked → **runnable** | New Maestro flow scripting bad inputs against `register_*` testTags. ~30 min author effort. |
-| **EDGE-V2-02** | Login validation | blocked → **runnable** | Same shape. |
+| **EDGE-V2-01** | Registration validation | **PASS (2026-05-09)** | `registration_validation.yaml` — three sub-cases (bad email, mismatched confirm, weak password) each fail to advance past register. Required `scrollUntilVisible` between every field — the form is taller than the viewport. |
+| **EDGE-V2-02** | Login validation | **PASS (2026-05-09)** | `login_validation_wrong_password.yaml` — wrong password surfaces "Failed since user is not authorized." snackbar; flow stays on login screen. Maestro plain-text matcher needs `.*…*` wildcards (full-string regex semantics). |
 | **EDGE-V2-03** | Bedrock Guardrail block | flow authored, **regression surfaced (F19)** | `patient_guardrail_block_text.yaml` submits a misconduct-category prompt that the Guardrail correctly intervenes on. bedrock-router's parser then crashes ("No `<output>...</output>` block found") because it doesn't handle the `amazon-bedrock-guardrailAction` response shape. Journey moves to PASS once F19 ships. |
 | **EDGE-V2-04** | `FORCE_CHANGE_PASSWORD` first-time login | blocked | Jane is past this state; needs fresh patient via caregiver flow with default temp password. |
 | **EDGE-V2-05** | JWT silent refresh (1hr) | manual | Wall-clock 60+ min. Out of sweep budget. |
@@ -107,44 +107,28 @@ All 8 are gated on `web-portal` agent shipping `data-testid` attributes + `web-j
 
 ---
 
-## Quick stats
+## Quick stats (last refreshed 2026-05-09 end of session)
 
-| Bucket | Count |
-|---|---|
-| **Runnable today (PASS already)** | 4 — PT-V2-01, PT-V2-07, CG-V2-02, CG-V2-05, EDGE-V2-07 (5) |
-| **Runnable with new Maestro flows authored tonight** | ~10 — PT-V2-02, PT-V2-08 (text), PT-V2-09 (text), PT-V2-13 (text), CG-V2-18, EDGE-V2-01, EDGE-V2-02, EDGE-V2-03, EDGE-V2-13, EDGE-V2-16 |
-| **Backend-half runnable (no UI dependency)** | ~6 — CG-V2-07, CG-V2-08, CG-V2-09, E2E-V2-02, E2E-V2-03 backend chains |
-| **Manual / out-of-budget** | ~10 — photos, second-device pushes, JWT timers, idle timeouts |
-| **Architecture-blocked (F4)** | 7 — PT-V2-15..21 |
-| **Web-portal-blocked** | 8 — all DR-V2-* |
-| **Backend backlog** | 4 — CG-V2-16, EDGE-V2-08, EDGE-V2-09, EDGE-V2-04 |
-| **Total** | 60 (matches 73 catalog − 10 voice − 3 oos accounted-for-elsewhere) |
+| Bucket | Count | IDs |
+|---|---|---|
+| **Full PASS** (UI + backend) | 13 | PT-V2-01, PT-V2-02, PT-V2-07, PT-V2-08, PT-V2-09, PT-V2-13, CG-V2-02, CG-V2-05, CG-V2-06, CG-V2-18, EDGE-V2-01, EDGE-V2-02, EDGE-V2-07, EDGE-V2-11, EDGE-V2-13 |
+| **Backend half PASS, push delivery blocked on F17** | 5 | CG-V2-07, CG-V2-08, CG-V2-09, E2E-V2-02, E2E-V2-03, E2E-V2-06 |
+| **Flow authored, regression confirmed** | 2 | EDGE-V2-03 (F19 — guardrail parser crash), EDGE-V2-16 (F18 — disclosure copy missing) |
+| **Architecture-blocked (F4)** | 12 | PT-V2-15..21, EDGE-V2-14, CG-V2-12, CG-V2-13, CG-V2-17 |
+| **Web-portal-blocked** (data-testid + Playwright) | 8 | DR-V2-01..08 |
+| **Backend backlog** | 4 | CG-V2-16, EDGE-V2-04, EDGE-V2-08, EDGE-V2-09 |
+| **Manual / out-of-agentic-scope** | 10 | PT-V2-10/11/12 (photos), PT-V2-24, EDGE-V2-05/06/10/12 (wall-clock timers), EDGE-V2-15 (mic perm revoke) |
+| **Cognito-interception-blocked** | 3 | CG-V2-01, PT-V2-23, EDGE-V2-04 |
+| **Design-blocked** | 1 | PT-V2-22 (no patient Care Team view) |
+| **Partial / in-progress** | 1 | E2E-V2-01 (constituents partly covered) |
+| **Other blockers** (SES not verified, etc.) | 4 | CG-V2-10, CG-V2-11, CG-V2-14, CG-V2-15 |
 
----
+(Some counts overlap — F4 spans patient + caregiver sides; backend halves of E2E flows also hit F17.)
 
-## Test order for this sweep
+The "PASS" bucket count is up from 5 at the start of 2026-05-09.
 
-Optimal sequencing for tonight (minimize Cognito state churn, batch related backends):
-
-1. **Re-verify PASS-already** — PT-V2-01, PT-V2-07, CG-V2-02 (F3), CG-V2-05, EDGE-V2-07
-2. **Author + run cheap new flows**:
-   - CG-V2-18 (sign out) — 10 min
-   - PT-V2-02 (dashboard) — 15 min
-   - EDGE-V2-01 (registration validation) — 30 min
-   - EDGE-V2-02 (login validation) — 30 min
-   - EDGE-V2-16 (consent text scan) — 20 min
-3. **Run text-fallback variants of voice journeys**:
-   - PT-V2-08 (implausible value, text)
-   - PT-V2-09 (emergency, text — backend half)
-   - PT-V2-13 (connectivity loss, text)
-   - EDGE-V2-03 (Guardrail block, text)
-   - EDGE-V2-11 (pause/resume, text — testTag audit needed first)
-   - EDGE-V2-13 (implausibility, text)
-4. **Backend-only chain checks** for journeys whose UI side needs second device:
-   - E2E-V2-02 (threshold breach chain)
-   - CG-V2-07 (alerts table + Lambda log)
-5. **Classify the rest** (architecture-blocked, web-blocked, backend backlog) without execution.
+Stat counts may double-count when a single journey lists in multiple buckets (e.g. CG-V2-07 is "backend half PASS" + would-be in "manual" for the second-device push). Rule of thumb: full PASS rows + backend-half PASS rows = 18 journeys observably exercised in some form.
 
 ---
 
-*Companion file: `docs/journeys_voice.md` for the 7 voice-required journeys. Master catalog: `docs/journeys.md`.*
+*Companion file: `docs/journeys_voice.md` for the 7 voice-required journeys. Master catalog: `docs/journeys.md`. Findings catalog: `docs/testing_todos_v2.md` (F1..F19).*
