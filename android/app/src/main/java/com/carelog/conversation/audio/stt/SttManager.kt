@@ -97,8 +97,25 @@ class SttManager @Inject constructor(
             }
 
             override fun onResults(results: Bundle?) {
-                val text = extractFirstTranscript(results).orEmpty()
-                trySend(SttResult.Final(text))
+                // F9 — if Soda returned hypotheses but every one is
+                // blank/whitespace, that's a NO_MATCH (not a successful
+                // empty transcript) and we must surface it as an error
+                // so the VM doesn't silently drop the turn. Logging both
+                // success and failure here so future regressions show up
+                // in logcat without a separate trace tool.
+                val text = extractFirstTranscript(results)
+                if (text.isNullOrBlank()) {
+                    Log.w(TAG, "RecognitionListener.onResults: no usable hyp (all blank or null) — emitting NO_MATCH")
+                    trySend(
+                        SttResult.Error(
+                            SttErrorCode.NO_MATCH,
+                            "RecognitionListener.onResults returned no non-blank hypotheses",
+                        ),
+                    )
+                } else {
+                    Log.i(TAG, "RecognitionListener.onResults chars=${text.length}")
+                    trySend(SttResult.Final(text))
+                }
                 isListening.set(false)
                 channel.close()
             }

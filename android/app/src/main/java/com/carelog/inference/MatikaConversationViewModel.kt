@@ -199,8 +199,17 @@ class MatikaConversationViewModel @Inject constructor(
                         sttPartialTranscript.value = ""
                         isListening.value = false
                         if (result.text.isNotBlank()) {
+                            Log.i(TAG, "STT final transcript chars=${result.text.length}; submitting turn")
                             lastUserUtterance.value = result.text
                             submitTurn(result.text)
+                        } else {
+                            // F9 — defensive: SttManager now promotes
+                            // blank-hyp results to NO_MATCH errors, so
+                            // we shouldn't see a blank Final here. If we
+                            // do, surface it (don't silently drop) so
+                            // a regression upstream doesn't disappear.
+                            Log.w(TAG, "STT final returned blank text; surfacing as user-visible error")
+                            sttError.value = "Didn't catch that — please try again, more loudly or closer to the microphone."
                         }
                     }
 

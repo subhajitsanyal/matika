@@ -83,9 +83,15 @@ internal fun mapAndroidErrorCode(code: Int): SttErrorCode = when (code) {
     else -> SttErrorCode.UNKNOWN
 }
 
-/** Pull the top-confidence transcript out of a Bundle of recognition results. */
+/**
+ * Pull the highest-confidence non-blank transcript out of a Bundle of
+ * recognition results. F9 fix: previous version returned null when only
+ * the *first* hyp was blank, even if subsequent hyps were non-blank —
+ * that silently dropped real speech in cases where Soda ranked an empty
+ * hyp first (observed under noisy / short utterances).
+ */
 internal fun extractFirstTranscript(bundle: Bundle?): String? {
     if (bundle == null) return null
     val list = bundle.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) ?: return null
-    return list.firstOrNull()?.takeIf { it.isNotBlank() }
+    return list.firstOrNull { !it.isNullOrBlank() }
 }

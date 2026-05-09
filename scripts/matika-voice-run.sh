@@ -102,7 +102,15 @@ fi
 adb logcat -c
 
 echo "▸ launching maestro flow: $FLOW (${#TURNS[@]} turn(s) queued)"
-"$ROOT/scripts/maestro-run.sh" "${INSTALL_FLAGS[@]:-}" "$FLOW" &
+# Important: don't quote-expand an empty INSTALL_FLAGS array as
+# "${INSTALL_FLAGS[@]:-}" — that yields a single literal "" arg which
+# poisons maestro-run.sh's positional flow-name lookup ("no flow named
+# ''"). Expand without the default and let the array vanish when empty.
+if [[ ${#INSTALL_FLAGS[@]} -gt 0 ]]; then
+    "$ROOT/scripts/maestro-run.sh" "${INSTALL_FLAGS[@]}" "$FLOW" &
+else
+    "$ROOT/scripts/maestro-run.sh" "$FLOW" &
+fi
 MAESTRO_PID=$!
 
 cleanup() {

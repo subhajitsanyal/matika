@@ -16,24 +16,30 @@ Items below are ordered by **leverage** (journeys-unblocked-per-effort). Pick fr
 
 ## Sweep harness fixes (highest leverage first)
 
-### F9 — STT result not routed from Android STT to /conversation/turn (NEW — surfaced by F7 fix)
+### F9 — STT result not routed from Android STT to /conversation/turn (RESOLVED — verified live in voice flow)
 
-**Severity:** High. Root cause of "voice journeys never produce model_call rows."
+**Severity:** High. Was the root cause of "voice journeys never produce model_call rows."
 **Owner:** `android-app`.
-**Estimated effort:** 0.5 day.
+**Status:** Fixed and verified end-to-end (sweep iteration after `20260508_230704`).
 
-**Problem.** With F7 in place, `SodaSpeechRecognizer` produces `#handleFinalResult: 3 hyp` and `RecognitionClient #onResults withSpeech: true` — STT is working. But there is **no subsequent `MatikaConversationVM` log line** indicating the transcript was received, and **no new `model_call` row** for the turn window. The app-side bridge between `SttManager.RecognitionListener` and the conversation VM appears to be dropping the result.
+**Root cause.** Two-layer drop:
+1. `SttResult.kt::extractFirstTranscript` returned `null` when only the *first* hypothesis was blank — even if subsequent hypotheses were non-blank. Soda sometimes ranks an empty/whitespace hyp first under noisy/short utterances.
+2. `SttManager::onResults` converted the `null` to `""` via `.orEmpty()` and emitted `SttResult.Final("")`. `MatikaConversationViewModel` then silently skipped `submitTurn` due to its `isNotBlank()` guard — no log, no UI feedback, no error.
 
-**Reproduction.** Run F7 voice flow, grep logcat for `MatikaConversationVM` after a successful `#onResults withSpeech: true`. Today there's only the initial "Started v2 session" log — nothing after.
+**Fix.**
+- `extractFirstTranscript` now picks the first non-blank hypothesis (`firstOrNull { !it.isNullOrBlank() }`).
+- `SttManager::onResults` logs success (`chars=N`) AND surfaces all-blank hyps as `SttResult.Error(NO_MATCH, ...)` instead of silently emitting `Final("")`.
+- VM's blank-text branch now logs + surfaces a user-visible error so any future regression upstream doesn't disappear.
 
-**Investigation candidates.**
-- `audio/stt/SttManager.kt` — does `onResults` fire the listener with the top hypothesis? Or is it filtering?
-- `inference/ConversationStateMachine.kt` — does it accept STT events when in `EXTRACTING` state?
-- `inference/MatikaConversationViewModel.kt` — does it have a `submitTranscript()` path that's hooked to STT?
+**Verified.** Single-turn voice flow (`patient_voice_bp_en_single_turn.yaml`) produced:
+```
+SttManager: RecognitionListener.onResults chars=32
+MatikaConversationVM: STT final transcript chars=32; submitting turn
+MatikaConversationVM: submitTurn seq=1 sessionId=... chars=32
+```
+Followed by a new `model_call` T2 row in RDS (`latency_ms=2653`, no guardrail block) and `extractedValues` populated in bedrock-router output.
 
-**Verification.** After fix, voice flow turn 1 should produce: `MatikaConversationVM: Submitting turn N transcript chars=...` followed by a new `model_call` row with `tier='T2'`.
-
-This finding was hidden until F7 fixed orchestration timing — STT was failing earlier (no audio reaching mic), so no one noticed the pipeline downstream from STT was also broken.
+**Companion finding (unfixed):** the multi-turn voice flow's vacuous F6 assertion lets Maestro double-tap mic in <1s, which `onMicPressed()` interprets as a CANCEL of the in-flight STT job. Real fix is F6 (response-card testTag → non-vacuous post-turn assertion). Until then, voice journeys should use the single-turn flow variant or wait on a response card by content.
 
 ---
 

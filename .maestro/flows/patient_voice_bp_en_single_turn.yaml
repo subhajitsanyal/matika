@@ -1,0 +1,32 @@
+# Single-turn variant of patient_voice_bp_en. Used to validate F9
+# (STT result routing) in isolation — the multi-turn flow's vacuous
+# notVisible:thinking assertion (F6) lets Maestro double-tap mic
+# before the first STT job completes, masking whether F9 actually
+# routes the transcript through to Bedrock.
+#
+# This flow taps mic once, waits 8s (long enough for STT 4-5s + UI
+# update), then asserts mic re-armed. matika-voice-run.sh's logcat
+# trigger speaks during the listening window.
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil: { visible: { id: login_email }, timeout: 15000 }
+- tapOn: { id: login_email }
+- inputText: ${MATIKA_PATIENT_EMAIL}
+- tapOn: { id: login_password }
+- inputText: ${MATIKA_PATIENT_PASSWORD}
+- hideKeyboard
+- tapOn: { id: login_button }
+- extendedWaitUntil: { visible: { id: patient_home_start_conversation }, timeout: 30000 }
+- tapOn: { id: patient_home_start_conversation }
+- tapOn: { text: "Allow|While using the app", optional: true }
+- extendedWaitUntil: { visible: { id: matika_mic }, timeout: 30000 }
+- tapOn: { id: matika_mic }
+
+# Single-turn coverage stops here. The orchestrator speaks during STT's
+# listening window. We then wait long enough for STT (~5s) +
+# /conversation/turn (~3s) + Bedrock Haiku (~3s) + state machine
+# update + UI re-arm before checking mic re-armed.
+- extendedWaitUntil: { visible: { id: matika_mic }, timeout: 30000 }
