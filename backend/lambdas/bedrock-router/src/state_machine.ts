@@ -22,17 +22,30 @@ import type { FsmState } from './context/types';
 const ALLOWED_TRANSITIONS: Record<FsmState, ReadonlySet<FsmState>> = {
   // Patients sometimes lead with a vital reading on the first turn (e.g.,
   // "BP is 130 over 85" with no greeting). Allow direct entry to EXTRACTING /
-  // PENDING_CONFIRMATION / EMERGENCY rather than forcing an artificial
-  // GREETING hop that the LLM has to fabricate.
+  // PENDING_CONFIRMATION / PLAUSIBILITY_CHALLENGE / EMERGENCY rather than
+  // forcing an artificial GREETING hop that the LLM has to fabricate.
+  // PLAUSIBILITY_CHALLENGE is reachable from CREATED for the case where the
+  // patient's *first* utterance contains an implausible value (e.g.,
+  // "BP is 300 over 200") and the model wants to challenge it directly.
   CREATED: new Set([
     'GREETING',
     'EXTRACTING',
     'PENDING_CONFIRMATION',
+    'PLAUSIBILITY_CHALLENGE',
     'EMERGENCY',
     'PAUSED',
     'TERMINAL',
   ]),
-  GREETING: new Set(['EXTRACTING', 'PAUSED', 'TERMINAL']),
+  // Same rationale as CREATED: a patient can produce an implausible value or
+  // an emergency cue on the turn immediately after a greeting, and we
+  // shouldn't force an EXTRACTING hop the LLM hasn't proposed.
+  GREETING: new Set([
+    'EXTRACTING',
+    'PLAUSIBILITY_CHALLENGE',
+    'EMERGENCY',
+    'PAUSED',
+    'TERMINAL',
+  ]),
   EXTRACTING: new Set([
     'EXTRACTING',
     'PENDING_CONFIRMATION',

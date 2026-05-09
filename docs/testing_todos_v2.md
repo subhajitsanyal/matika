@@ -16,11 +16,11 @@ Items below are ordered by **leverage** (journeys-unblocked-per-effort). Pick fr
 
 ## Sweep harness fixes (highest leverage first)
 
-### F10 — State-machine allowlist rejects CREATED -> PLAUSIBILITY_CHALLENGE (NEW — surfaced by non-voice sweep)
+### F10 — State-machine allowlist rejects CREATED -> PLAUSIBILITY_CHALLENGE (RESOLVED — verified live 2026-05-09)
 
-**Severity:** Medium. Implausible-value handling on the **very first turn** crashes with HTTP 500.
+**Severity:** Medium. Was: implausible-value handling on the **very first turn** crashed with HTTP 500.
 **Owner:** `backend`.
-**Estimated effort:** 1 hour (one-line allowlist extension + a few unit tests).
+**Status:** Fixed and verified end-to-end. PT-V2-08-via-text now round-trips cleanly; `interaction_sessions.fsm_state='PLAUSIBILITY_CHALLENGE'` recorded immediately after submit, no `StateTransitionError` in logs. Bedrock-router live alias bumped to v30.
 
 **Problem.** When a patient's first utterance is an implausible value (e.g. "my BP is 300 over 200"), the LLM correctly emits `stateTransition: "CREATED -> PLAUSIBILITY_CHALLENGE"` and the response text "could you re-check the reading?". The `bedrock-router` Lambda then **rejects** the LLM output with `StateTransitionError: Transition CREATED -> PLAUSIBILITY_CHALLENGE is not in the allowed set` and returns HTTP 500 to the app.
 
@@ -43,7 +43,13 @@ ERROR handleTurn failed StateTransitionError: Transition CREATED -> PLAUSIBILITY
 - `GREETING -> PLAUSIBILITY_CHALLENGE` (covers the case where the patient's first content turn after a greeting is implausible)
 - `GREETING -> EMERGENCY` (same)
 
-**Verification.** After fix, PT-V2-08-via-text should round-trip with `model_call.escalation_reason='implausible_value'` and a Sonnet response asking for re-check.
+**Verification (2026-05-09 18:13Z).** PT-V2-08-via-text re-run after deploy:
+- UI: `matika_response_card` mounted; flow PASSES.
+- RDS `interaction_sessions` (id=`dabd26ae-…`): `fsm_state='PLAUSIBILITY_CHALLENGE'`, `status='in_progress'`, started 18:13:22Z. Exactly the transition that previously crashed.
+- RDS `model_call`: T2 Haiku (`global.anthropic.claude-haiku-4-5-20251001-v1:0`), latency 2840ms, no guardrail block, `escalation_reason` empty.
+- No `StateTransitionError` in `/aws/lambda/matika-dev-bedrock-router` logs.
+
+**Note vs original spec.** This finding's original "fix" hypothesis predicted a **T3 Sonnet escalation with `escalation_reason='implausible_value'`**. In practice, T2 Haiku itself proposes the `CREATED -> PLAUSIBILITY_CHALLENGE` transition without escalation — the LLM detected the implausibility on its own and emitted the correct stateTransition. The allowlist was the only blocker. This is **cheaper than expected** (T2 vs T3) and arguably better behaviour. EDGE-V2-13 (which testing_todos previously called out as "same allowlist root cause") should now also unblock — schedule for next sweep.
 
 ---
 

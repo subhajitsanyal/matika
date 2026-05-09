@@ -98,8 +98,16 @@ describe('isAllowedTransition', () => {
     expect(isAllowedTransition('CREATED', 'EMERGENCY')).toBe(true);
   });
 
-  it('rejects GREETING -> EMERGENCY (no shortcut)', () => {
-    expect(isAllowedTransition('GREETING', 'EMERGENCY')).toBe(false);
+  it('allows CREATED -> PLAUSIBILITY_CHALLENGE (patient leads with implausible value)', () => {
+    expect(isAllowedTransition('CREATED', 'PLAUSIBILITY_CHALLENGE')).toBe(true);
+  });
+
+  it('allows GREETING -> EMERGENCY (distress immediately after greeting)', () => {
+    expect(isAllowedTransition('GREETING', 'EMERGENCY')).toBe(true);
+  });
+
+  it('allows GREETING -> PLAUSIBILITY_CHALLENGE (implausible value after greeting)', () => {
+    expect(isAllowedTransition('GREETING', 'PLAUSIBILITY_CHALLENGE')).toBe(true);
   });
 
   it('allows PAUSED to resume to most non-terminal states', () => {
