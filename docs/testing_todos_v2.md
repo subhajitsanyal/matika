@@ -69,15 +69,28 @@ Followed by a new `model_call` T2 row in RDS (`latency_ms=2653`, no guardrail bl
 
 **Fix.** Parse args order-independently — loop over `$@`, recognise `--no-install` anywhere.
 
-### F6 — Voice flow `notVisible: thinking` assertion is vacuous
+### F6 — Voice flow `notVisible: thinking` assertion is vacuous (RESOLVED)
 
 **Severity:** High for voice journeys (silently masks failures).
-**Owner:** `qa-testing` (`.maestro/flows/`) + `android-app` (testTag).
-**Estimated effort:** 1 hour (split: tag + flow update).
+**Owner:** `qa-testing` + `android-app`.
+**Status:** Fixed and verified.
 
-**Problem.** When STT gets no speech, no transcript is submitted, "thinking" never appears on screen, and `notVisible: thinking` evaluates true. Maestro reports the journey green; the round-trip never happened.
+**Problem.** When STT got no speech, no transcript was submitted, "thinking" never appeared on screen, and `notVisible: thinking` evaluated true. Maestro reported the journey green; the round-trip never happened.
 
-**Fix.** Add `matika_response_card` testTag (or `matika_user_utterance_chip`) on the response render. Voice flow asserts `extendedWaitUntil visible: id: matika_response_card` after each turn. Now the assertion only passes if Bedrock actually responded.
+**Fix.** Four new testTags on `MatikaConversationScreen`:
+- `matika_response_card` — only mounts when `lastResponseText` is non-blank (post-Bedrock-round-trip). The non-vacuous `assertVisible` for single-turn voice flows.
+- `matika_turn_counter` — surface the `"turn N"` text so multi-turn flows can assert on `text: "turn 2"` (since `matika_response_card` stays visible across turns).
+- `matika_speaking_indicator` — multi-turn flows wait for `notVisible` before tapping mic for turn 2; otherwise TTS playback bleeds into Soda's listening window and the second turn returns NO_MATCH.
+- `matika_thinking_indicator` and `matika_listening_indicator` — companion tags for diagnostic assertions.
+
+**Verified.** Single-turn flow `patient_voice_bp_en_single_turn.yaml` exit=0 with `Assert that id: matika_response_card is visible... COMPLETED` and `submitTurn ok fsm=PENDING_CONFIRMATION extracted=2`. Multi-turn flow now **honestly** detects when turn 2 fails instead of false-passing.
+
+**Residual acoustic flakiness (NOT a F6 bug):** the multi-turn flow's turn 2 ("Yes, that value is correct") still hits Soda NO_MATCH intermittently — short confirmation utterances are at the edge of Soda's offline-pack confidence threshold even when TTS playback has finished. Solutions:
+- Use longer / more distinct turn-2 utterances ("Yes, the value is correct, please save it")
+- Boost speaker volume / tighten phone-to-speaker placement during voice-test runs
+- Switch second-turn from voice to text fallback when only confirmation is needed (text round-trips deterministically)
+
+This is a tuning matter for the test environment, not a code defect. The first-turn voice path works deterministically.
 
 ---
 

@@ -25,8 +25,9 @@ appId: com.carelog
 - extendedWaitUntil: { visible: { id: matika_mic }, timeout: 30000 }
 - tapOn: { id: matika_mic }
 
-# Single-turn coverage stops here. The orchestrator speaks during STT's
-# listening window. We then wait long enough for STT (~5s) +
-# /conversation/turn (~3s) + Bedrock Haiku (~3s) + state machine
-# update + UI re-arm before checking mic re-armed.
+# F6 — non-vacuous post-turn assertion. matika_response_card only
+# mounts when ConversationState.lastResponseText is non-blank, which
+# only happens after a successful /conversation/turn round-trip.
+- extendedWaitUntil: { visible: { id: matika_response_card }, timeout: 60000 }
+# Mic re-armed = the VM finished the turn cleanly.
 - extendedWaitUntil: { visible: { id: matika_mic }, timeout: 30000 }

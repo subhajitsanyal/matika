@@ -68,9 +68,9 @@ appId: com.carelog
     optional: true
 
 # === Turn 1 ===
-# The runner sleeps ~7s after launching this flow, then speaks the
-# BP utterance. matika-say.sh adds a 600ms predelay so the mic is
-# fully active by the time audio reaches the speaker.
+# matika-voice-run.sh blocks on the SodaSpeechRecognizer
+# "start listening" trigger before speaking, so we don't need a
+# fixed sleep here. Tap mic; runner takes care of the timing.
 - extendedWaitUntil:
     visible:
       id: matika_mic
@@ -78,16 +78,30 @@ appId: com.carelog
 - tapOn:
     id: matika_mic
 
-# Wait for STT → Bedrock → response. 60s covers cold-Lambda T2 turns
-# and the occasional Sonnet escalation if the value lands at the
-# soft-implausibility edge.
+# F6 — wait for the response card to mount, which only happens after
+# /conversation/turn returns and ConversationState.lastResponseText
+# becomes non-blank. This is non-vacuous proof of a Bedrock round-trip
+# (replaces the prior `notVisible: "thinking"` which passed even when
+# no turn was ever submitted).
 - extendedWaitUntil:
-    notVisible: "thinking"
+    visible:
+      id: matika_response_card
     timeout: 60000
 
 # === Turn 2 — patient confirms ===
-# Mic re-arms after the response renders. Runner waits ~8s after
-# turn 1's say returns, then speaks the confirmation.
+# F6 — must wait for TTS playback to finish before tapping mic again.
+# Otherwise Soda hears both the app's response audio AND our utterance,
+# returns error 7 (NO_MATCH), and the turn never reaches Bedrock.
+# matika_speaking_indicator only renders while ttsManager.isSpeaking,
+# so notVisible is the right signal.
+- extendedWaitUntil:
+    notVisible:
+      id: matika_speaking_indicator
+    timeout: 30000
+# matika_response_card stays visible across turns (it just shows the
+# latest response text). To detect turn-2 progression we wait on the
+# turn counter advancing to "turn 2" — that increments only when
+# ConversationStateMachine.applyTurnResponse runs on the second turn.
 - extendedWaitUntil:
     visible:
       id: matika_mic
@@ -95,7 +109,9 @@ appId: com.carelog
 - tapOn:
     id: matika_mic
 - extendedWaitUntil:
-    notVisible: "thinking"
+    visible:
+      id: matika_turn_counter
+      text: "turn 2"
     timeout: 60000
 
 # Sanity: mic re-armed = the turn round-tripped cleanly. Bedrock may

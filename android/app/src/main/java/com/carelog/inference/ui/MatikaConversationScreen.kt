@@ -342,19 +342,45 @@ private fun FsmHeader(uiState: MatikaConversationUiState) {
             colors = AssistChipDefaults.assistChipColors(containerColor = color),
         )
         Spacer(Modifier.size(8.dp))
+        // Activity tags — F6. Maestro asserts on these between turns:
+        //   matika_thinking_indicator   — Bedrock turn in flight
+        //   matika_speaking_indicator   — TTS is playing (mic must wait
+        //                                 or Soda will hear overlap)
+        //   matika_listening_indicator  — STT mic is open
+        // Multi-turn voice flows wait for `notVisible: speaking` before
+        // tapping mic again so the playback doesn't bleed into capture.
         if (uiState.conversation.isProcessingTurn) {
             CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
             Spacer(Modifier.size(6.dp))
-            Text("thinking…", style = MaterialTheme.typography.bodySmall)
+            Text(
+                "thinking…",
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.testTag("matika_thinking_indicator"),
+            )
         } else if (uiState.isSpeaking) {
-            Text("speaking…", style = MaterialTheme.typography.bodySmall)
+            Text(
+                "speaking…",
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.testTag("matika_speaking_indicator"),
+            )
         } else if (uiState.isListening) {
-            Text("listening…", style = MaterialTheme.typography.bodySmall)
+            Text(
+                "listening…",
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.testTag("matika_listening_indicator"),
+            )
         }
         Spacer(Modifier.weight(1f))
+        // matika_turn_counter — F6. Maestro can assert
+        // `id: matika_turn_counter, text: "turn N"` to detect
+        // turn-progression in multi-turn flows. The response-card
+        // visibility alone isn't enough: it stays visible across
+        // turns, so an "extendedWaitUntil visible" check after
+        // turn 2's mic tap would pass on turn 1's residue.
         Text(
             text = "turn ${uiState.conversation.turnSequence}",
             style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.testTag("matika_turn_counter"),
         )
     }
 }
@@ -363,8 +389,16 @@ private fun FsmHeader(uiState: MatikaConversationUiState) {
 private fun ResponseCard(uiState: MatikaConversationUiState) {
     val response = uiState.conversation.lastResponseText
     if (response.isNullOrBlank()) return
+    // matika_response_card — F6. Only mounts when lastResponseText is
+    // non-blank, which only happens after a successful /conversation/turn
+    // round-trip. Maestro's `assertVisible: id: matika_response_card` is
+    // therefore non-vacuous proof that the turn reached Bedrock and came
+    // back. Replaces the prior `notVisible: thinking` assertion which
+    // passed even when no turn was ever submitted.
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("matika_response_card"),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.primaryContainer,
         ),
@@ -391,8 +425,15 @@ private fun UserSaidCard(uiState: MatikaConversationUiState) {
         else -> return
     }
     val label = if (partial.isNotBlank()) "you (live)" else "you said"
+    // matika_user_said_card — companion to matika_response_card. Mounts
+    // when STT has produced a final transcript (or partial is in-flight).
+    // Useful as a faster signal than the response card for tests that
+    // only need to verify "STT captured something" without waiting for
+    // the LLM round-trip.
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("matika_user_said_card"),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant,
         ),
