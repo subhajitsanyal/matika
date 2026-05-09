@@ -2,12 +2,15 @@
  * Notification Sender Lambda
  *
  * Sends push notifications for threshold breaches, missed measurements,
- * and daily reminders.
+ * and daily reminders. Pure SQS consumer of the v2 alert queue —
+ * upstream producers are evaluate-thresholds-batch, check-missed-measurements,
+ * check-daily-deadline, and the bedrock-router emergency path.
  *
- * Triggered by:
- * - SQS Alert Queue (threshold_breach, missed_measurement, reminder messages)
- * - CloudWatch scheduled event (legacy reminder lapse check)
- * - Direct invocation for threshold check (legacy)
+ * Each handler:
+ *   - Resolves device tokens via persona_links / users / device_tokens.
+ *   - Hands off the platform-specific payload to SNS Mobile Push.
+ *   - Stamps `alerts.is_sent / sent_at / send_error` so the row reflects
+ *     what happened (success or no-transport / no-token).
  */
 
 const { SNSClient, PublishCommand } = require('@aws-sdk/client-sns');
@@ -40,27 +43,18 @@ async function createDbConnection() {
   return client;
 }
 
-// Alert types (legacy P0-P1)
-const ALERT_TYPES = {
-  THRESHOLD_BREACH: 'THRESHOLD_BREACH',
-  REMINDER_LAPSE: 'REMINDER_LAPSE',
-};
-
-// P2 alert types (from SQS messages)
+// SQS message `type` values produced by the v2 upstream lambdas. The
+// notification-sender accepts only these; older uppercase variants
+// (THRESHOLD_BREACH / REMINDER_LAPSE) are no longer emitted by anything
+// in v2 and the legacy handler paths were removed (F14, 2026-05-09).
 const P2_ALERT_TYPES = {
   THRESHOLD_BREACH: 'threshold_breach',
   MISSED_MEASUREMENT: 'missed_measurement',
   REMINDER: 'reminder',
 };
 
-// Vital type display names
+// parameter_name → human-readable label, used in push title/body strings.
 const VITAL_DISPLAY_NAMES = {
-  BLOOD_PRESSURE: 'Blood Pressure',
-  GLUCOSE: 'Glucose',
-  TEMPERATURE: 'Temperature',
-  WEIGHT: 'Weight',
-  PULSE: 'Pulse',
-  SPO2: 'SpO2',
   blood_pressure_systolic: 'Blood Pressure (Systolic)',
   blood_pressure_diastolic: 'Blood Pressure (Diastolic)',
   blood_glucose: 'Blood Glucose',
@@ -76,19 +70,15 @@ exports.handler = async (event) => {
   const client = await createDbConnection();
 
   try {
-    // Handle different trigger types
-    if (event.source === 'aws.events') {
-      // CloudWatch scheduled event - check for reminder lapses (legacy)
-      await checkReminderLapses(client);
-    } else if (event.Records) {
-      // SQS trigger - process notification requests
+    if (event.Records) {
       for (const record of event.Records) {
         const message = JSON.parse(record.body);
         await processNotificationMessage(client, message);
       }
-    } else if (event.type === 'THRESHOLD_CHECK') {
-      // Direct invocation for threshold check (legacy)
-      await checkThresholdBreach(client, event);
+    } else {
+      console.warn('Notification sender invoked with no SQS Records; ignoring.', {
+        eventKeys: Object.keys(event || {}),
+      });
     }
 
     return { statusCode: 200, body: 'Notifications processed' };
@@ -101,14 +91,10 @@ exports.handler = async (event) => {
 };
 
 /**
- * Process a notification message from SQS.
- * Supports both legacy format (alertType) and P2 format (type).
+ * Dispatch a single SQS message to the right handler.
  */
 async function processNotificationMessage(client, message) {
-  // Detect P2 format (uses 'type' field) vs legacy (uses 'alertType')
-  const messageType = message.type || message.alertType;
-
-  switch (messageType) {
+  switch (message.type) {
     case P2_ALERT_TYPES.THRESHOLD_BREACH:
       await handleThresholdBreachNotification(client, message);
       break;
@@ -118,15 +104,8 @@ async function processNotificationMessage(client, message) {
     case P2_ALERT_TYPES.REMINDER:
       await handleReminderNotification(client, message);
       break;
-    // Legacy types
-    case ALERT_TYPES.THRESHOLD_BREACH:
-      await sendThresholdBreachNotification(client, message.patientId, message.vitalType, message.value, message.unit);
-      break;
-    case ALERT_TYPES.REMINDER_LAPSE:
-      await sendReminderLapseNotification(client, message.patientId, message.vitalType);
-      break;
     default:
-      console.warn('Unknown message type:', messageType);
+      console.warn('Unknown message type:', message.type);
   }
 }
 
@@ -335,273 +314,6 @@ async function getPatientDeviceEndpoints(client, patientId) {
 }
 
 /**
- * Check if an observation breaches thresholds (legacy).
- */
-async function checkThresholdBreach(client, event) {
-  const { patientId, vitalType, value, unit } = event;
-
-  // Get threshold for this vital
-  const thresholdResult = await client.query(
-    `SELECT min_value, max_value FROM thresholds WHERE patient_id = $1 AND vital_type = $2`,
-    [patientId, vitalType]
-  );
-
-  if (thresholdResult.rows.length === 0) {
-    console.log('No threshold configured for', vitalType);
-    return;
-  }
-
-  const { min_value: minValue, max_value: maxValue } = thresholdResult.rows[0];
-
-  // Check if value is outside threshold
-  const isBreach = (minValue !== null && value < minValue) || (maxValue !== null && value > maxValue);
-
-  if (isBreach) {
-    console.log(`Threshold breach detected for patient ${patientId}: ${vitalType} = ${value}`);
-    await sendThresholdBreachNotification(client, patientId, vitalType, value, unit);
-  }
-}
-
-/**
- * Send threshold breach notification to relatives (legacy).
- */
-async function sendThresholdBreachNotification(client, patientId, vitalType, value, unit) {
-  // Get patient name
-  const patientResult = await client.query(
-    `SELECT name FROM users WHERE id = $1`,
-    [patientId]
-  );
-  const patientName = patientResult.rows[0]?.name || 'Patient';
-
-  // Get relatives' device endpoints
-  const relativesResult = await client.query(
-    `SELECT dt.endpoint_arn, dt.platform, u.name as relative_name, pl.user_id
-     FROM persona_links pl
-     JOIN device_tokens dt ON dt.user_id = pl.user_id
-     JOIN users u ON u.cognito_sub = pl.user_id
-     WHERE pl.patient_id = $1 AND pl.status = 'active' AND pl.role = 'relative'`,
-    [patientId]
-  );
-
-  const vitalDisplayName = VITAL_DISPLAY_NAMES[vitalType] || vitalType;
-  const title = `${vitalDisplayName} Alert`;
-  const body = `${patientName}'s ${vitalDisplayName.toLowerCase()} reading of ${value} ${unit || ''} is outside the normal range.`;
-
-  // Send notification to each relative
-  for (const relative of relativesResult.rows) {
-    try {
-      await sendPushNotification(relative.endpoint_arn, relative.platform, title, body, {
-        type: ALERT_TYPES.THRESHOLD_BREACH,
-        patientId,
-        vitalType,
-        value: value.toString(),
-      });
-
-      // Store alert in database
-      await storeAlert(client, {
-        patientId,
-        userId: relative.user_id,
-        alertType: ALERT_TYPES.THRESHOLD_BREACH,
-        vitalType,
-        value,
-        message: body,
-      });
-
-      console.log(`Sent threshold breach notification to ${relative.relative_name}`);
-    } catch (error) {
-      console.error(`Failed to send notification to ${relative.relative_name}:`, error);
-    }
-  }
-}
-
-/**
- * Check for reminder lapses across all patients (legacy).
- */
-async function checkReminderLapses(client) {
-  console.log('Checking for reminder lapses...');
-
-  // Get all active reminder configs with their last observation times
-  const result = await client.query(`
-    SELECT
-      rc.patient_id,
-      rc.vital_type,
-      rc.window_hours,
-      rc.grace_period_minutes,
-      (
-        SELECT MAX(o.created_at)
-        FROM observations o
-        WHERE o.patient_id = rc.patient_id AND o.vital_type = rc.vital_type
-      ) as last_observation_time
-    FROM reminder_configs rc
-    WHERE rc.enabled = true
-  `);
-
-  const now = new Date();
-
-  for (const config of result.rows) {
-    const {
-      patient_id: patientId,
-      vital_type: vitalType,
-      window_hours: windowHours,
-      grace_period_minutes: gracePeriodMinutes,
-      last_observation_time: lastObservationTime,
-    } = config;
-
-    // Calculate if reminder has lapsed
-    const windowMs = windowHours * 60 * 60 * 1000;
-    const graceMs = gracePeriodMinutes * 60 * 1000;
-
-    let hasLapsed = false;
-    let shouldNotifyPatient = false;
-    let shouldNotifyRelative = false;
-
-    if (!lastObservationTime) {
-      // Never logged - check against patient creation date
-      hasLapsed = true;
-      shouldNotifyRelative = true;
-    } else {
-      const lastTime = new Date(lastObservationTime);
-      const timeSinceLastLog = now.getTime() - lastTime.getTime();
-
-      if (timeSinceLastLog > windowMs) {
-        shouldNotifyPatient = true;
-      }
-
-      if (timeSinceLastLog > windowMs + graceMs) {
-        hasLapsed = true;
-        shouldNotifyRelative = true;
-      }
-    }
-
-    // Send notifications
-    if (shouldNotifyPatient) {
-      await sendPatientReminder(client, patientId, vitalType);
-    }
-
-    if (shouldNotifyRelative) {
-      await sendReminderLapseNotification(client, patientId, vitalType);
-    }
-  }
-}
-
-/**
- * Send reminder to patient (legacy).
- */
-async function sendPatientReminder(client, patientId, vitalType) {
-  // Check if we already sent a reminder recently (within 1 hour)
-  const recentReminder = await client.query(
-    `SELECT 1 FROM alerts
-     WHERE patient_id = $1 AND vital_type = $2 AND alert_type = 'PATIENT_REMINDER'
-     AND created_at > NOW() - INTERVAL '1 hour'`,
-    [patientId, vitalType]
-  );
-
-  if (recentReminder.rows.length > 0) {
-    return; // Already sent reminder recently
-  }
-
-  // Get patient's device endpoint
-  const patientResult = await client.query(
-    `SELECT dt.endpoint_arn, dt.platform, u.cognito_sub
-     FROM users u
-     JOIN device_tokens dt ON dt.user_id = u.cognito_sub
-     WHERE u.id = $1`,
-    [patientId]
-  );
-
-  if (patientResult.rows.length === 0) {
-    return;
-  }
-
-  const patient = patientResult.rows[0];
-  const vitalDisplayName = VITAL_DISPLAY_NAMES[vitalType] || vitalType;
-  const title = 'Reminder';
-  const body = `Time to log your ${vitalDisplayName.toLowerCase()} reading.`;
-
-  try {
-    await sendPushNotification(patient.endpoint_arn, patient.platform, title, body, {
-      type: 'PATIENT_REMINDER',
-      vitalType,
-    });
-
-    // Store reminder record
-    await storeAlert(client, {
-      patientId,
-      userId: patient.cognito_sub,
-      alertType: 'PATIENT_REMINDER',
-      vitalType,
-      message: body,
-    });
-
-    console.log(`Sent reminder to patient for ${vitalType}`);
-  } catch (error) {
-    console.error('Failed to send patient reminder:', error);
-  }
-}
-
-/**
- * Send reminder lapse notification to relatives (legacy).
- */
-async function sendReminderLapseNotification(client, patientId, vitalType) {
-  // Check if we already sent this alert recently (within 4 hours)
-  const recentAlert = await client.query(
-    `SELECT 1 FROM alerts
-     WHERE patient_id = $1 AND vital_type = $2 AND alert_type = $3
-     AND created_at > NOW() - INTERVAL '4 hours'`,
-    [patientId, vitalType, ALERT_TYPES.REMINDER_LAPSE]
-  );
-
-  if (recentAlert.rows.length > 0) {
-    return; // Already sent alert recently
-  }
-
-  // Get patient name
-  const patientResult = await client.query(
-    `SELECT name FROM users WHERE id = $1`,
-    [patientId]
-  );
-  const patientName = patientResult.rows[0]?.name || 'Patient';
-
-  // Get relatives' device endpoints
-  const relativesResult = await client.query(
-    `SELECT dt.endpoint_arn, dt.platform, u.name as relative_name, pl.user_id
-     FROM persona_links pl
-     JOIN device_tokens dt ON dt.user_id = pl.user_id
-     JOIN users u ON u.cognito_sub = pl.user_id
-     WHERE pl.patient_id = $1 AND pl.status = 'active' AND pl.role = 'relative'`,
-    [patientId]
-  );
-
-  const vitalDisplayName = VITAL_DISPLAY_NAMES[vitalType] || vitalType;
-  const title = 'Missed Reading';
-  const body = `${patientName} hasn't logged their ${vitalDisplayName.toLowerCase()} reading.`;
-
-  // Send notification to each relative
-  for (const relative of relativesResult.rows) {
-    try {
-      await sendPushNotification(relative.endpoint_arn, relative.platform, title, body, {
-        type: ALERT_TYPES.REMINDER_LAPSE,
-        patientId,
-        vitalType,
-      });
-
-      // Store alert in database
-      await storeAlert(client, {
-        patientId,
-        userId: relative.user_id,
-        alertType: ALERT_TYPES.REMINDER_LAPSE,
-        vitalType,
-        message: body,
-      });
-
-      console.log(`Sent reminder lapse notification to ${relative.relative_name}`);
-    } catch (error) {
-      console.error(`Failed to send notification to ${relative.relative_name}:`, error);
-    }
-  }
-}
-
-/**
  * Send push notification.
  *
  * Today the dev environment has no SNS Platform Application configured
@@ -700,20 +412,3 @@ async function markAlertSent(client, alertId, delivered) {
   }
 }
 
-/**
- * Store alert in database (legacy).
- */
-async function storeAlert(client, alert) {
-  await client.query(
-    `INSERT INTO alerts (patient_id, user_id, alert_type, vital_type, value, message, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
-    [
-      alert.patientId,
-      alert.userId,
-      alert.alertType,
-      alert.vitalType || null,
-      alert.value || null,
-      alert.message,
-    ]
-  );
-}

@@ -52,22 +52,22 @@ A pass over every Lambda that reads or writes the `alerts` / `alert_reads` / `de
 
 ---
 
-### F14 — `notification-sender` legacy `storeAlert` writes to `user_id` and `value` columns that no longer exist (NEW — surfaced by audit)
+### F14 — `notification-sender` legacy paths (RESOLVED — deleted as dead code 2026-05-09)
 
-**Severity:** Medium. Dormant in the v2 hot path: the new `evaluate-thresholds-batch` produces lowercase `type:'threshold_breach'` SQS messages, which the v2 handlers in this Lambda consume *without* writing to `alerts`. The legacy paths (`sendThresholdBreachNotification`, `sendPatientReminder`, `sendReminderLapseNotification`) all funnel through `storeAlert` and would crash if invoked with a legacy SQS payload.
+**Severity:** Was Medium (dormant). Pure dead code — no caller existed in the v2 architecture; documented to avoid surprise if anyone re-wired it.
 **Owner:** `backend`.
-**Estimated effort:** 2 hours (collapse legacy paths or rewrite `storeAlert` against the live schema).
+**Status:** Resolved by deletion. ~284 lines removed (`index.js` 698 → 414):
 
-**Reproduction.** `backend/lambdas/notification-sender/index.js` line 608:
-```js
-INSERT INTO alerts (patient_id, user_id, alert_type, vital_type, value, message, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, NOW())
-```
-- `user_id` → live schema is `recipient_user_id`.
-- `value` → live schema is `vital_value`.
-- Same uppercase-enum trap on the legacy `'PATIENT_REMINDER'` literal in lines 452, 481, 489.
+- `ALERT_TYPES` legacy enum constant (uppercase variants).
+- Handler entry's `event.source === 'aws.events'` branch (no EventBridge schedule routes to this lambda — verified across `infrastructure/terraform/modules/eventbridge/`).
+- Handler entry's `event.type === 'THRESHOLD_CHECK'` branch (no direct invoker exists in the codebase).
+- Legacy switch cases for `ALERT_TYPES.THRESHOLD_BREACH` and `ALERT_TYPES.REMINDER_LAPSE` in `processNotificationMessage` (no upstream producer ships uppercase types).
+- Functions `checkThresholdBreach`, legacy `sendThresholdBreachNotification`, `checkReminderLapses`, `sendPatientReminder`, `sendReminderLapseNotification`, `storeAlert` — all transitively unreachable.
+- The `BLOOD_PRESSURE` / `GLUCOSE` / `TEMPERATURE` / `WEIGHT` / `PULSE` / `SPO2` uppercase entries in `VITAL_DISPLAY_NAMES` (only the legacy paths used these).
 
-**Recommendation.** Either delete the legacy paths entirely (the v1 sender flow they targeted is gone in v2), or fold them into the v2 handlers. Today they are pure dead code that keeps reappearing in audits.
+**Verification.** Re-triggered evaluate-thresholds-batch with 220 systolic post-deploy. notification-sender consumed the SQS message cleanly and stamped `alerts.send_error='no_transport_or_no_device_token'` exactly as before — the v2 hot path is unaffected. 8 jest tests still pass.
+
+**Net effect.** Lambda is now a pure SQS consumer of v2 messages with three handlers; no dead branches to mislead future audits.
 
 ---
 
