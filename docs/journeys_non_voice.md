@@ -26,7 +26,7 @@ For voice journeys that genuinely require Mac-speaker injection, see `docs/journ
 | **PT-V2-10** | Photo OCR happy path (ML Kit) | manual | Needs real glucometer or printed mock. Out of agentic scope. |
 | **PT-V2-11** | Photo OCR Bedrock vision fallback | manual | Glare condition; needs real photo. |
 | **PT-V2-12** | Photo extraction failure (422) | manual | Needs blank surface photo. |
-| **PT-V2-13** | Connectivity loss mid-session | blocked → **runnable via text** | Flow: text turn → mid-flow `adb shell svc wifi disable` → expect "Reconnecting…" → re-enable → resume. No voice required. |
+| **PT-V2-13** | Connectivity loss mid-session | **PASS (2026-05-09)** | Three-flow orchestration via `scripts/matika-connectivity-test.sh`: setup → wifi disable → submit-turn-asserts-Snackbar-error → wifi enable → retry-asserts-response-card. App has no "Reconnecting…" indicator (ConnectivityState lives in VM but isn't rendered) — the `Turn failed` Snackbar is the actual product behavior; flow asserts that. |
 | **PT-V2-14** | Per-patient hard rate limit (429) | blocked | Needs ~500-call loop driver. Cost-conscious; defer. |
 | **PT-V2-15** | Manual log — Blood Pressure | **blocked (architecture)** | F4: v2 `PatientHomeScreen` is voice-first; no UI nav to `BloodPressureScreen` (orphan route). |
 | **PT-V2-16** | Manual log — Glucose | **blocked (architecture)** | Same — F4. |
@@ -35,7 +35,7 @@ For voice journeys that genuinely require Mac-speaker injection, see `docs/journ
 | **PT-V2-19** | Manual log — Pulse | **blocked (architecture)** | Same. |
 | **PT-V2-20** | Manual log — SpO₂ | **blocked (architecture)** | Same. |
 | **PT-V2-21** | View vital history | **blocked** | History route exists but no UI nav from voice-first home. F4-coupled. |
-| **PT-V2-22** | Settings — view care team (read-only) | **blocked** | Settings reachable via gear icon; no Maestro flow asserts the Care Team read-only view. Authoring effort: low — testTags exist on settings; need to add to CareTeamScreen. |
+| **PT-V2-22** | Settings — view care team (read-only) | **design-blocked (2026-05-09)** | `SettingsScreen` only renders the "Manage Care Team" entry for `CAREGIVER` / `RELATIVE` personas — patients have no Care Team view today. Either add a read-only patient variant or fold a patient-side care-team section into Settings. |
 | **PT-V2-23** | Cross-region inference disclosure (consent) | blocked | Jane is past consent; needs fresh signup. Caregiver self-reg requires email-verification (out of agentic scope). |
 | **PT-V2-24** | Reminder push → opens conversation | manual | Needs `aws lambda invoke check-daily-deadline` + push-receipt verification on second device. |
 
@@ -82,7 +82,7 @@ All 8 are gated on `web-portal` agent shipping `data-testid` attributes + `web-j
 | **E2E-V2-01** | Onboarding to first log | partial | Constituents covered: CG-V2-01 blocked, CG-V2-02 PASS, CG-V2-03 voice-only, PT-V2-01 PASS, PT-V2-07 PASS. Backend chain check passes. |
 | **E2E-V2-02** | Threshold breach alert cycle | backend half **PASS** (2026-05-09); UI side manual | Jane's BP `parameter_configs` rows seeded (systolic 90–160 / diastolic 50–95). After F11 fix, direct invoke of `evaluate-thresholds-batch` with 200/110 creates two `alerts` rows (with caregiver `recipient_user_id`, `vital_value`, `vital_unit`, `threshold_max`) + two SQS messages. FCM push receipt remains manual (needs second device). |
 | **E2E-V2-03** | Missed-measurement alert cycle | RDS half **PASS** (Jane has 4 `missed_measurement` rows in dev `alerts`); push delivery **blocked on F17** | Backend chain (parameter_configs → check-missed-measurements → alerts row + SQS) works. Caregiver-side push is the F15 device-token resolution failure. |
-| **E2E-V2-06** | Reminder lapse → patient logs | RDS half **runnable post-F12 fix** (next 18:00–23:59 IST window); push delivery **blocked on F17** | F12 (uppercase 'PATIENT_REMINDER' enum literal) was silently dropping every daily-deadline reminder; fixed and verified live 2026-05-09. The next IST evening window will produce a `patient_reminder` row. Push delivery still blocked on F15. |
+| **E2E-V2-06** | Reminder lapse → patient logs | RDS half **PASS (2026-05-09)**; push delivery **blocked on F17** | Direct invoke of `check-daily-deadline` after temporarily setting Jane's `daily_deadline` to a past time produced one `patient_reminder` row in `alerts` (id=`4e3280d1-…`) addressed to Jane. Restored deadline to 18:00 IST. F12 fix confirmed end-to-end. |
 
 ### Edge cases — 14 non-voice (EDGE-V2-17 is voice-only)
 
@@ -90,7 +90,7 @@ All 8 are gated on `web-portal` agent shipping `data-testid` attributes + `web-j
 |---|---|---|---|
 | **EDGE-V2-01** | Registration validation | blocked → **runnable** | New Maestro flow scripting bad inputs against `register_*` testTags. ~30 min author effort. |
 | **EDGE-V2-02** | Login validation | blocked → **runnable** | Same shape. |
-| **EDGE-V2-03** | Bedrock Guardrail block | blocked → **partially runnable via text** | Type a dosage-advice prompt via fallback; expect `model_call.guardrail_blocked=true`. Owns: `inference-platform` for prompt curation. |
+| **EDGE-V2-03** | Bedrock Guardrail block | flow authored, **regression surfaced (F19)** | `patient_guardrail_block_text.yaml` submits a misconduct-category prompt that the Guardrail correctly intervenes on. bedrock-router's parser then crashes ("No `<output>...</output>` block found") because it doesn't handle the `amazon-bedrock-guardrailAction` response shape. Journey moves to PASS once F19 ships. |
 | **EDGE-V2-04** | `FORCE_CHANGE_PASSWORD` first-time login | blocked | Jane is past this state; needs fresh patient via caregiver flow with default temp password. |
 | **EDGE-V2-05** | JWT silent refresh (1hr) | manual | Wall-clock 60+ min. Out of sweep budget. |
 | **EDGE-V2-06** | JWT 30-day refresh expiry | manual | Wall-clock months. Out of any sweep. |
@@ -98,12 +98,12 @@ All 8 are gated on `web-portal` agent shipping `data-testid` attributes + `web-j
 | **EDGE-V2-08** | Bedrock cross-region failover | blocked | No chaos harness. Backend infra work. |
 | **EDGE-V2-09** | Bedrock structured-output parse failure | blocked | Needs prompt-mutation harness. |
 | **EDGE-V2-10** | Idle session timeout (30 min) | manual | Wall-clock 30 min. Out of sweep budget. |
-| **EDGE-V2-11** | Pause and resume | blocked → **runnable via text** | Flow: text turn → tap pause → wait <5min → resume. Needs pause/resume testTags audit. |
+| **EDGE-V2-11** | Pause and resume | **PASS (2026-05-09)** | `patient_pause_resume_text.yaml` — submit a turn → tap "Pause" (label flips to "Resume") → tap "Resume" (label flips back to "Pause"). The button has no testTag today; targets by accessibility text via `.*…*` substring. |
 | **EDGE-V2-12** | Pause timeout (5 min) | manual | Wall-clock 5 min. Borderline; could run as a long-duration flow. |
-| **EDGE-V2-13** | Implausible plausibility ranges per parameter | blocked → **runnable via text** | Same flow shape as EDGE-V2-03 but for each parameter's hard-fail values. |
+| **EDGE-V2-13** | Implausible plausibility ranges per parameter | **PASS (2026-05-09)** | `patient_implausible_glucose_text.yaml` — types "fifteen hundred mg/dL" via fallback; response card mounts post-F10. Same FSM transition as PT-V2-08; covers a non-BP parameter. |
 | **EDGE-V2-14** | Network drop during sync of manual log | blocked (depends on PT-V2-15..20 routes being reachable) | Tied to F4 architecture decision. |
 | **EDGE-V2-15** | Microphone permission denied | blocked | Needs revoke-then-launch flow. Tests text-fallback substitution. |
-| **EDGE-V2-16** | Cross-region disclosure absent (regression) | blocked → **runnable** | Static text scan of consent screen via Maestro `assertVisible` for the disclosure substring. ~20 min author effort. |
+| **EDGE-V2-16** | Cross-region disclosure absent (regression) | flow authored, **regression confirmed (F18)** | `cross_region_disclosure_scan.yaml` asserts the substring `(?i).*AWS regions outside India.*` on the register screen. Substring is missing today — a real DPDP/HIPAA compliance gap. Journey moves to PASS once F18 (UI copy + product/legal sign-off) ships. |
 
 ---
 

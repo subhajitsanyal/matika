@@ -16,6 +16,50 @@ Items below are ordered by **leverage** (journeys-unblocked-per-effort). Pick fr
 
 ## Sweep harness fixes (highest leverage first)
 
+### F19 — bedrock-router crashes when Bedrock Guardrail intervenes (NEW — surfaced by EDGE-V2-03 authoring)
+
+**Severity:** High. Every Guardrail-blocked input today returns HTTP 500 to the app instead of surfacing the configured `blocked_input_messaging` ("I can't help with that here. Please contact your caregiver or a clinician."). User sees a hung request; no response card mounts.
+**Owner:** `backend`.
+**Estimated effort:** 1-2 hours (handle the guardrail-action response shape in `parser.ts` + a unit test).
+
+**Reproduction (2026-05-09 23:30Z).** Authored EDGE-V2-03 (`patient_guardrail_block_text.yaml`) — submits a misconduct-category prompt (criminal-activity instructions) via the text fallback. Lambda log:
+```
+WARN  Bedrock response missing usage block {
+  stop_reason: undefined,
+  content_blocks: 1,
+  keys: [ 'type', 'role', 'content', 'amazon-bedrock-guardrailAction' ]
+}
+ERROR handleTurn failed HandlerError: LLM response failed parsing after one retry:
+  No <output>...</output> block found in LLM response.
+    at invokeWithRetry (/var/task/dist/src/handler.js:375:19)
+```
+
+**Root cause.** When the Guardrail blocks an input, Bedrock's response carries `amazon-bedrock-guardrailAction` instead of the model's normal structured XML (`<output>…</output>`). bedrock-router's `parser.ts` insists on that XML block and throws `HandlerError`. The `invokeWithRetry` path retries once, gets the same shape back, then surfaces the parser error to the caller as a 500.
+
+**Fix sketch.**
+1. In the Bedrock-response handler, check whether the response contains `amazon-bedrock-guardrailAction === 'INTERVENED'` (or the equivalent on streaming responses). If yes, short-circuit: mark `model_call.guardrail_blocked = true`, return the configured `blocked_input_messaging` to the client, and skip the parser entirely.
+2. Bypass `invokeWithRetry` for guardrail-blocked responses (retrying is pointless — the same input will block again).
+3. Unit test that asserts a synthetic guardrail-blocked Bedrock response produces a clean 200 with the blocked-message text + sets the DB `guardrail_blocked` flag.
+
+**Note.** The `model_call.guardrail_blocked` column already exists in the schema and is set correctly in `db.ts` line 425 — the bug is purely in the response-shape branching in handler/parser.
+
+---
+
+### F18 — Cross-region inference disclosure missing from register screen (NEW — surfaced by EDGE-V2-16 authoring; compliance gap)
+
+**Severity:** Medium-High (DPDP Act / HIPAA). The pilot ships data to AWS Bedrock cross-region inference profiles, which can route requests to AWS regions outside India. Per the original EDGE-V2-16 design ("If consent text is missing the v2 cross-region clause, fail hard. Required string includes 'AWS regions outside India'"), this disclosure must be visible during sign-up consent. Today the only consent text on `RegisterScreen` is "I agree to the Terms of Service and Privacy Policy" — no cross-region clause anywhere.
+**Owner:** `android-app` (UI copy) + product/legal (final wording).
+**Estimated effort:** ~1 hour for the Android change once copy is approved.
+
+**Reproduction (2026-05-09).** Authored EDGE-V2-16 (`cross_region_disclosure_scan.yaml`) — asserts a substring matching `(?i).*AWS regions outside India.*` is visible on the register screen. Maestro flow `assertVisible` failed; the substring is absent. Screenshot in `~/.maestro/tests/2026-05-09_144838/`.
+
+**Fix sketch.**
+1. Add a Text composable on `RegisterScreen` (above or below the existing Terms checkbox) with copy along the lines of: *"Your conversations are processed by AI models running on AWS. To meet performance and reliability requirements, requests may be routed across AWS regions outside India. By signing up, you consent to this cross-region processing as described in the Privacy Policy."* — exact wording is product/legal's call.
+2. Re-run `cross_region_disclosure_scan.yaml`; expect it to pass.
+3. Optional: add a `register_disclosure` testTag to the new Text for stable targeting (the journey currently asserts by substring text).
+
+---
+
 ### Backend-chain audit summary (2026-05-09)
 
 A pass over every Lambda that reads or writes the `alerts` / `alert_reads` / `device_tokens` tables surfaced a partial-migration class of bugs: V001 renamed `alerts.value → vital_value`, `alerts.user_id → recipient_user_id`, dropped `alerts.deleted_at`, dropped `alert_reads`, and lowercased the `alert_type` enum — but most consumer Lambdas were never updated. F11 (resolved) was the first instance; F12-F16 below are siblings discovered tonight by direct SQL replay against the live dev schema.

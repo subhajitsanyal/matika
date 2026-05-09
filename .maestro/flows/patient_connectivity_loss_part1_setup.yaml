@@ -1,0 +1,51 @@
+# PT-V2-13 part 1 — log in, reach the conversation screen.
+#
+# Wrapper script (scripts/matika-connectivity-test.sh) orchestrates:
+#   Part 1 (this flow) ── wifi=ON, app reaches conversation
+#   adb shell svc wifi disable
+#   Part 2 ─────────────── attempt a turn, assert snackbar error
+#   adb shell svc wifi enable
+#   Part 3 ─────────────── retry the turn, assert response card
+#
+# Why split into three flows: Maestro's runScript can't shell out, so
+# wifi state has to be toggled by the wrapper between flow runs.
+# All three flows share the same `appId` and avoid clearState between
+# parts so the conversation session is preserved.
+#
+# Run via the wrapper:
+#   source ~/.matika-test-creds.env
+#   scripts/matika-connectivity-test.sh
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+- extendedWaitUntil:
+    visible:
+      id: login_email
+    timeout: 15000
+- tapOn:
+    id: login_email
+- inputText: ${MATIKA_PATIENT_EMAIL}
+- tapOn:
+    id: login_password
+- inputText: ${MATIKA_PATIENT_PASSWORD}
+- hideKeyboard
+- tapOn:
+    id: login_button
+
+- extendedWaitUntil:
+    visible:
+      id: patient_home_start_conversation
+    timeout: 30000
+- tapOn:
+    id: patient_home_start_conversation
+- tapOn:
+    text: "Allow|While using the app"
+    optional: true
+
+- extendedWaitUntil:
+    visible:
+      id: matika_text_fallback
+    timeout: 30000

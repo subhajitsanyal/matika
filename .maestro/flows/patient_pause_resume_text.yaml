@@ -1,0 +1,81 @@
+# EDGE-V2-11 — pause and resume a conversation mid-session.
+#
+# The Pause / Resume button on MatikaConversationScreen toggles
+# conversation.isPausedByUser. Same OutlinedButton swaps its label
+# between "Pause" (when not paused) and "Resume" (when paused), so
+# the easiest non-vacuous proof is to assert that the OPPOSITE label
+# becomes visible after each tap.
+#
+# Why text not voice: voice path sets isPausedByUser identically.
+# Text-fallback is deterministic and avoids STT entirely.
+#
+# Note: the Pause/Resume button has no testTag today (it's a bare
+# OutlinedButton with a Text child). Targeting by accessibility text
+# with .*…* substring regex.
+#
+# Run:
+#   source ~/.matika-test-creds.env
+#   scripts/maestro-run.sh patient_pause_resume_text
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+- extendedWaitUntil:
+    visible:
+      id: login_email
+    timeout: 15000
+- tapOn:
+    id: login_email
+- inputText: ${MATIKA_PATIENT_EMAIL}
+- tapOn:
+    id: login_password
+- inputText: ${MATIKA_PATIENT_PASSWORD}
+- hideKeyboard
+- tapOn:
+    id: login_button
+
+- extendedWaitUntil:
+    visible:
+      id: patient_home_start_conversation
+    timeout: 30000
+- tapOn:
+    id: patient_home_start_conversation
+- tapOn:
+    text: "Allow|While using the app"
+    optional: true
+
+# Wait for conversation screen to mount.
+- extendedWaitUntil:
+    visible:
+      id: matika_text_fallback
+    timeout: 30000
+
+# Submit one turn so we have something to pause AROUND. A trivial
+# acknowledgement turn is enough.
+- tapOn:
+    id: matika_text_fallback
+- inputText: "I'm good today"
+- tapOn:
+    id: matika_text_send
+
+- extendedWaitUntil:
+    visible:
+      id: matika_response_card
+    timeout: 60000
+
+# Initial state: Pause button visible (isPausedByUser=false).
+- assertVisible: ".*Pause.*"
+
+# Tap pause -> button label flips to "Resume".
+- tapOn: ".*Pause.*"
+- extendedWaitUntil:
+    visible: ".*Resume.*"
+    timeout: 5000
+
+# Tap resume -> button label flips back to "Pause".
+- tapOn: ".*Resume.*"
+- extendedWaitUntil:
+    visible: ".*Pause.*"
+    timeout: 5000

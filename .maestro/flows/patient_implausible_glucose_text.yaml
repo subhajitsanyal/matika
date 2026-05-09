@@ -1,0 +1,70 @@
+# EDGE-V2-13 — implausibility per-parameter check.
+#
+# PT-V2-08 covers blood-pressure-side implausibility. EDGE-V2-13 widens
+# the check to other parameters; this flow exercises GLUCOSE.
+#
+# Why text not voice: same as PT-V2-08 — text-fallback path is
+# deterministic and exercises the same FSM transition
+# (CREATED -> PLAUSIBILITY_CHALLENGE) that F10 fixed.
+#
+# Backend assertion (recorded in journey notes, not asserted in flow):
+#   interaction_sessions.fsm_state = 'PLAUSIBILITY_CHALLENGE'
+#   model_call.tier = 'T2' (Haiku); same cheaper-than-spec behaviour
+#   as PT-V2-08 — Haiku itself catches the implausibility without
+#   escalating.
+#
+# Run:
+#   source ~/.matika-test-creds.env
+#   scripts/maestro-run.sh patient_implausible_glucose_text
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+- extendedWaitUntil:
+    visible:
+      id: login_email
+    timeout: 15000
+- tapOn:
+    id: login_email
+- inputText: ${MATIKA_PATIENT_EMAIL}
+- tapOn:
+    id: login_password
+- inputText: ${MATIKA_PATIENT_PASSWORD}
+- hideKeyboard
+- tapOn:
+    id: login_button
+
+- extendedWaitUntil:
+    visible:
+      id: patient_home_start_conversation
+    timeout: 30000
+- tapOn:
+    id: patient_home_start_conversation
+- tapOn:
+    text: "Allow|While using the app"
+    optional: true
+
+- extendedWaitUntil:
+    visible:
+      id: matika_text_fallback
+    timeout: 30000
+- tapOn:
+    id: matika_text_fallback
+# A glucose reading three orders of magnitude higher than physiologic
+# range. The model should detect implausibility and propose
+# CREATED -> PLAUSIBILITY_CHALLENGE without crashing (post-F10).
+- inputText: "My fasting blood sugar this morning was fifteen hundred milligrams per deciliter"
+- tapOn:
+    id: matika_text_send
+
+# Sonnet round-trip for plausibility challenge can take a couple
+# seconds longer than a normal extraction; 90s is generous.
+- extendedWaitUntil:
+    visible:
+      id: matika_response_card
+    timeout: 90000
+
+- assertVisible:
+    id: matika_response_card

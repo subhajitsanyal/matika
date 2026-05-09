@@ -1,0 +1,48 @@
+# EDGE-V2-16 — assert the cross-region inference disclosure is present
+# on the register screen.
+#
+# Per docs/journeys.md EDGE-V2-16: "If consent text is missing the v2
+# cross-region clause, fail hard. Required string includes
+# 'AWS regions outside India' (case-insensitive)."
+#
+# This is a regression-guard test, not a happy path. We expect the
+# string to be visible somewhere on the register screen (in the terms
+# text, a disclosure block, an info banner, etc.). Failure of this
+# assertion is the bug being caught — do not weaken the matcher.
+#
+# Run:
+#   PATH="$HOME/.maestro/bin:$PATH" scripts/maestro-run.sh cross_region_disclosure_scan
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+# Reach login.
+- extendedWaitUntil:
+    visible:
+      id: login_email
+    timeout: 15000
+
+# Navigate to the register screen.
+- tapOn: "Sign up"
+
+- extendedWaitUntil:
+    visible:
+      id: register_email
+    timeout: 10000
+
+# Scroll the form so any disclosure beneath the visible area is reachable
+# by the matcher. The terms checkbox lives near the bottom.
+- scrollUntilVisible:
+    element:
+      id: register_terms_checkbox
+    direction: DOWN
+
+# Required disclosure substring. Maestro's plain text matcher uses
+# full-string regex semantics on accessibility text nodes, so wrap in
+# .*…*. The (?i) flag makes the substring match case-insensitive,
+# matching "AWS regions outside India" / "AWS Regions Outside India" /
+# "aws regions outside india" / etc.
+- assertVisible:
+    text: "(?i).*AWS regions outside India.*"

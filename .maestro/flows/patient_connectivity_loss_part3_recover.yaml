@@ -1,0 +1,25 @@
+# PT-V2-13 part 3 — wifi has been re-enabled by the wrapper. Retry the
+# turn; this time it should land and a response card should appear.
+#
+# Note: NOT clearState — must resume the same app instance.
+#
+# Run via the wrapper script.
+
+appId: com.carelog
+---
+- assertVisible:
+    id: matika_text_fallback
+
+- tapOn:
+    id: matika_text_fallback
+- inputText: "I'm fine today"
+- tapOn:
+    id: matika_text_send
+
+- extendedWaitUntil:
+    visible:
+      id: matika_response_card
+    timeout: 90000
+
+- assertVisible:
+    id: matika_response_card

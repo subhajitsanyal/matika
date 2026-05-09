@@ -1,0 +1,34 @@
+# PT-V2-13 part 2 — wifi has been disabled by the wrapper script.
+# Submit a text turn and verify the error surfaces (Snackbar with
+# "Turn failed: …" — the lambda call fails with a connection error).
+#
+# Caveat: today the app has no dedicated "Reconnecting…" indicator
+# (the journey spec mentions one, but ConnectivityState.DEGRADED is
+# tracked in the ViewModel without rendering a banner). The Snackbar
+# error is the actual product behavior; assert that.
+#
+# Note: NOT clearState — must resume the same app instance left at the
+# matika_text_fallback screen by part 1.
+#
+# Run via the wrapper script.
+
+appId: com.carelog
+---
+# Confirm we're still on the conversation screen.
+- assertVisible:
+    id: matika_text_fallback
+
+- tapOn:
+    id: matika_text_fallback
+- inputText: "I'm fine today"
+- tapOn:
+    id: matika_text_send
+
+# Snackbar appears with "Turn failed: <network error message>".
+- extendedWaitUntil:
+    visible: ".*Turn failed.*"
+    timeout: 30000
+
+# Sanity: response card should NOT have appeared.
+- assertNotVisible:
+    id: matika_response_card
