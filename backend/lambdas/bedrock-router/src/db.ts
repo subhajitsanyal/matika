@@ -353,6 +353,12 @@ export interface SessionUpdate {
   inferenceRegion: string;
   streamingUsed: boolean;
   conversationSummary: string | null;
+  // Lifecycle terminus columns (testing_todos_v2.md F2). Both nullable
+  // → undefined/null preserves the existing column value via COALESCE.
+  // The handler sets these on `complete_session` and `escalate_emergency`
+  // actions; otherwise leaves them alone and the row stays in_progress.
+  status?: 'in_progress' | 'paused' | 'complete' | 'incomplete' | null;
+  endedAt?: Date | null;
 }
 
 export interface SessionPersister {
@@ -363,6 +369,9 @@ export class PgSessionPersister implements SessionPersister {
   constructor(private client: PgClient) {}
 
   async update(sessionId: string, patch: SessionUpdate): Promise<void> {
+    // status/ended_at use COALESCE($N, col) so undefined/null in patch
+    // leaves the existing value intact. F2: the handler sets these only
+    // on `complete_session` / `escalate_emergency` actions.
     await this.client.query(
       `UPDATE interaction_sessions
        SET fsm_state = $2,
@@ -373,7 +382,9 @@ export class PgSessionPersister implements SessionPersister {
            escalations_triggered = $7,
            inference_region = $8,
            streaming_used = $9,
-           conversation_summary = $10
+           conversation_summary = $10,
+           status = COALESCE($11, status),
+           ended_at = COALESCE($12, ended_at)
        WHERE id = $1`,
       [
         sessionId,
@@ -392,6 +403,8 @@ export class PgSessionPersister implements SessionPersister {
         patch.inferenceRegion,
         patch.streamingUsed,
         patch.conversationSummary,
+        patch.status ?? null,
+        patch.endedAt ?? null,
       ],
     );
   }

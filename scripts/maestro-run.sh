@@ -21,10 +21,17 @@ FLOWS_DIR="$ROOT/.maestro/flows"
 CREDS="${MATIKA_CREDS_FILE:-$HOME/.matika-test-creds.env}"
 
 INSTALL=1
-if [[ "${1:-}" == "--no-install" ]]; then
-    INSTALL=0
-    shift
-fi
+# Parse --no-install order-independently. The flow name is whichever
+# positional remains. Pre-2026-05-08 this was $1-only and silently
+# ignored when scripts called us as `maestro-run.sh <flow> --no-install`.
+ARGS=()
+for a in "$@"; do
+    case "$a" in
+        --no-install) INSTALL=0 ;;
+        *) ARGS+=("$a") ;;
+    esac
+done
+set -- "${ARGS[@]:-}"
 
 # ── Sanity checks ─────────────────────────────────────────
 if ! command -v maestro >/dev/null 2>&1; then

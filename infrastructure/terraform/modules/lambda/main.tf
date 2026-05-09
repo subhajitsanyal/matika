@@ -319,6 +319,14 @@ data "archive_file" "post_confirmation" {
   output_path = "${path.module}/archives/post-confirmation.zip"
 }
 
+# Cognito PostAuthentication trigger — stamps users.last_login_at on
+# every successful sign-in. See docs/testing_todos_v2.md F1.
+data "archive_file" "post_authentication" {
+  type        = "zip"
+  source_dir  = "${var.lambdas_source_path}/post-authentication"
+  output_path = "${path.module}/archives/post-authentication.zip"
+}
+
 data "archive_file" "create_patient" {
   type        = "zip"
   source_dir  = "${var.lambdas_source_path}/create-patient"
@@ -484,6 +492,26 @@ data "archive_file" "remove_team_member" {
 # ============================================================
 # LAMBDA FUNCTIONS
 # ============================================================
+
+resource "aws_lambda_function" "post_authentication" {
+  function_name    = "${local.function_prefix}-post-authentication"
+  role             = aws_iam_role.lambda_rds_cognito.arn
+  handler          = "index.handler"
+  runtime          = "nodejs20.x"
+  timeout          = 10
+  memory_size      = 192
+  filename         = data.archive_file.post_authentication.output_path
+  source_code_hash = data.archive_file.post_authentication.output_base64sha256
+
+  vpc_config {
+    subnet_ids         = var.private_subnet_ids
+    security_group_ids = [var.lambda_security_group_id]
+  }
+
+  environment {
+    variables = local.rds_env
+  }
+}
 
 resource "aws_lambda_function" "post_confirmation" {
   function_name    = "${local.function_prefix}-post-confirmation"
@@ -1109,6 +1137,11 @@ resource "aws_cloudwatch_log_group" "post_confirmation" {
   retention_in_days = 365
 }
 
+resource "aws_cloudwatch_log_group" "post_authentication" {
+  name              = "/aws/lambda/${aws_lambda_function.post_authentication.function_name}"
+  retention_in_days = 365
+}
+
 resource "aws_cloudwatch_log_group" "create_patient" {
   name              = "/aws/lambda/${aws_lambda_function.create_patient.function_name}"
   retention_in_days = 365
@@ -1432,6 +1465,14 @@ resource "aws_lambda_permission" "post_confirmation_cognito" {
   statement_id  = "AllowCognitoInvoke"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.post_confirmation.function_name
+  principal     = "cognito-idp.amazonaws.com"
+  source_arn    = var.cognito_user_pool_arn
+}
+
+resource "aws_lambda_permission" "post_authentication_cognito" {
+  statement_id  = "AllowCognitoInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.post_authentication.function_name
   principal     = "cognito-idp.amazonaws.com"
   source_arn    = var.cognito_user_pool_arn
 }

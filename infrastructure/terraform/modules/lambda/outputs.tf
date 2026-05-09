@@ -2,6 +2,10 @@ output "post_confirmation_arn" {
   value = aws_lambda_function.post_confirmation.arn
 }
 
+output "post_authentication_arn" {
+  value = aws_lambda_function.post_authentication.arn
+}
+
 output "create_patient_invoke_arn" {
   value = aws_lambda_function.create_patient.invoke_arn
 }

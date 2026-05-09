@@ -528,6 +528,23 @@ exports.handler = async (event) => {
     };
   } catch (error) {
     console.error("Error creating patient:", error);
+    // F3 — distinguish UsernameExistsException (Cognito email collision)
+    // from generic 500. The app's onboarding screen surfaces the body
+    // string verbatim via the onboarding_error testTag, so the message
+    // here must be user-facing.
+    const isUsernameExists =
+      error?.name === "UsernameExistsException" ||
+      error?.__type === "UsernameExistsException";
+    if (isUsernameExists) {
+      return {
+        statusCode: 409,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          error: "An account with this email already exists. Use a different email or contact support.",
+          code: "EMAIL_ALREADY_EXISTS",
+        }),
+      };
+    }
     return {
       statusCode: 500,
       headers: { "Content-Type": "application/json" },

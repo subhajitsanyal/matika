@@ -8,12 +8,22 @@
 # (2) tap the mic at predictable moments, and (3) wait for response
 # round-trips. The runner script orchestrates the say timing.
 #
-# Run:
+# Run (recommended — F7 logcat-trigger orchestration):
 #   source ~/.matika-test-creds.env
+#   scripts/matika-voice-run.sh patient_voice_bp_en --no-install \
+#       --turn "en|175|My blood pressure is one thirty over eighty five.|600" \
+#       --turn "en|175|Yes, that's correct.|400"
+#
+# matika-voice-run.sh blocks on `adb logcat -e "Offline recognizer - start listening" -m 1`
+# between turns, so audio fires precisely when the mic activates — no
+# fixed-sleep race. See docs/testing_todos_v2.md F7.
+#
+# Legacy fixed-sleep pattern (deprecated, kept for reference):
 #   ( scripts/maestro-run.sh patient_voice_bp_en --no-install ) &
-#   sleep 7  ; scripts/matika-say.sh en 175 "My blood pressure is one thirty over eighty five." 600
+#   sleep 25 ; scripts/matika-say.sh en 175 "..." 600
 #   sleep 12 ; scripts/matika-say.sh en 175 "Yes, that's correct." 400
 #   wait
+# This is unreliable because cold install + login + nav varies 25–60s.
 #
 # Pre-conditions:
 #   - APK installed; backend dev /health green.

@@ -23,7 +23,7 @@ import type {
 } from './bedrock_client';
 import type { AlertEnqueuer, AlertTrigger } from './alert_queue';
 import { buildEmergencyAlert, buildRateLimitAlert } from './alert_queue';
-import type { ModelCallRecorder, SessionCreator, SessionPersister } from './db';
+import type { ModelCallRecorder, SessionCreator, SessionPersister, SessionUpdate } from './db';
 import type { Summarizer } from './summarizer';
 import type { RateLimiter } from './rate_limiter';
 import type {
@@ -321,6 +321,17 @@ export async function handleTurn(event: TurnRequest, deps: HandlerDeps): Promise
         )
       : Promise.resolve();
 
+  // F2 — derive lifecycle terminus from this turn's actions. The LLM
+  // emits `complete_session` when the protocol is done, and we treat
+  // any emergency-triggered turn as terminal-incomplete (the session
+  // is supposed to end at that point per spec §6.5). Otherwise leave
+  // status/ended_at untouched and the row stays 'in_progress'.
+  const sessionTerminus = computeSessionTerminus({
+    actions: parsed.actions,
+    emergencyTriggered: emergencyTriggers.length > 0,
+    now: () => new Date(now()),
+  });
+
   await Promise.all([
     deps.sessionPersister.update(event.sessionId, {
       fsmState: newFsmState,
@@ -332,6 +343,8 @@ export async function handleTurn(event: TurnRequest, deps: HandlerDeps): Promise
       inferenceRegion: result.inferenceRegion,
       streamingUsed: false,
       conversationSummary: newConversationSummary,
+      status: sessionTerminus.status,
+      endedAt: sessionTerminus.endedAt,
     }),
     deps.modelCallRecorder.record(
       buildModelCallRecord({
@@ -719,6 +732,34 @@ export function detectEmergencyTriggers(
   if (llmEscalationReason === 'emergency') triggers.push('llm_classification');
   if (guardrailBlocked) triggers.push('guardrail_block');
   return triggers;
+}
+
+// F2 — derive interaction_sessions.{status, ended_at} from this turn's
+// outcome. Returns nulls when the session should stay open; the
+// PgSessionPersister's COALESCE then preserves existing column values.
+//
+// Mapping:
+//   complete_session action       → status='complete'
+//   any emergency trigger fired   → status='incomplete' (per spec §6.5
+//                                   "session ends immediately")
+//   pause_session                 → status='paused'
+//   anything else                 → status=null (= leave 'in_progress')
+//
+// 'incomplete' is the existing CHECK enum from V004 — covers both
+// emergency-terminated and idle-timeout. We don't introduce a new
+// 'terminal_emergency' status to avoid a migration; the
+// escalations_triggered JSONB already carries the emergency reason.
+export function computeSessionTerminus(args: {
+  actions: StructuredOutput['actions'];
+  emergencyTriggered: boolean;
+  now: () => Date;
+}): { status: SessionUpdate['status']; endedAt: Date | null } {
+  const completes = args.actions.some((a) => a.type === 'complete_session');
+  const pauses = args.actions.some((a) => a.type === 'pause_session');
+  if (args.emergencyTriggered) return { status: 'incomplete', endedAt: args.now() };
+  if (completes) return { status: 'complete', endedAt: args.now() };
+  if (pauses) return { status: 'paused', endedAt: null };
+  return { status: null, endedAt: null };
 }
 
 function deriveSignalContext(state: SessionState, patient: PatientContext): SignalSessionContext {
@@ -1160,6 +1201,13 @@ export async function handleTurnStream(
           )
         : Promise.resolve();
 
+    // F2 — same lifecycle terminus computation as the non-streaming path.
+    const sessionTerminus = computeSessionTerminus({
+      actions: parsed.actions,
+      emergencyTriggered: emergencyTriggers.length > 0,
+      now: () => new Date(now()),
+    });
+
     await Promise.all([
       deps.sessionPersister.update(event.sessionId, {
         fsmState: newFsmState,
@@ -1171,6 +1219,8 @@ export async function handleTurnStream(
         inferenceRegion,
         streamingUsed: true,
         conversationSummary: newConversationSummary,
+        status: sessionTerminus.status,
+        endedAt: sessionTerminus.endedAt,
       }),
       deps.modelCallRecorder.record(
         buildModelCallRecord({

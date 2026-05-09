@@ -1,0 +1,20 @@
+{
+  "name": "carelog-post-authentication",
+  "version": "1.0.0",
+  "description": "Cognito Post-Authentication trigger — stamps users.last_login_at on every successful sign-in. Fix for testing_todos_v2.md F1.",
+  "main": "index.js",
+  "scripts": {
+    "test": "jest",
+    "package": "zip -r function.zip index.js node_modules package.json"
+  },
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.978.0",
+    "pg": "^8.11.0"
+  },
+  "devDependencies": {
+    "jest": "^29.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

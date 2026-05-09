@@ -63,18 +63,25 @@ module "cognito" {
   domain_name          = var.domain_name
 }
 
-# Attach post-confirmation Lambda trigger to Cognito (breaks circular dependency)
-# Uses null_resource because Cognito → Lambda → Cognito creates a cycle.
-# The "always run" trigger ensures it re-attaches on every apply (idempotent).
+# Attach post-confirmation + post-authentication Lambda triggers to
+# Cognito (breaks circular dependency). Uses null_resource because
+# Cognito → Lambda → Cognito would create a cycle. "always run" trigger
+# ensures it re-attaches on every apply (idempotent).
+#
+# Both triggers must be set in a single update-user-pool call —
+# AWS replaces the whole lambda-config object, not merges individual
+# keys. The post-authentication addition is for testing_todos_v2.md F1
+# (users.last_login_at stamping).
 resource "null_resource" "cognito_post_confirmation_trigger" {
   triggers = {
-    lambda_arn   = module.lambda.post_confirmation_arn
-    user_pool_id = module.cognito.user_pool_id
-    always_run   = timestamp()
+    pc_lambda_arn = module.lambda.post_confirmation_arn
+    pa_lambda_arn = module.lambda.post_authentication_arn
+    user_pool_id  = module.cognito.user_pool_id
+    always_run    = timestamp()
   }
 
   provisioner "local-exec" {
-    command = "aws cognito-idp update-user-pool --user-pool-id ${module.cognito.user_pool_id} --lambda-config '{\"PostConfirmation\":\"${module.lambda.post_confirmation_arn}\"}' --auto-verified-attributes email --region ${var.aws_region}"
+    command = "aws cognito-idp update-user-pool --user-pool-id ${module.cognito.user_pool_id} --lambda-config '{\"PostConfirmation\":\"${module.lambda.post_confirmation_arn}\",\"PostAuthentication\":\"${module.lambda.post_authentication_arn}\"}' --auto-verified-attributes email --region ${var.aws_region}"
   }
 }
 
