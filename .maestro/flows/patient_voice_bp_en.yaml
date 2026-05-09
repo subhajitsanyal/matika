@@ -1,0 +1,95 @@
+# PT-V2-03 (English voice) — Patient logs blood pressure via the
+# voice path. See docs/journeys.md §4.
+#
+# Why this flow can't speak by itself: Maestro can't drive an external
+# Mac process. The shell that launches Maestro is responsible for
+# speaking utterances through scripts/matika-say.sh. This flow drives
+# only the UI — its job is to (1) reach the conversation screen,
+# (2) tap the mic at predictable moments, and (3) wait for response
+# round-trips. The runner script orchestrates the say timing.
+#
+# Run:
+#   source ~/.matika-test-creds.env
+#   ( scripts/maestro-run.sh patient_voice_bp_en --no-install ) &
+#   sleep 7  ; scripts/matika-say.sh en 175 "My blood pressure is one thirty over eighty five." 600
+#   sleep 12 ; scripts/matika-say.sh en 175 "Yes, that's correct." 400
+#   wait
+#
+# Pre-conditions:
+#   - APK installed; backend dev /health green.
+#   - Patient creds in shell env (MATIKA_PATIENT_EMAIL/_PASSWORD).
+#   - Test patient parameter_configs include blood_pressure_systolic
+#     and blood_pressure_diastolic.
+#   - Phone speaker side ~6-12 inches from External Headphones,
+#     ambient noise low. Phone media volume mid-high.
+#   - SwitchAudioSource installed; matika-say.sh re-asserts the output
+#     device on every utterance.
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+# Sign in as the patient. Same shape as patient_logging_happy_path.
+- extendedWaitUntil:
+    visible:
+      id: login_email
+    timeout: 15000
+- tapOn:
+    id: login_email
+- inputText: ${MATIKA_PATIENT_EMAIL}
+- tapOn:
+    id: login_password
+- inputText: ${MATIKA_PATIENT_PASSWORD}
+- hideKeyboard
+- tapOn:
+    id: login_button
+
+- extendedWaitUntil:
+    visible:
+      id: patient_home_start_conversation
+    timeout: 30000
+- tapOn:
+    id: patient_home_start_conversation
+
+# Mic permission prompt: granted on first run, absent thereafter.
+- tapOn:
+    text: "Allow|While using the app"
+    optional: true
+
+# === Turn 1 ===
+# The runner sleeps ~7s after launching this flow, then speaks the
+# BP utterance. matika-say.sh adds a 600ms predelay so the mic is
+# fully active by the time audio reaches the speaker.
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+
+# Wait for STT → Bedrock → response. 60s covers cold-Lambda T2 turns
+# and the occasional Sonnet escalation if the value lands at the
+# soft-implausibility edge.
+- extendedWaitUntil:
+    notVisible: "thinking"
+    timeout: 60000
+
+# === Turn 2 — patient confirms ===
+# Mic re-arms after the response renders. Runner waits ~8s after
+# turn 1's say returns, then speaks the confirmation.
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+- extendedWaitUntil:
+    notVisible: "thinking"
+    timeout: 60000
+
+# Sanity: mic re-armed = the turn round-tripped cleanly. Bedrock may
+# now ask about the next parameter or close the session — either is
+# a pass for this single-parameter flow.
+- assertVisible:
+    id: matika_mic
