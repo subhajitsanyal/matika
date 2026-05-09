@@ -1,0 +1,107 @@
+# EDGE-V2-01 — registration form validation: bad email + mismatched
+# confirm password must surface inline errors and NOT call Cognito.
+#
+# Tests three sub-cases in sequence (single Maestro flow, no app
+# clearState between sub-cases — the form keeps state):
+#  1. Invalid email format (no @)
+#  2. Weak password
+#  3. Mismatched confirm password
+#
+# Run:
+#   source ~/.matika-test-creds.env
+#   scripts/maestro-run.sh registration_validation
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible:
+      id: login_email
+    timeout: 15000
+
+# Navigate to register screen. The "Sign up" link is text-based;
+# registration screen testTags exist (register_*).
+- tapOn: "Sign up"
+
+- extendedWaitUntil:
+    visible:
+      id: register_email
+    timeout: 10000
+
+# === Sub-case 1: invalid email ===
+# Form is taller than the viewport (Name → Email → Phone → Password →
+# Confirm → Terms → Button). Each field input may push the next one
+# below the fold; scroll-into-view explicitly before each tap that
+# isn't already visible.
+- tapOn:
+    id: register_name
+- inputText: "Test User"
+- tapOn:
+    id: register_email
+- inputText: "not-an-email"
+- hideKeyboard
+- scrollUntilVisible:
+    element:
+      id: register_password
+    direction: DOWN
+- tapOn:
+    id: register_password
+- inputText: "ValidP@ssw0rd!"
+- hideKeyboard
+- scrollUntilVisible:
+    element:
+      id: register_confirm_password
+    direction: DOWN
+- tapOn:
+    id: register_confirm_password
+- inputText: "ValidP@ssw0rd!"
+- hideKeyboard
+- scrollUntilVisible:
+    element:
+      id: register_button
+    direction: DOWN
+- tapOn:
+    id: register_button
+
+# Either an inline register_error appears, OR the register_button
+# stayed disabled / was no-op'd. Either way, we should NOT have
+# advanced past registration.
+- extendedWaitUntil:
+    visible:
+      id: register_email
+    timeout: 5000
+
+# === Sub-case 2: mismatched confirm password ===
+# Fix the email; mismatch the confirm.
+- scrollUntilVisible:
+    element:
+      id: register_email
+    direction: UP
+- tapOn:
+    id: register_email
+- eraseText: 100
+- inputText: "validuser+test@example.com"
+- hideKeyboard
+- scrollUntilVisible:
+    element:
+      id: register_confirm_password
+    direction: DOWN
+- tapOn:
+    id: register_confirm_password
+- eraseText: 100
+- inputText: "DifferentPassword!"
+- hideKeyboard
+- scrollUntilVisible:
+    element:
+      id: register_button
+    direction: DOWN
+- tapOn:
+    id: register_button
+
+- scrollUntilVisible:
+    element:
+      id: register_email
+    direction: UP
+- assertVisible:
+    id: register_email

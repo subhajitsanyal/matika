@@ -1,0 +1,70 @@
+# PT-V2-08 (text-fallback variant) — patient types an implausible
+# blood-pressure value; bedrock-router should escalate to Sonnet (T3)
+# with escalation_reason='implausible_value' and the response card
+# should ask for re-check.
+#
+# Why text not voice: PT-V2-08's canonical path is voice, but the
+# product-side behavior (Bedrock T3 escalation + re-check prompt) is
+# input-modality-agnostic. Text is deterministic and runs at night.
+#
+# Backend assertion (run separately by backend-verifier):
+#   model_call.tier='T3', model='claude-sonnet-4-x' (or sonnet-4-6),
+#   escalation_reason='implausible_value', latency_ms < 5000
+#
+# Run:
+#   source ~/.matika-test-creds.env
+#   scripts/maestro-run.sh patient_implausible_text
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+# Login as patient.
+- extendedWaitUntil:
+    visible:
+      id: login_email
+    timeout: 15000
+- tapOn:
+    id: login_email
+- inputText: ${MATIKA_PATIENT_EMAIL}
+- tapOn:
+    id: login_password
+- inputText: ${MATIKA_PATIENT_PASSWORD}
+- hideKeyboard
+- tapOn:
+    id: login_button
+
+# Reach conversation screen.
+- extendedWaitUntil:
+    visible:
+      id: patient_home_start_conversation
+    timeout: 30000
+- tapOn:
+    id: patient_home_start_conversation
+- tapOn:
+    text: "Allow|While using the app"
+    optional: true
+
+# Use the text fallback to type the implausible value.
+- extendedWaitUntil:
+    visible:
+      id: matika_text_fallback
+    timeout: 30000
+- tapOn:
+    id: matika_text_fallback
+- inputText: "My blood pressure is three hundred over two hundred"
+- tapOn:
+    id: matika_text_send
+
+# Wait for response card. Sonnet escalations are streaming-default
+# and take longer; 90s timeout is generous. matika_response_card only
+# mounts after a successful round-trip.
+- extendedWaitUntil:
+    visible:
+      id: matika_response_card
+    timeout: 90000
+
+# Confirm we're still on the conversation screen (not crashed).
+- assertVisible:
+    id: matika_text_fallback

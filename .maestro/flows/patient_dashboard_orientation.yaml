@@ -1,0 +1,49 @@
+# PT-V2-02 — patient lands on the v2 home screen and sees the
+# Start Conversation CTA. Read-only assertion flow; no state mutation.
+#
+# Why this is short: the v2 home is intentionally voice-first with one
+# CTA; the v1 6-tile vital grid is gone (F4). The only assertion that
+# matters is "patient sees the Start Conversation button and the
+# CareLog brand chrome."
+#
+# Run:
+#   source ~/.matika-test-creds.env
+#   scripts/maestro-run.sh patient_dashboard_orientation
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible:
+      id: login_email
+    timeout: 15000
+- tapOn:
+    id: login_email
+- inputText: ${MATIKA_PATIENT_EMAIL}
+- tapOn:
+    id: login_password
+- inputText: ${MATIKA_PATIENT_PASSWORD}
+- hideKeyboard
+- tapOn:
+    id: login_button
+
+# Patient home should render with the start-conversation CTA.
+# 60s timeout: cold dashboard + healthStatus poll on first launch.
+- extendedWaitUntil:
+    visible:
+      id: patient_home_start_conversation
+    timeout: 60000
+
+# Brand chrome — the top app bar shows "CareLog" (per F4, the package
+# is still com.carelog; user-facing brand renames to Matika are on the
+# voice-conversation screen). assertVisible by text content checks
+# the static brand on home.
+- assertVisible: "CareLog"
+
+# Confirm the patient persona reaches a screen that ONLY exists for
+# patients — patient_home_start_conversation only mounts when the
+# nav graph routes to PatientHomeScreen, which only happens on
+# `custom:persona_type=patient`.
+- assertVisible:
+    id: patient_home_start_conversation

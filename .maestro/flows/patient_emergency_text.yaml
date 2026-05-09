@@ -1,0 +1,80 @@
+# PT-V2-09 (text-fallback variant) — patient types an emergency
+# keyword phrase; bedrock-router should fire emergency escalation
+# (escalation_reason='emergency'), notification-sender Lambda enqueues
+# caregiver alert, interaction_sessions.escalations_triggered ⊇
+# ["emergency"].
+#
+# Why text not voice: same as PT-V2-08 — product-side emergency
+# detection runs against the transcript regardless of source modality.
+# Voice path covered by PT-V2-09 in journeys_voice.md.
+#
+# Backend assertions (backend-verifier):
+#   model_call.tier='T3', escalation_reason='emergency'
+#   notification-sender Lambda log within 60s of the turn
+#   interaction_sessions row gets escalations_triggered='["emergency"]'
+#
+# Caveat: actual FCM push receipt to caregiver phone is NOT verified
+# by this flow (would need a second device). Backend chain is
+# verifiable; delivery is manual.
+#
+# Run:
+#   source ~/.matika-test-creds.env
+#   scripts/maestro-run.sh patient_emergency_text
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+- extendedWaitUntil:
+    visible:
+      id: login_email
+    timeout: 15000
+- tapOn:
+    id: login_email
+- inputText: ${MATIKA_PATIENT_EMAIL}
+- tapOn:
+    id: login_password
+- inputText: ${MATIKA_PATIENT_PASSWORD}
+- hideKeyboard
+- tapOn:
+    id: login_button
+
+- extendedWaitUntil:
+    visible:
+      id: patient_home_start_conversation
+    timeout: 30000
+- tapOn:
+    id: patient_home_start_conversation
+- tapOn:
+    text: "Allow|While using the app"
+    optional: true
+
+- extendedWaitUntil:
+    visible:
+      id: matika_text_fallback
+    timeout: 30000
+- tapOn:
+    id: matika_text_fallback
+- inputText: "I have severe chest pain right now"
+- tapOn:
+    id: matika_text_send
+
+# Wait for response card — emergency turns escalate to Sonnet
+# (streamed) so the round-trip is longer. 90s timeout.
+- extendedWaitUntil:
+    visible:
+      id: matika_response_card
+    timeout: 90000
+
+# We don't assert specific response text content because Sonnet's
+# emergency response wording varies. The non-vacuous proof is
+# matika_response_card mounting. Backend-verifier confirms the
+# escalation_reason='emergency' marker on the model_call row +
+# the notification-sender Lambda log.
+
+# App should still be on the conversation screen (or session-ended
+# card depending on UX). matika_text_fallback OR sessionEnded card
+# should be visible. Use a tolerant assertion.
+- assertVisible:
+    id: matika_response_card

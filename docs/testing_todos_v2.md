@@ -16,6 +16,37 @@ Items below are ordered by **leverage** (journeys-unblocked-per-effort). Pick fr
 
 ## Sweep harness fixes (highest leverage first)
 
+### F10 — State-machine allowlist rejects CREATED -> PLAUSIBILITY_CHALLENGE (NEW — surfaced by non-voice sweep)
+
+**Severity:** Medium. Implausible-value handling on the **very first turn** crashes with HTTP 500.
+**Owner:** `backend`.
+**Estimated effort:** 1 hour (one-line allowlist extension + a few unit tests).
+
+**Problem.** When a patient's first utterance is an implausible value (e.g. "my BP is 300 over 200"), the LLM correctly emits `stateTransition: "CREATED -> PLAUSIBILITY_CHALLENGE"` and the response text "could you re-check the reading?". The `bedrock-router` Lambda then **rejects** the LLM output with `StateTransitionError: Transition CREATED -> PLAUSIBILITY_CHALLENGE is not in the allowed set` and returns HTTP 500 to the app.
+
+**Reproduction.** PT-V2-08-via-text in sweep `20260509_000226`:
+```
+MatikaConversationVM: submitTurn seq=1 sessionId=... chars=51
+MatikaConversationVM: submitTurn failed seq=1
+retrofit2.HttpException: HTTP 500
+```
+Lambda log:
+```
+ERROR handleTurn failed StateTransitionError: Transition CREATED -> PLAUSIBILITY_CHALLENGE is not in the allowed set.
+```
+
+**Why it's not a regression from F2.** F2 only added `status` / `endedAt` columns + COALESCE in SQL + `computeSessionTerminus` helper. None of those touch state-transition validation. PT-V2-09 emergency text passed cleanly in the same sweep — `CREATED -> EMERGENCY` is in the allowlist (incidentally), proving the allowlist itself is the issue, not transition logic.
+
+**Fix.** Extend the allowed-transition set in the bedrock-router state machine to include first-turn shortcuts:
+- `CREATED -> PLAUSIBILITY_CHALLENGE` (covers PT-V2-08)
+- `CREATED -> EMERGENCY` (already works but should be explicit not incidental)
+- `GREETING -> PLAUSIBILITY_CHALLENGE` (covers the case where the patient's first content turn after a greeting is implausible)
+- `GREETING -> EMERGENCY` (same)
+
+**Verification.** After fix, PT-V2-08-via-text should round-trip with `model_call.escalation_reason='implausible_value'` and a Sonnet response asking for re-check.
+
+---
+
 ### F9 — STT result not routed from Android STT to /conversation/turn (RESOLVED — verified live in voice flow)
 
 **Severity:** High. Was the root cause of "voice journeys never produce model_call rows."
