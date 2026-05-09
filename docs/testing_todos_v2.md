@@ -30,24 +30,25 @@ A pass over every Lambda that reads or writes the `alerts` / `alert_reads` / `de
 
 ---
 
-### F13 — `alert-crud` reads non-existent `alerts.value` and `alerts.deleted_at` columns (NEW — surfaced by audit)
+### F13 — `alert-crud` reads non-existent `alerts.value`, `alerts.deleted_at`, `alert_reads` table, and `persona_links.user_id` (RESOLVED — verified live 2026-05-09)
 
-**Severity:** High. Touches every caregiver/relative alerts UI path: list, detail, soft-delete. With this bug present, `GET /alerts` and `DELETE /alerts/{id}` return HTTP 500 against the current dev schema.
+**Severity:** High. Was: every caregiver alerts UI route (list, mark-read, delete) returned HTTP 500. Worse: the lambda was DOA — it required `pg` but had no `package.json` / `node_modules` shipped, so cold starts crashed before reaching SQL. CloudWatch had **0 invocation events ever recorded** before tonight's fix.
 **Owner:** `backend`.
-**Estimated effort:** 1 hour (column rename across SELECT/UPDATE + a unit test that asserts against the live schema, mirroring the F11 regression guard).
+**Status:** Fixed and verified end-to-end. Rewrote the lambda against the live schema; added `package.json` + lockfile + 10-test jest regression-guard suite; deployed via `aws lambda update-function-code` (terraform can pick up the change next time it runs). Three paths verified live (John CG → Jane's alerts):
 
-**Reproduction (2026-05-09).** Replayed `SELECT a.value FROM alerts a LIMIT 1;` against dev RDS:
-```
-ERROR: column a.value does not exist
-```
-And `SELECT deleted_at FROM alerts LIMIT 1;`:
-```
-ERROR: column "deleted_at" does not exist
-```
+| Path | Result |
+|---|---|
+| `GET /patients/{patientId}/alerts` | 200; returns 6 rows (2 threshold_breach + 4 missed_measurement) with `vitalValue`, `vitalUnit`, `thresholdMin/Max` populated correctly. |
+| `PATCH /alerts/{alertId}` `{read: true}` | 200; `alerts.is_read=true`, `read_at` populated. |
+| `DELETE /alerts/{alertId}` | 200; row removed (hard delete — schema has no `deleted_at`). |
 
-**Fix.** In `backend/lambdas/alert-crud/index.js`:
-- Replace every `a.value` / `row.value` with `a.vital_value` (and update the response field accordingly).
-- Replace the soft-delete `UPDATE alerts SET deleted_at = NOW()` with either an `is_read=true` mark (the schema already has `is_read`) or hard-delete, depending on product intent. Drop any `WHERE deleted_at IS NULL` filters.
+**Drift inventory** (all of these had to change in the rewrite):
+- `a.value` → `a.vital_value`; response field renamed `value → vitalValue`. Added `vitalUnit / thresholdMin / thresholdMax` to the response so caregiver UI can render the breached side without a second round-trip.
+- `LEFT JOIN alert_reads ar ON …` → direct `a.is_read` / `a.read_at` (the `alert_reads` table doesn't exist in V001+ schema; read state lives on `alerts` itself).
+- `UPDATE alerts SET deleted_at = NOW()` → `DELETE FROM alerts WHERE id = $1` (hard delete; schema has no `deleted_at` column).
+- `persona_links.user_id` → `persona_links.linked_user_id` (and `status='active'` → `is_active=true`).
+- Added `resolveUserIdFromCognitoSub` helper — the lambda's incoming `sub` is the Cognito sub, but `persona_links.linked_user_id` and `alerts.recipient_user_id` are internal `users.id` UUIDs. The previous code passed `cognito_sub` straight in, which would never match.
+- Authorization: `recipient_user_id` is the source of truth for "who can mark / delete this alert". Mark-read and delete now check `alerts.recipient_user_id = caller_user_id` and 403 otherwise.
 
 ---
 

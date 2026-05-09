@@ -1,8 +1,19 @@
 /**
  * Alert CRUD Lambda
  *
- * API endpoints for managing alerts for relatives.
+ * API endpoints for managing alerts addressed to a caregiver / relative.
  * Alerts include threshold breaches and reminder lapses.
+ *
+ * Schema notes (V001):
+ *   - `alerts` carries `recipient_user_id` (single recipient per row),
+ *     `is_read` + `read_at` for read state, and `vital_value` / `vital_unit` /
+ *     `threshold_min` / `threshold_max` for the breach detail.
+ *   - There is no `alert_reads` join table and no `deleted_at` soft-delete
+ *     column. Earlier versions of this Lambda referenced both; both have been
+ *     removed (F13).
+ *   - Access to alerts is gated through `persona_links.linked_user_id`
+ *     (UUID = users.id) + `persona_links.is_active = true`. The lambda's
+ *     incoming `userId` is the Cognito `sub`; we resolve to `users.id` first.
  */
 
 const { Client } = require('pg');
@@ -33,9 +44,6 @@ async function createDbConnection() {
   return client;
 }
 
-// Alert types
-const ALERT_TYPES = ['THRESHOLD_BREACH', 'REMINDER_LAPSE', 'SYSTEM'];
-
 exports.handler = async (event) => {
   console.log('Alert CRUD request:', event.httpMethod, event.path);
 
@@ -44,16 +52,20 @@ exports.handler = async (event) => {
   try {
     const httpMethod = event.httpMethod || event.requestContext?.http?.method;
     const claims = event.requestContext?.authorizer?.claims || {};
-    const userId = claims.sub;
+    const cognitoSub = claims.sub;
 
-    if (!userId) {
+    if (!cognitoSub) {
       return errorResponse(401, 'Unauthorized');
+    }
+
+    const userId = await resolveUserIdFromCognitoSub(client, cognitoSub);
+    if (!userId) {
+      return errorResponse(401, 'User not found');
     }
 
     const patientId = event.pathParameters?.patientId;
     const alertId = event.pathParameters?.alertId;
 
-    // For patient-specific routes
     if (patientId) {
       const hasAccess = await checkPatientAccess(client, userId, patientId);
       if (!hasAccess) {
@@ -92,7 +104,10 @@ exports.handler = async (event) => {
 };
 
 /**
- * Get alerts for a patient.
+ * Get alerts for a patient that are addressed to the caller.
+ *
+ * Read state, value, and breached threshold are surfaced inline — caregiver
+ * UI shouldn't need a second round-trip to render the alert card.
  */
 async function getAlerts(client, event, patientId, userId) {
   const queryParams = event.queryStringParameters || {};
@@ -105,19 +120,22 @@ async function getAlerts(client, event, patientId, userId) {
       a.id,
       a.alert_type,
       a.vital_type,
-      a.value,
+      a.vital_value,
+      a.vital_unit,
+      a.threshold_min,
+      a.threshold_max,
       a.message,
-      a.created_at as timestamp,
-      ar.read_at IS NOT NULL as read
+      a.created_at AS timestamp,
+      a.is_read,
+      a.read_at
     FROM alerts a
-    LEFT JOIN alert_reads ar ON a.id = ar.alert_id AND ar.user_id = $2
-    WHERE a.patient_id = $1
+    WHERE a.patient_id = $1 AND a.recipient_user_id = $2
   `;
 
   const params = [patientId, userId];
 
   if (unreadOnly) {
-    query += ` AND ar.read_at IS NULL`;
+    query += ` AND a.is_read = false`;
   }
 
   query += ` ORDER BY a.created_at DESC LIMIT $3 OFFSET $4`;
@@ -125,17 +143,14 @@ async function getAlerts(client, event, patientId, userId) {
 
   const result = await client.query(query, params);
 
-  // Get total count
   const countResult = await client.query(
-    `SELECT COUNT(*) as total FROM alerts WHERE patient_id = $1`,
-    [patientId]
+    `SELECT COUNT(*)::int AS total FROM alerts WHERE patient_id = $1 AND recipient_user_id = $2`,
+    [patientId, userId]
   );
 
   const unreadCountResult = await client.query(
-    `SELECT COUNT(*) as unread
-     FROM alerts a
-     LEFT JOIN alert_reads ar ON a.id = ar.alert_id AND ar.user_id = $2
-     WHERE a.patient_id = $1 AND ar.read_at IS NULL`,
+    `SELECT COUNT(*)::int AS unread FROM alerts
+     WHERE patient_id = $1 AND recipient_user_id = $2 AND is_read = false`,
     [patientId, userId]
   );
 
@@ -143,30 +158,34 @@ async function getAlerts(client, event, patientId, userId) {
     id: row.id,
     alertType: row.alert_type,
     vitalType: row.vital_type,
-    value: row.value,
+    vitalValue: row.vital_value === null ? null : Number(row.vital_value),
+    vitalUnit: row.vital_unit,
+    thresholdMin: row.threshold_min === null ? null : Number(row.threshold_min),
+    thresholdMax: row.threshold_max === null ? null : Number(row.threshold_max),
     message: row.message,
     timestamp: row.timestamp,
-    read: row.read || false,
+    read: row.is_read === true,
+    readAt: row.read_at,
   }));
 
   return successResponse(200, {
     alerts,
-    total: parseInt(countResult.rows[0].total),
-    unreadCount: parseInt(unreadCountResult.rows[0].unread),
+    total: countResult.rows[0].total,
+    unreadCount: unreadCountResult.rows[0].unread,
     limit,
     offset,
   });
 }
 
 /**
- * Update an alert (mark as read/unread).
+ * Update an alert's read state. Authoritatively scoped to the caller —
+ * an alert can only be marked by its addressed recipient.
  */
 async function updateAlert(client, event, alertId, userId) {
   const body = typeof event.body === 'string' ? JSON.parse(event.body) : event.body;
 
-  // Verify user has access to this alert
   const alertResult = await client.query(
-    `SELECT a.patient_id FROM alerts a WHERE a.id = $1`,
+    `SELECT a.recipient_user_id FROM alerts a WHERE a.id = $1`,
     [alertId]
   );
 
@@ -174,27 +193,20 @@ async function updateAlert(client, event, alertId, userId) {
     return errorResponse(404, 'Alert not found');
   }
 
-  const patientId = alertResult.rows[0].patient_id;
-  const hasAccess = await checkPatientAccess(client, userId, patientId);
-  if (!hasAccess) {
+  if (alertResult.rows[0].recipient_user_id !== userId) {
     return errorResponse(403, 'Access denied');
   }
 
-  // Handle read status update
   if (body.read !== undefined) {
     if (body.read) {
-      // Mark as read
       await client.query(
-        `INSERT INTO alert_reads (alert_id, user_id, read_at)
-         VALUES ($1, $2, NOW())
-         ON CONFLICT (alert_id, user_id) DO UPDATE SET read_at = NOW()`,
-        [alertId, userId]
+        `UPDATE alerts SET is_read = true, read_at = NOW() WHERE id = $1`,
+        [alertId]
       );
     } else {
-      // Mark as unread
       await client.query(
-        `DELETE FROM alert_reads WHERE alert_id = $1 AND user_id = $2`,
-        [alertId, userId]
+        `UPDATE alerts SET is_read = false, read_at = NULL WHERE id = $1`,
+        [alertId]
       );
     }
   }
@@ -203,12 +215,12 @@ async function updateAlert(client, event, alertId, userId) {
 }
 
 /**
- * Delete an alert.
+ * Delete an alert. The schema has no `deleted_at` column; this is a hard
+ * delete. Only the recipient may delete their own alerts.
  */
 async function deleteAlert(client, alertId, userId) {
-  // Verify user has access to this alert
   const alertResult = await client.query(
-    `SELECT a.patient_id FROM alerts a WHERE a.id = $1`,
+    `SELECT a.recipient_user_id FROM alerts a WHERE a.id = $1`,
     [alertId]
   );
 
@@ -216,64 +228,52 @@ async function deleteAlert(client, alertId, userId) {
     return errorResponse(404, 'Alert not found');
   }
 
-  const patientId = alertResult.rows[0].patient_id;
-  const hasAccess = await checkPatientAccess(client, userId, patientId);
-  if (!hasAccess) {
+  if (alertResult.rows[0].recipient_user_id !== userId) {
     return errorResponse(403, 'Access denied');
   }
 
-  // Soft delete by setting deleted_at
-  await client.query(
-    `UPDATE alerts SET deleted_at = NOW() WHERE id = $1`,
-    [alertId]
-  );
+  await client.query(`DELETE FROM alerts WHERE id = $1`, [alertId]);
 
   return successResponse(200, { message: 'Alert deleted successfully' });
 }
 
 /**
- * Mark all alerts as read for a patient.
+ * Resolve a Cognito sub to its internal users.id (UUID).
+ * Returns null when no user row exists for the sub.
  */
-async function markAllAsRead(client, patientId, userId) {
-  await client.query(
-    `INSERT INTO alert_reads (alert_id, user_id, read_at)
-     SELECT a.id, $2, NOW()
-     FROM alerts a
-     LEFT JOIN alert_reads ar ON a.id = ar.alert_id AND ar.user_id = $2
-     WHERE a.patient_id = $1 AND ar.read_at IS NULL
-     ON CONFLICT (alert_id, user_id) DO UPDATE SET read_at = NOW()`,
-    [patientId, userId]
+async function resolveUserIdFromCognitoSub(client, cognitoSub) {
+  const result = await client.query(
+    `SELECT id FROM users WHERE cognito_sub = $1 LIMIT 1`,
+    [cognitoSub]
   );
-
-  return successResponse(200, { message: 'All alerts marked as read' });
+  return result.rows[0]?.id || null;
 }
 
 /**
- * Check if user has access to patient data.
+ * Check whether the caller (already-resolved internal users.id) has access
+ * to the patient's data. Either an active persona link, or the caller IS
+ * the patient.
  */
 async function checkPatientAccess(client, userId, patientId) {
-  const result = await client.query(
+  const linkResult = await client.query(
     `SELECT 1 FROM persona_links
-     WHERE user_id = $1 AND patient_id = $2 AND status = 'active'`,
+     WHERE linked_user_id = $1 AND patient_id = $2 AND is_active = true`,
     [userId, patientId]
   );
 
-  if (result.rows.length > 0) {
+  if (linkResult.rows.length > 0) {
     return true;
   }
 
-  // Check if user is the patient
-  const patientResult = await client.query(
-    `SELECT 1 FROM users WHERE id = $1 AND cognito_sub = $2`,
+  const selfResult = await client.query(
+    `SELECT 1 FROM patients p
+     WHERE p.id = $1 AND p.user_id = $2`,
     [patientId, userId]
   );
 
-  return patientResult.rows.length > 0;
+  return selfResult.rows.length > 0;
 }
 
-/**
- * Success response helper.
- */
 function successResponse(statusCode, body) {
   return {
     statusCode,
@@ -285,9 +285,6 @@ function successResponse(statusCode, body) {
   };
 }
 
-/**
- * Error response helper.
- */
 function errorResponse(statusCode, message) {
   return {
     statusCode,
