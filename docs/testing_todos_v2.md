@@ -16,6 +16,41 @@ Items below are ordered by **leverage** (journeys-unblocked-per-effort). Pick fr
 
 ## Sweep harness fixes (highest leverage first)
 
+### F11 — `evaluate-thresholds-batch` writes `alerts` row with the wrong column name and no recipient (NEW — surfaced by E2E-V2-02 unblock work)
+
+**Severity:** High. With this bug present, **no `THRESHOLD_BREACH` alert can ever land in the `alerts` table** — the entire E2E-V2-02 / E2E-V2-03 caregiver-notification chain is silently broken end-to-end. Patient-side breach detection works (model proposes the transition / observation logged), but the alert row is never created, so notification-sender has nothing to fan out.
+**Owner:** `backend`.
+**Estimated effort:** 1–2 hours (column name + recipient lookup + a unit test against the live schema).
+
+**Reproduction (2026-05-09).** After provisioning Jane with a BP `parameter_configs` row (systolic 90–160 / diastolic 50–95), direct invoke of `carelog-dev-evaluate-thresholds-batch` with a clearly-breaching payload (200/110) returns:
+```
+StatusCode=200, FunctionError=Unhandled
+errorMessage: 'column "value" of relation "alerts" does not exist'
+trace: createAlertRecord (/var/task/index.js:102:18)
+```
+
+**Root cause(s)** (all in `backend/lambdas/evaluate-thresholds-batch/index.js`):
+1. **Column-name mismatch.** `createAlertRecord` does `INSERT INTO alerts (..., value, ...)` but the live schema has `vital_value` (and `vital_unit`, neither of which is populated).
+2. **Missing required column.** `alerts.recipient_user_id` is `NOT NULL` but the INSERT omits it. The lambda already calls `findLinkedCaregiver(...)` for the SQS message but never threads the caregiver's `linked_user_id` into the alert row.
+3. **Threshold values lost.** The `alerts.threshold_min` / `alerts.threshold_max` columns are never populated, so caregiver UI can't render the breached limits without re-querying `parameter_configs`.
+
+**Fix sketch.**
+```diff
+-INSERT INTO alerts (patient_id, alert_type, vital_type, value, message, created_at)
+-VALUES ($1, $2, $3, $4, $5, NOW())
++INSERT INTO alerts (
++  patient_id, recipient_user_id, alert_type, vital_type,
++  vital_value, vital_unit, threshold_min, threshold_max, message, created_at
++) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+```
+plus pulling the caregiver's `linked_user_id` from the existing `findLinkedCaregiver` call into the params, and reading `matchingConfig.threshold_min[0]` / `[0]` (or `null`) for the breached-side bound.
+
+**Why this wasn't caught before.** E2E-V2-02 was never executed — it was paper-classified as "blocked: Jane lacks config." Provisioning Jane (this evening) was the first time the chain ran end-to-end against the real RDS schema.
+
+**Adjacent risk:** double-check `notification-sender` for the same kind of column-name drift against `alerts` reads before relying on push delivery for verification.
+
+---
+
 ### F10 — State-machine allowlist rejects CREATED -> PLAUSIBILITY_CHALLENGE (RESOLVED — verified live 2026-05-09)
 
 **Severity:** Medium. Was: implausible-value handling on the **very first turn** crashed with HTTP 500.
