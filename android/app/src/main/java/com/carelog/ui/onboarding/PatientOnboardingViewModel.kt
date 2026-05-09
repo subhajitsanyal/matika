@@ -71,7 +71,8 @@ class PatientOnboardingViewModel @Inject constructor(
                 _uiState.value = PatientOnboardingUiState.Success(
                     patientId = result.patientId,
                     email = result.email,
-                    temporaryPassword = result.temporaryPassword
+                    temporaryPassword = result.temporaryPassword,
+                    cognitoSub = result.cognitoSub,
                 )
             } catch (e: Exception) {
                 _uiState.value = PatientOnboardingUiState.Error(
@@ -104,7 +105,14 @@ data class CreatePatientRequest(
 data class CreatePatientResult(
     val patientId: String,
     val email: String?,
-    val temporaryPassword: String?
+    val temporaryPassword: String?,
+    /**
+     * Patient's Cognito sub from the create-patient response. Required
+     * to launch the v2 caregiver-onboarding conversation (Phase C).
+     * Nullable for pre-Phase-C deployments of the Lambda that don't
+     * include the field.
+     */
+    val cognitoSub: String?,
 )
 
 /**

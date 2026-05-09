@@ -29,7 +29,13 @@ import java.time.LocalDate
 @Composable
 fun PatientOnboardingScreen(
     onNavigateBack: () -> Unit,
-    onPatientCreated: (String) -> Unit, // Patient ID
+    /**
+     * Fired after the caregiver dismisses the credentials dialog.
+     * `cognitoSub` is non-null when the Lambda returned it (post-Phase-C
+     * deployment) — the nav host uses it to launch the v2 caregiver
+     * onboarding conversation. Null falls back to the legacy SPLASH nav.
+     */
+    onPatientCreated: (patientId: String, cognitoSub: String?) -> Unit,
     viewModel: PatientOnboardingViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -89,7 +95,7 @@ fun PatientOnboardingScreen(
             confirmButton = {
                 Button(onClick = {
                     showCredentialsDialog = false
-                    onPatientCreated(successState.patientId)
+                    onPatientCreated(successState.patientId, successState.cognitoSub)
                 }) {
                     Text("Done")
                 }
@@ -378,7 +384,9 @@ sealed class PatientOnboardingUiState {
     data class Success(
         val patientId: String,
         val email: String? = null,
-        val temporaryPassword: String? = null
+        val temporaryPassword: String? = null,
+        /** Phase C: present when the Lambda returns it; drives v2 caregiver onboarding. */
+        val cognitoSub: String? = null,
     ) : PatientOnboardingUiState()
     data class Error(val message: String) : PatientOnboardingUiState()
 }

@@ -289,7 +289,11 @@ private fun InteractionCard(
                     )
                     Column {
                         Text(
-                            text = interaction.timestamp,
+                            // Same Gson-non-null-bypass class of bug as
+                            // `interaction.type` below — guard at the
+                            // render site so a missing wire field doesn't
+                            // crash the InteractionCard.
+                            text = (interaction.timestamp as String?) ?: "—",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Medium
                         )
@@ -310,7 +314,7 @@ private fun InteractionCard(
                     onClick = {},
                     label = {
                         Text(
-                            text = interaction.status,
+                            text = (interaction.status as String?) ?: "—",
                             style = MaterialTheme.typography.labelSmall,
                             color = statusColor
                         )

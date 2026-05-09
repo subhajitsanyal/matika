@@ -124,6 +124,28 @@ function generatePassword() {
   return required.join("");
 }
 
+/**
+ * Map ISO-639-1 language codes (en, hi, bn) to the BCP-47 region-tagged
+ * forms (en-IN, hi-IN, bn-IN) that the v2 schema's
+ * `patients_language_check` and `interaction_sessions_language_check`
+ * constraints (V005 migration) require. Pass-through for any code
+ * already containing a region tag.
+ *
+ * The v1 create-patient Lambda predates the constraint tightening;
+ * without this mapping the INSERT fails with "violates check
+ * constraint patients_language_check".
+ */
+function toBcp47Language(code) {
+  if (!code) return 'en-IN';
+  if (code.includes('-')) return code;
+  switch (code.toLowerCase()) {
+    case 'en': return 'en-IN';
+    case 'hi': return 'hi-IN';
+    case 'bn': return 'bn-IN';
+    default: return code;
+  }
+}
+
 async function createCognitoUser(patientId, patientName, patientEmail) {
   const tempPassword = generatePassword();
 
@@ -287,7 +309,7 @@ async function createPatientRecords(dbClient, patientData, caregiverCognitoSub, 
         patientData.emergencyContactName || null,
         patientData.emergencyContactPhone || null,
         patientData.fhirPatientId,
-        patientData.language || 'en',
+        toBcp47Language(patientData.language),
         patientData.timezone || 'Asia/Kolkata',
       ]
     );
@@ -449,7 +471,7 @@ exports.handler = async (event) => {
         emergencyContactName: body.emergencyContactName || (body.emergency_contact && body.emergency_contact.name) || null,
         emergencyContactPhone: body.emergencyContactPhone || (body.emergency_contact && body.emergency_contact.phone) || null,
         fhirPatientId,
-        language: body.language || 'en',
+        language: toBcp47Language(body.language),
         timezone: body.timezone || 'Asia/Kolkata',
       },
       caregiverCognitoSub,

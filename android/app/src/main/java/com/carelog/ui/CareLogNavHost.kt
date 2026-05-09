@@ -268,9 +268,26 @@ fun CareLogNavHost() {
         composable(CareLogRoutes.ONBOARDING) {
             PatientOnboardingScreen(
                 onNavigateBack = { navController.popBackStack() },
-                onPatientCreated = {
-                    navController.navigate(CareLogRoutes.SPLASH) {
-                        popUpTo(CareLogRoutes.LOGIN) { inclusive = true }
+                onPatientCreated = { patientId, cognitoSub ->
+                    // Phase C: form-based onboarding flow. After
+                    // patient creation, route into the v2 caregiver
+                    // protocol-config conversation when the flag is on
+                    // AND the Lambda returned the new patient's
+                    // Cognito sub. Otherwise fall back to the legacy
+                    // SPLASH navigation for older deployments.
+                    if (
+                        com.carelog.core.BuildConfig.USE_V2_INFERENCE &&
+                        !cognitoSub.isNullOrBlank()
+                    ) {
+                        navController.navigate(
+                            CareLogRoutes.matikaProtocolConfig(cognitoSub, "Patient")
+                        ) {
+                            popUpTo(CareLogRoutes.ONBOARDING) { inclusive = true }
+                        }
+                    } else {
+                        navController.navigate(CareLogRoutes.SPLASH) {
+                            popUpTo(CareLogRoutes.LOGIN) { inclusive = true }
+                        }
                     }
                 }
             )

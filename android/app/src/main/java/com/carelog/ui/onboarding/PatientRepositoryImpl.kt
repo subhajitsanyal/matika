@@ -60,7 +60,8 @@ class PatientRepositoryImpl @Inject constructor() : PatientRepository {
             CreatePatientResult(
                 patientId = patientId,
                 email = json.optString("email").takeIf { it.isNotEmpty() },
-                temporaryPassword = json.optString("temporary_password").takeIf { it.isNotEmpty() }
+                temporaryPassword = json.optString("temporary_password").takeIf { it.isNotEmpty() },
+                cognitoSub = json.optString("cognito_sub").takeIf { it.isNotEmpty() },
             )
         } else {
             val errorBody = response.body.string()
