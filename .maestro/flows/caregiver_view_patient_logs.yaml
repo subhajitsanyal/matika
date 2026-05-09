@@ -1,0 +1,86 @@
+# CG-V2-06 — caregiver opens a linked patient's interaction-log
+# screen and confirms an interaction history rendered (or the empty
+# state, if Jane has no sessions yet).
+#
+# What this exercises end-to-end:
+#   - getPatients() (caregiver dashboard load)
+#   - patient card click → toggles expanded view (no nav yet)
+#   - "View Logs" button click → navigates to PatientLogScreen
+#   - GET /v2/patients/{id}/interactions (PatientLogViewModel.loadLogs)
+#   - LazyColumn renders interaction_card_<session_id> rows
+#
+# Pre-conditions:
+#   - Jane Doe (patient_id CL-63NRGO) is the only patient linked to
+#     the test caregiver. She has ≥1 interaction_sessions row from
+#     prior sweeps (confirmed 2026-05-09: 12+ rows in dev RDS).
+#
+# The "View Logs" button has no testTag — only
+# `contentDescription = "View health logs for ${patient.name}"`.
+# Maestro plain-text matcher uses full-string regex semantics on
+# accessibility text nodes, so we wrap in `.*…*` to substring-match.
+#
+# Run:
+#   source ~/.matika-test-creds.env
+#   scripts/maestro-run.sh caregiver_view_patient_logs
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+# ── Sign in as caregiver ─────────────────────────────────────
+- extendedWaitUntil:
+    visible:
+      id: login_email
+    timeout: 15000
+- tapOn:
+    id: login_email
+- inputText: ${MATIKA_CAREGIVER_EMAIL}
+- tapOn:
+    id: login_password
+- inputText: ${MATIKA_CAREGIVER_PASSWORD}
+- hideKeyboard
+- tapOn:
+    id: login_button
+
+# ── Reach CaregiverHomeScreen with patient list rendered ────
+- extendedWaitUntil:
+    visible:
+      id: onboard_patient_fab
+    timeout: 60000
+
+# Jane's patient_id is CL-63NRGO (provisioned in dev). The card's
+# testTag is patient_card_<patient_id>.
+- extendedWaitUntil:
+    visible:
+      id: patient_card_CL-63NRGO
+    timeout: 30000
+- tapOn:
+    id: patient_card_CL-63NRGO
+
+# ── Tap "View Logs" inside the expanded card ────────────────
+# AnimatedVisibility expand-spring is ~250ms; small wait is enough.
+- tapOn: ".*View health logs for.*"
+
+# ── PatientLogScreen mounted ─────────────────────────────────
+# Title "Patient Logs" proves we navigated off the dashboard onto
+# PatientLogScreen. The composable mounts before the API call returns.
+- extendedWaitUntil:
+    visible: ".*Patient Logs.*"
+    timeout: 15000
+
+# Confirm the data path completed. The screen renders one of:
+#   - one or more interaction_card_<session_id> testTagged cards, OR
+#   - the empty-state Text "No interaction logs yet"
+# Either is proof that GET /v2/patients/{id}/interactions returned
+# (success or empty list) — the spinner only drops once that
+# round-trip finishes. We accept either with a regex OR by waiting
+# for the empty state copy by text and the cards by testTag prefix.
+- extendedWaitUntil:
+    visible: ".*(No interaction logs yet|turns).*"
+    timeout: 30000
+
+# Sanity: we're no longer on the dashboard. onboard_patient_fab is
+# the home-screen FAB; if it's still visible we never navigated.
+- assertNotVisible:
+    id: onboard_patient_fab

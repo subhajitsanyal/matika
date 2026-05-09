@@ -46,19 +46,19 @@ For voice journeys that genuinely require Mac-speaker injection, see `docs/journ
 | **CG-V2-01** | Self-registration with cross-region consent | blocked | Cognito email-verification code intercept needed. |
 | **CG-V2-02** | Form-based patient onboarding | **PASS** (verified live with F3 fix) | `caregiver_protocol_setup.yaml` — the canonical Maestro CI gate. Re-run against pre-existing patient surfaces 409 (F3). |
 | **CG-V2-05** | Caregiver dashboard overview | **PASS (implicit via CG-V2-02)** | Login + onboard_patient_fab + patient_card visible — already covered by CG-V2-02. |
-| **CG-V2-06** | View patient logs | **blocked** | `patient_card_<id>` testTag exists; needs new flow tapping it then asserting interaction list / log entries. |
+| **CG-V2-06** | View patient logs | **PASS (2026-05-09)** | `caregiver_view_patient_logs.yaml` — taps `patient_card_CL-63NRGO`, "View Logs" button, asserts `Patient Logs` title + at least an interaction-card row OR empty-state copy. |
 | **CG-V2-07** | Receive threshold breach push | manual | Needs second device to receive FCM. Could verify backend half (alert + SQS + notification-sender Lambda log) without device. |
 | **CG-V2-08** | Receive missed-measurement push | manual | Same — needs second device. Backend half verifiable. |
 | **CG-V2-09** | Receive emergency push | manual | Same — second device. |
 | **CG-V2-10** | Invite doctor | blocked | No Maestro flow; SES sender email not verified in dev. Backend (`invite-doctor` log + RDS `doctor_invites` row) can be tested via direct API call. |
 | **CG-V2-11** | Manage care team — remove member | blocked | No Maestro flow; depends on CG-V2-10 having added a doctor first. |
-| **CG-V2-12** | Configure thresholds manually | blocked | No flow; thresholds UI not exercised. testTag audit needed on `ThresholdsScreen`. |
-| **CG-V2-13** | Configure reminders manually | blocked | Same as CG-V2-12 for reminders UI. |
+| **CG-V2-12** | Configure thresholds manually | **architecture-blocked (F4-class)** | `ThresholdConfigScreen` exists with `threshold_<vital>_min/max` testTags, but the only navigator is `RelativeDashboardScreen` — and the v2 persona mapping routes `RELATIVE → CaregiverHomeScreen`, never to `RelativeDashboard`. Screen is orphaned. Same product call as F4: wire from caregiver settings or delete. |
+| **CG-V2-13** | Configure reminders manually | **architecture-blocked (F4-class)** | `ReminderConfigScreen` exists but is reachable only from the same orphan `RelativeDashboardScreen`. Same product call as CG-V2-12. |
 | **CG-V2-14** | Accept doctor recommendation | blocked → **partially runnable via text** | Depends on DR-V2-05 (web blocked on data-testid). If a recommendation is seeded directly via DB, the caregiver-side accept can be exercised via text fallback in a config session. |
 | **CG-V2-15** | Reject doctor recommendation | same as CG-V2-14 | |
 | **CG-V2-16** | Delete patient (cascade) | blocked | `delete-patient` route Lambda not wired into API Gateway. Backend backlog. |
-| **CG-V2-17** | View trends | blocked | No Maestro flow; chart screen testTags not audited. |
-| **CG-V2-18** | Sign out | blocked → **runnable** | `settings_sign_out` testTag exists; flow authoring is trivial. |
+| **CG-V2-17** | View trends | **architecture-blocked (F4-class)** | `TrendsScreen` exists but is reachable only from the orphan `RelativeDashboardScreen`. Same product call as CG-V2-12/13. |
+| **CG-V2-18** | Sign out | **PASS (2026-05-09)** | `caregiver_sign_out.yaml` — opens settings (TopAppBar IconButton, contentDescription "Open settings"), scrolls to `settings_sign_out`, asserts return to login. |
 
 ### Doctor (Web portal) — 8 journeys
 

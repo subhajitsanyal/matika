@@ -239,9 +239,15 @@ This is a tuning matter for the test environment, not a code defect. The first-t
 
 **Problem.** `PatientHomeScreen.kt` has only "Start Conversation" — no vital tile grid. But `BloodPressureScreen.kt`, `GlucoseScreen.kt`, `TemperatureScreen.kt`, `WeightScreen.kt`, `PulseScreen.kt`, `SpO2Screen.kt` all still exist with `<param>_save_button` testTags, and routes are still wired in `CareLogNavHost.kt`. They are unreachable from the home UI. `docs/journeys.md` PT-V2-15..21 describes a v1 UX.
 
-**Resolution paths (need product decision).**
-- **Path A — restore tile nav.** Add a "Quick Log" button on home → 6-tile screen → existing per-vital screens. PT-V2-15..21 become runnable as written.
-- **Path B — delete the orphan code.** Remove vital screens + routes; rewrite PT-V2-15..21 to describe "manual entry within the voice conversation" or mark them as "v1-only".
+**Same orphan pattern on the caregiver side (added 2026-05-09).** `ThresholdConfigScreen`, `ReminderConfigScreen`, and `TrendsScreen` all exist with reasonable testTags (e.g. `threshold_<vital>_min/max`), but their *only* navigator is `RelativeDashboardScreen` — and the v2 persona-mapping in `CareLogNavHost.kt` routes `PersonaType.RELATIVE → CAREGIVER_DASHBOARD`, never to `RELATIVE_DASHBOARD`. So caregivers literally cannot reach those three screens from the v2 home/settings flow. Adds CG-V2-12, CG-V2-13, CG-V2-17 to the F4 journey list.
+
+**Updated journey list (12 affected):**
+- Patient side: PT-V2-15 (BP), -16 (glucose), -17 (temperature), -18 (weight), -19 (pulse), -20 (SpO₂), -21 (vitals overview), EDGE-V2-14 (vital edit).
+- Caregiver side: CG-V2-12 (configure thresholds), CG-V2-13 (configure reminders), CG-V2-17 (view trends).
+
+**Resolution paths (need product decision — applies to both patient and caregiver orphans).**
+- **Path A — restore tile/menu nav.** Add a "Quick Log" button to `PatientHomeScreen` → tile grid; add "Thresholds / Reminders / Trends" entries to `SettingsScreen` (or to the expanded patient card in `CaregiverHomeScreen`). All 12 journeys become runnable as written.
+- **Path B — delete the orphan code.** Remove patient vital screens + routes; remove `RelativeDashboardScreen` + `ThresholdConfigScreen` / `ReminderConfigScreen` / `TrendsScreen` + their routes; rewrite the affected journeys to describe "manual entry within the voice conversation" / "thresholds set by the v2 caregiver_protocol_setup conversation" or mark them v1-only.
 
 **No agentic action until decision made.** Flag for product owner.
 

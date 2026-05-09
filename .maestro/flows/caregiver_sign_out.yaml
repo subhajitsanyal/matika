@@ -1,0 +1,74 @@
+# CG-V2-18 — caregiver signs out: from CaregiverHomeScreen, open
+# settings, tap settings_sign_out, end up back on the login screen.
+#
+# What this exercises end-to-end:
+#   - Cognito sign-out flow (the SettingsViewModel kicks off
+#     viewModel.signOut() which clears the auth tokens)
+#   - Nav state pop back to login on success
+#
+# The settings IconButton on CaregiverHomeScreen has no testTag —
+# only `contentDescription = "Open settings"`. Maestro's plain-string
+# text matcher uses full-string regex semantics on accessibility text
+# nodes, so we wrap it in `.*…*` to substring-match.
+#
+# Run:
+#   source ~/.matika-test-creds.env
+#   scripts/maestro-run.sh caregiver_sign_out
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+# ── Sign in as caregiver ─────────────────────────────────────
+- extendedWaitUntil:
+    visible:
+      id: login_email
+    timeout: 15000
+- tapOn:
+    id: login_email
+- inputText: ${MATIKA_CAREGIVER_EMAIL}
+- tapOn:
+    id: login_password
+- inputText: ${MATIKA_CAREGIVER_PASSWORD}
+- hideKeyboard
+- tapOn:
+    id: login_button
+
+# ── Reach CaregiverHomeScreen ────────────────────────────────
+# onboard_patient_fab is the unique testTag that identifies caregiver
+# home — patients dashboard fetches getPatients()/getAlerts() so cold
+# Lambdas can push first render past 30s.
+- extendedWaitUntil:
+    visible:
+      id: onboard_patient_fab
+    timeout: 60000
+
+# ── Open settings ────────────────────────────────────────────
+# The TopAppBar settings IconButton uses contentDescription
+# "Open settings" — wrap in .*…* for substring match.
+- tapOn: ".*Open settings.*"
+
+# ── Sign out ─────────────────────────────────────────────────
+# settings_sign_out lives at the bottom of a long settings list
+# (Primary Patient, Manage Care Team, Invite Attendant, Invite Doctor,
+# Doctor Portal banner, …). It's reliably below the fold; explicit
+# scroll-into-view before the tap.
+- scrollUntilVisible:
+    element:
+      id: settings_sign_out
+    direction: DOWN
+- tapOn:
+    id: settings_sign_out
+
+# ── Back on login screen? ────────────────────────────────────
+# The post-confirmation Lambda + Cognito clear session round-trip
+# typically completes in <3s. SignOutState.Success triggers a
+# navController.popBackStack to login, so login_email is the proof
+# we landed.
+- extendedWaitUntil:
+    visible:
+      id: login_email
+    timeout: 15000
+- assertVisible:
+    id: login_button
