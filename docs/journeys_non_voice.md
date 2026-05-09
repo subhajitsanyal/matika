@@ -80,7 +80,7 @@ All 8 are gated on `web-portal` agent shipping `data-testid` attributes + `web-j
 | ID | Title | Status today | Test path |
 |---|---|---|---|
 | **E2E-V2-01** | Onboarding to first log | partial | Constituents covered: CG-V2-01 blocked, CG-V2-02 PASS, CG-V2-03 voice-only, PT-V2-01 PASS, PT-V2-07 PASS. Backend chain check passes. |
-| **E2E-V2-02** | Threshold breach alert cycle | provisioned, **blocked on F11** (2026-05-09) | Jane's BP `parameter_configs` rows seeded (systolic 90–160 / diastolic 50–95). Direct invoke of `evaluate-thresholds-batch` with a 200/110 payload surfaced F11 — `INSERT INTO alerts` references a non-existent `value` column and omits `NOT NULL` `recipient_user_id`. Chain unblocks once F11 ships. |
+| **E2E-V2-02** | Threshold breach alert cycle | backend half **PASS** (2026-05-09); UI side manual | Jane's BP `parameter_configs` rows seeded (systolic 90–160 / diastolic 50–95). After F11 fix, direct invoke of `evaluate-thresholds-batch` with 200/110 creates two `alerts` rows (with caregiver `recipient_user_id`, `vital_value`, `vital_unit`, `threshold_max`) + two SQS messages. FCM push receipt remains manual (needs second device). |
 | **E2E-V2-03** | Missed-measurement alert cycle | manual / backend half runnable | Same shape — backend half verifiable; FCM receipt needs second device. |
 | **E2E-V2-06** | Reminder lapse → patient logs | manual | Needs lapsed-deadline state or Lambda invoke + second-device push receipt. |
 

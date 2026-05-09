@@ -97,13 +97,50 @@ async function findLinkedCaregiver(dbClient, patientId) {
 
 /**
  * Create an alert record in the alerts table.
+ *
+ * Schema notes (V001 migration):
+ *   alerts.vital_value      NUMERIC(10,2)            — the measured value
+ *   alerts.vital_unit       VARCHAR(20)              — unit string
+ *   alerts.threshold_min    NUMERIC(10,2)            — populated when direction='low'
+ *   alerts.threshold_max    NUMERIC(10,2)            — populated when direction='high'
+ *   alerts.recipient_user_id UUID NOT NULL           — caregiver to notify
+ *
+ * Caller MUST resolve a recipient (linked caregiver) before invoking this;
+ * the schema NOT NULL constraint will reject any insert without one.
  */
-async function createAlertRecord(dbClient, { patientId, alertType, vitalType, value, message }) {
+async function createAlertRecord(
+  dbClient,
+  {
+    patientId,
+    recipientUserId,
+    alertType,
+    vitalType,
+    vitalValue,
+    vitalUnit,
+    thresholdMin,
+    thresholdMax,
+    message,
+  }
+) {
   const result = await dbClient.query(
-    `INSERT INTO alerts (patient_id, alert_type, vital_type, value, message, created_at)
-     VALUES ($1, $2, $3, $4, $5, NOW())
+    `INSERT INTO alerts (
+       patient_id, recipient_user_id, alert_type, vital_type,
+       vital_value, vital_unit, threshold_min, threshold_max,
+       message, created_at
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
      RETURNING id`,
-    [patientId, alertType, vitalType, value, message]
+    [
+      patientId,
+      recipientUserId,
+      alertType,
+      vitalType,
+      vitalValue,
+      vitalUnit,
+      thresholdMin,
+      thresholdMax,
+      message,
+    ]
   );
   return result.rows[0].id;
 }
@@ -151,8 +188,18 @@ exports.handler = async (event) => {
       return { breaches: [], breaches_found: 0, message: 'No thresholds configured' };
     }
 
-    // Find linked caregiver
+    // Find linked caregiver. The alerts schema requires recipient_user_id,
+    // so if no caregiver is linked we can't create an alert row OR send a
+    // useful SQS message — skip the patient entirely with a warning.
     const caregiver = await findLinkedCaregiver(dbClient, patientId);
+    if (!caregiver) {
+      console.warn(`No active caregiver linked to patient ${patientId}; skipping breach evaluation (no one to notify).`);
+      return {
+        breaches: [],
+        breaches_found: 0,
+        message: 'No caregiver linked; alerts skipped',
+      };
+    }
 
     // Get patient name for notification messages
     const patientResult = await dbClient.query(
@@ -193,12 +240,23 @@ exports.handler = async (event) => {
         const displayName = matchingConfig.parameter_name.replace(/_/g, ' ');
         const message = `${patientName}'s ${displayName} is ${val.value} ${matchingConfig.unit || ''} -- ${direction} ${result.thresholdValue} threshold`;
 
-        // Create alert record
+        // Create alert record. recipient_user_id is the caregiver we just
+        // resolved; threshold_min / threshold_max get the breached side only
+        // (the unbreached side stays NULL — the caregiver UI cares about
+        // the bound that was crossed).
+        const alertThresholdMin =
+          result.direction === 'low' ? result.thresholdValue : null;
+        const alertThresholdMax =
+          result.direction === 'high' ? result.thresholdValue : null;
         const alertId = await createAlertRecord(dbClient, {
           patientId,
-          alertType: 'THRESHOLD_BREACH',
+          recipientUserId: caregiver.linked_user_id,
+          alertType: 'threshold_breach',
           vitalType: matchingConfig.parameter_name,
-          value: val.value,
+          vitalValue: val.value,
+          vitalUnit: matchingConfig.unit || null,
+          thresholdMin: alertThresholdMin,
+          thresholdMax: alertThresholdMax,
           message,
         });
 

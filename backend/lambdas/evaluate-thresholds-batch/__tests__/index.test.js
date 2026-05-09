@@ -173,6 +173,62 @@ describe('evaluate-thresholds-batch Lambda', () => {
       expect(result.breaches[0].value).toBe(165);
       expect(result.breaches[0].direction).toBe('high');
       expect(mockSqsSend).toHaveBeenCalledTimes(1);
+
+      // Assert the alert INSERT matches the live RDS schema (V001):
+      // recipient_user_id MUST be set (NOT NULL); columns are vital_value /
+      // vital_unit / threshold_min / threshold_max — F11 regression guard.
+      const insertCall = mockQuery.mock.calls.find(
+        ([sql]) => typeof sql === 'string' && sql.startsWith('INSERT INTO alerts')
+      );
+      expect(insertCall).toBeDefined();
+      const [insertSql, insertParams] = insertCall;
+      expect(insertSql).toMatch(/recipient_user_id/);
+      expect(insertSql).toMatch(/vital_value/);
+      expect(insertSql).toMatch(/vital_unit/);
+      expect(insertSql).toMatch(/threshold_min/);
+      expect(insertSql).toMatch(/threshold_max/);
+      expect(insertSql).not.toMatch(/\bvalue\b(?!_)/);
+      expect(insertParams).toEqual([
+        'patient-1',           // patient_id
+        'cg-1',                // recipient_user_id (caregiver's linked_user_id)
+        'THRESHOLD_BREACH',    // alert_type
+        'blood_pressure_systolic',
+        165,                   // vital_value
+        'mmHg',                // vital_unit
+        null,                  // threshold_min — NULL on a high-side breach
+        140,                   // threshold_max — populated on a high-side breach
+        expect.stringContaining("Ramesh's blood pressure systolic is 165 mmHg -- above 140"),
+      ]);
+    });
+
+    test('skips entirely when no caregiver is linked (alerts.recipient_user_id is NOT NULL)', async () => {
+      mockQuery
+        .mockResolvedValueOnce({
+          rows: [{
+            id: 'config-1',
+            parameter_name: 'blood_pressure_systolic',
+            loinc_codes: ['8480-6'],
+            unit: 'mmHg',
+            threshold_min: [90],
+            threshold_max: [140],
+          }],
+        })
+        // findLinkedCaregiver — empty
+        .mockResolvedValueOnce({ rows: [] });
+
+      const result = await handler({
+        patient_id: 'patient-1',
+        values: [{ parameter: 'blood_pressure_systolic', value: 165, loinc_code: '8480-6' }],
+      });
+
+      expect(result.breaches_found).toBe(0);
+      expect(result.message).toMatch(/No caregiver linked/);
+      // No INSERT into alerts must have been attempted.
+      const insertCall = mockQuery.mock.calls.find(
+        ([sql]) => typeof sql === 'string' && sql.startsWith('INSERT INTO alerts')
+      );
+      expect(insertCall).toBeUndefined();
+      expect(mockSqsSend).not.toHaveBeenCalled();
     });
 
     test('no breach when values are within range', async () => {
@@ -267,8 +323,10 @@ describe('evaluate-thresholds-batch Lambda', () => {
             threshold_max: [200],
           }],
         })
-        // findLinkedCaregiver
-        .mockResolvedValueOnce({ rows: [] })
+        // findLinkedCaregiver — populated so we don't early-exit on "no caregiver"
+        .mockResolvedValueOnce({
+          rows: [{ linked_user_id: 'cg-1', cognito_sub: 'cg-sub-1', caregiver_name: 'Caregiver' }],
+        })
         // patient name
         .mockResolvedValueOnce({ rows: [{ name: 'Ramesh' }] });
 

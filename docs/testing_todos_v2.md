@@ -16,11 +16,11 @@ Items below are ordered by **leverage** (journeys-unblocked-per-effort). Pick fr
 
 ## Sweep harness fixes (highest leverage first)
 
-### F11 — `evaluate-thresholds-batch` writes `alerts` row with the wrong column name and no recipient (NEW — surfaced by E2E-V2-02 unblock work)
+### F11 — `evaluate-thresholds-batch` writes `alerts` row with the wrong column name and no recipient (RESOLVED — verified live 2026-05-09)
 
-**Severity:** High. With this bug present, **no `THRESHOLD_BREACH` alert can ever land in the `alerts` table** — the entire E2E-V2-02 / E2E-V2-03 caregiver-notification chain is silently broken end-to-end. Patient-side breach detection works (model proposes the transition / observation logged), but the alert row is never created, so notification-sender has nothing to fan out.
+**Severity:** High. Was: **no `threshold_breach` alert could ever land in the `alerts` table** — the entire E2E-V2-02 / E2E-V2-03 caregiver-notification chain was silently broken end-to-end.
 **Owner:** `backend`.
-**Estimated effort:** 1–2 hours (column name + recipient lookup + a unit test against the live schema).
+**Status:** Fixed and verified end-to-end. Direct invoke of `carelog-dev-evaluate-thresholds-batch` with a 200/110 BP payload now creates two `alerts` rows (systolic + diastolic) and enqueues two SQS messages on `carelog-dev-alerts`. Lambda code updated via `aws lambda update-function-code` (terraform path was carrying unrelated cognito drift; bypassed it to keep blast radius narrow).
 
 **Reproduction (2026-05-09).** After provisioning Jane with a BP `parameter_configs` row (systolic 90–160 / diastolic 50–95), direct invoke of `carelog-dev-evaluate-thresholds-batch` with a clearly-breaching payload (200/110) returns:
 ```
@@ -48,6 +48,24 @@ plus pulling the caregiver's `linked_user_id` from the existing `findLinkedCareg
 **Why this wasn't caught before.** E2E-V2-02 was never executed — it was paper-classified as "blocked: Jane lacks config." Provisioning Jane (this evening) was the first time the chain ran end-to-end against the real RDS schema.
 
 **Adjacent risk:** double-check `notification-sender` for the same kind of column-name drift against `alerts` reads before relying on push delivery for verification.
+
+**Verification (2026-05-09 19:48Z).**
+- Direct invoke (`200/110` BP payload, Jane's `patient_id`):
+  ```
+  StatusCode=200 (no FunctionError)
+  breaches_found=2; alert_id=c6502587-…(systolic), 0088f6e6-…(diastolic)
+  ```
+- RDS `alerts`:
+  | id | alert_type | vital_type | vital_value | vital_unit | threshold_max | recipient_user_id |
+  |---|---|---|---|---|---|---|
+  | c650… | threshold_breach | blood_pressure_systolic | 200.00 | mmHg | 160.00 | a2b0…(John CG) |
+  | 0088… | threshold_breach | blood_pressure_diastolic | 110.00 | mmHg |  95.00 | a2b0…(John CG) |
+- SQS `carelog-dev-alerts`: 2 messages enqueued (`ApproximateNumberOfMessagesNotVisible=2` immediately after, indicating notification-sender picked them up for processing).
+- CloudWatch confirmed: `Enqueued threshold breach notification for blood_pressure_systolic` × 2 + `Evaluation complete: 2 breaches found out of 2 values`.
+
+**Bonus fix on the way.** While verifying, also surfaced and fixed a sibling bug in the same file: `createAlertRecord` was passing the literal string `'THRESHOLD_BREACH'` to the `alerts.alert_type` column, but the live `alert_type` enum only contains lowercase values (`threshold_breach`, `reminder_lapse`, `system`, `missed_measurement`, `patient_reminder`). Changed to `'threshold_breach'` to match.
+
+**Side note: terraform drift parked.** The dev cognito module has unrelated drift (SES `email_configuration`, `device_configuration`, `invite_message_template`) introduced in commit `66ca57c` and never applied. Targeted `terraform plan` for any lambda in this module currently surfaces the cognito changes too, even with `-target`. Investigate + apply (or revert) the cognito drift in a dedicated change before the next non-targeted apply.
 
 ---
 
