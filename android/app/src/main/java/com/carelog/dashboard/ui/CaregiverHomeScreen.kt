@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tune
@@ -87,6 +88,12 @@ import com.carelog.network.PatientListItem
 @Composable
 fun CaregiverHomeScreen(
     onNavigateToOnboarding: () -> Unit = {},
+    /**
+     * F23 — voice patient onboarding FAB callback. The route's session
+     * id is minted by the navigator before this composable invokes the
+     * callback, so all this side has to do is fire it.
+     */
+    onNavigateToPatientVoiceOnboarding: () -> Unit = {},
     onNavigateToPatientLogs: (patientId: String) -> Unit = {},
     onNavigateToAlerts: (patientId: String) -> Unit = {},
     onNavigateToSettings: () -> Unit = {},
@@ -129,18 +136,39 @@ fun CaregiverHomeScreen(
             )
         },
         floatingActionButton = {
-            ExtendedFloatingActionButton(
-                onClick = onNavigateToOnboarding,
-                icon = {
-                    Icon(Icons.Default.PersonAdd, contentDescription = null)
-                },
-                text = { Text("Add Patient") },
-                modifier = Modifier
-                    .testTag("onboard_patient_fab")
-                    .semantics {
-                        contentDescription = "Onboard a new patient"
-                    }
-            )
+            // F23 — two FABs stacked vertically. Voice-driven onboarding
+            // sits on top (primary v2 path for caregivers); the existing
+            // form-based onboarding sits beneath it. Tests target each
+            // testTag directly so reordering is safe.
+            Column(
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                ExtendedFloatingActionButton(
+                    onClick = onNavigateToPatientVoiceOnboarding,
+                    icon = {
+                        Icon(Icons.Default.Mic, contentDescription = null)
+                    },
+                    text = { Text("Add Patient via Conversation") },
+                    modifier = Modifier
+                        .testTag("add_patient_voice_fab")
+                        .semantics {
+                            contentDescription = "Add a new patient through a voice conversation"
+                        }
+                )
+                ExtendedFloatingActionButton(
+                    onClick = onNavigateToOnboarding,
+                    icon = {
+                        Icon(Icons.Default.PersonAdd, contentDescription = null)
+                    },
+                    text = { Text("Add Patient") },
+                    modifier = Modifier
+                        .testTag("onboard_patient_fab")
+                        .semantics {
+                            contentDescription = "Onboard a new patient"
+                        }
+                )
+            }
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         modifier = modifier

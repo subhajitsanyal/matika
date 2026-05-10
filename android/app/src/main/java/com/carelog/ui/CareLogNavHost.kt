@@ -154,6 +154,17 @@ object CareLogRoutes {
      */
     const val MATIKA_PROTOCOL_CONFIG_CONVERSATION =
         "matika_protocol_config_conversation/{patientCognitoSub}/{patientName}"
+    /**
+     * F23 — voice patient onboarding entry. Caregiver speaks to set up
+     * a new patient from scratch (no pre-existing patient row). The
+     * FAB mints `sessionId` BEFORE navigation; the route derives the
+     * matching `pending-<sessionId>` placeholder patientCognitoSub.
+     * The MatikaConversationViewModel keys its voice-onboarding mode
+     * off `patientCognitoSub.startsWith("pending-")` AND uses
+     * `sessionId` verbatim instead of generating its own.
+     */
+    const val MATIKA_PATIENT_VOICE_ONBOARDING =
+        "matika_patient_voice_onboarding/{sessionId}/{patientCognitoSub}"
     const val CAREGIVER_INVITE = "caregiver_invite/{patientId}/{patientName}/{temporaryPassword}"
 
     // Caregiver dashboard routes (P2)
@@ -167,6 +178,14 @@ object CareLogRoutes {
         "protocol_config_conversation/$patientId/$patientName"
     fun matikaProtocolConfig(patientCognitoSub: String, patientName: String) =
         "matika_protocol_config_conversation/$patientCognitoSub/$patientName"
+    /**
+     * F23 — build the voice-onboarding route. Caller mints the
+     * sessionId (so the placeholder patientCognitoSub stays consistent
+     * with the wire payload's sessionId across every turn). Passing
+     * both as path args keeps the SavedStateHandle plumbing trivial.
+     */
+    fun matikaPatientVoiceOnboarding(sessionId: String): String =
+        "matika_patient_voice_onboarding/$sessionId/pending-$sessionId"
     fun caregiverInvite(patientId: String, patientName: String, temporaryPassword: String) =
         "caregiver_invite/$patientId/$patientName/$temporaryPassword"
     fun patientLogs(patientId: String) = "patient_logs/$patientId"
@@ -451,6 +470,17 @@ fun CareLogNavHost() {
                 onNavigateToOnboarding = {
                     navController.navigate(CareLogRoutes.ONBOARDING)
                 },
+                onNavigateToPatientVoiceOnboarding = {
+                    // F23 — mint the sessionId here so the placeholder
+                    // patientCognitoSub stays in sync with the wire
+                    // payload's sessionId across every turn of the
+                    // conversation. The state machine accepts the
+                    // external id and skips its own UUID generation.
+                    val sessionId = java.util.UUID.randomUUID().toString()
+                    navController.navigate(
+                        CareLogRoutes.matikaPatientVoiceOnboarding(sessionId),
+                    )
+                },
                 onNavigateToPatientLogs = { patientId ->
                     navController.navigate(CareLogRoutes.patientLogs(patientId))
                 },
@@ -566,6 +596,48 @@ fun CareLogNavHost() {
                         route = CareLogRoutes.MATIKA_PROTOCOL_CONFIG_CONVERSATION,
                         inclusive = true,
                     )
+                },
+            )
+        }
+
+        // ── v2 Voice Patient Onboarding (F23) ───────────────────
+        // Caregiver-driven voice setup of a brand-new patient. The
+        // route's sessionId path arg is minted at the FAB so the
+        // matching `pending-<sessionId>` placeholder patientCognitoSub
+        // (also a path arg) stays consistent with the wire payload's
+        // sessionId across every turn until the mid-session pivot
+        // resolves the placeholder to a real patient UUID.
+        composable(
+            route = CareLogRoutes.MATIKA_PATIENT_VOICE_ONBOARDING,
+            arguments = listOf(
+                navArgument("sessionId") { type = NavType.StringType },
+                navArgument("patientCognitoSub") { type = NavType.StringType },
+            ),
+        ) {
+            MatikaConversationScreen(
+                onNavigateBack = { navController.popBackStack() },
+                onSessionEnded = {
+                    // Voice patient onboarding ends with the protocol-
+                    // setup phase wrapped up via the same SessionCompleteCard
+                    // as the existing v2 protocol-config flow. Pop back to
+                    // the caregiver dashboard, blowing away the voice route
+                    // so the back button doesn't replay it.
+                    navController.popBackStack(
+                        route = CareLogRoutes.MATIKA_PATIENT_VOICE_ONBOARDING,
+                        inclusive = true,
+                    )
+                },
+                onEscapeToForm = {
+                    // F23 4.5 — "Use form instead" tear-down. The screen
+                    // already fired POST /sessions/{id}/end via the
+                    // ViewModel's onStopPressed; we just route forward
+                    // to the form-based onboarding screen and pop the
+                    // voice route off the back stack.
+                    navController.navigate(CareLogRoutes.ONBOARDING) {
+                        popUpTo(CareLogRoutes.MATIKA_PATIENT_VOICE_ONBOARDING) {
+                            inclusive = true
+                        }
+                    }
                 },
             )
         }

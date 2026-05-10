@@ -1,6 +1,8 @@
 package com.carelog.inference
 
+import com.carelog.network.ClientHints
 import com.carelog.network.MatikaCloudApi
+import com.carelog.network.PatientCredentials
 import com.carelog.network.TurnRequest
 import com.carelog.network.TurnResponse
 import javax.inject.Inject
@@ -39,7 +41,17 @@ class BedrockTurnClient @Inject constructor(
         languageTag: String,
         turnSequence: Int,
         sessionType: String? = null,
+        patientCredentials: PatientCredentials? = null,
+        forceNonStreaming: Boolean = false,
     ): Result<TurnResponse> = runCatching {
+        // F23 — caregiver_onboarding placeholder turns MUST go via the
+        // non-streaming handler (`/conversation/turn`). The streaming
+        // path doesn't implement the mid-session pivot to
+        // create-patient-from-voice; the only safe route while
+        // patientCognitoSub is the `pending-<sessionId>` sentinel is to
+        // pin preferStreaming=false. The hint is advisory but the
+        // handler honors it.
+        val hints = if (forceNonStreaming) ClientHints(preferStreaming = false) else null
         api.turn(
             TurnRequest(
                 sessionId = sessionId,
@@ -49,6 +61,8 @@ class BedrockTurnClient @Inject constructor(
                 turnSequence = turnSequence,
                 sessionType = sessionType,
                 actorCognitoSub = actorCognitoSub,
+                clientHints = hints,
+                patientCredentials = patientCredentials,
             ),
         )
     }

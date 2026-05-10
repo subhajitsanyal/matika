@@ -23,6 +23,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
@@ -42,7 +44,9 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -86,6 +90,14 @@ fun MatikaConversationScreen(
     onNavigateBack: () -> Unit,
     onSessionEnded: () -> Unit,
     viewModel: MatikaConversationViewModel = hiltViewModel(),
+    /**
+     * F23 — invoked when the caregiver taps "Use form instead" during
+     * the voice patient-onboarding flow. Caller is responsible for
+     * tearing down the placeholder session (the ViewModel's
+     * onStopPressed fires POST /sessions/{id}/end) and navigating
+     * onward to the form-based PatientOnboardingScreen.
+     */
+    onEscapeToForm: () -> Unit = {},
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -174,10 +186,100 @@ fun MatikaConversationScreen(
                     enabled = !uiState.conversation.isProcessingTurn,
                     onSubmit = viewModel::onTextSubmitted,
                 )
+                // F23 — escape hatch during voice patient onboarding.
+                // Visible whenever the route flagged us as voice
+                // onboarding; tapping ends the placeholder session and
+                // routes back to the form-based onboarding screen.
+                if (uiState.isVoicePatientOnboarding) {
+                    Spacer(Modifier.height(4.dp))
+                    OutlinedButton(
+                        onClick = {
+                            viewModel.onStopPressed()
+                            onEscapeToForm()
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("use_form_instead_button"),
+                    ) {
+                        Text("Use form instead")
+                    }
+                }
             }
             Spacer(Modifier.height(16.dp))
         }
     }
+
+    // F23 — credentials form modal. Surfaced when the LLM emits
+    // pause_session{reason: awaiting_patient_credentials}. Closing
+    // with the back button or tapping outside calls
+    // onPatientCredentialsDismissed; submitting passes the values to
+    // the ViewModel and resumes the conversation.
+    if (uiState.awaitingPatientCredentials) {
+        PatientCredentialsDialog(
+            onSubmit = { email, phone ->
+                viewModel.onPatientCredentialsSubmitted(email, phone)
+            },
+            onDismiss = { viewModel.onPatientCredentialsDismissed() },
+        )
+    }
+}
+
+@Composable
+private fun PatientCredentialsDialog(
+    onSubmit: (email: String, phone: String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var email by remember { mutableStateOf("") }
+    var phone by remember { mutableStateOf("") }
+    val submitEnabled = email.isNotBlank() && phone.isNotBlank()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Patient contact details") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    "We'll send the patient their login by email and SMS. " +
+                        "Please type their email address and phone number.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                OutlinedTextField(
+                    value = email,
+                    onValueChange = { email = it },
+                    label = { Text("Email") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("patient_credentials_email"),
+                )
+                OutlinedTextField(
+                    value = phone,
+                    onValueChange = { phone = it },
+                    label = { Text("Phone (with country code)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("patient_credentials_phone"),
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onSubmit(email, phone) },
+                enabled = submitEnabled,
+                modifier = Modifier.testTag("patient_credentials_submit"),
+            ) {
+                Text("Submit")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        },
+    )
 }
 
 @Composable

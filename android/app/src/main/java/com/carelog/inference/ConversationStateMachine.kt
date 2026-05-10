@@ -29,17 +29,26 @@ class ConversationStateMachine @Inject constructor() {
 
     /**
      * Initialise a new session. Generates and returns a fresh
-     * `sessionId`. Resets per-turn state; preserves nothing from the
-     * prior session — call [reset] explicitly if you want to clear
-     * before starting a new one.
+     * `sessionId` unless [externalSessionId] is supplied, in which case
+     * that one is used verbatim. Resets per-turn state; preserves
+     * nothing from the prior session — call [reset] explicitly if you
+     * want to clear before starting a new one.
+     *
+     * F23 — the voice patient-onboarding flow generates the sessionId
+     * at the FAB navigation point so it can construct the matching
+     * `pending-<sessionId>` placeholder patientCognitoSub. The
+     * ViewModel forwards that sessionId here so the wire payload's
+     * sessionId stays in sync with the patientCognitoSub sentinel
+     * across every turn.
      */
     fun start(
         patientCognitoSub: String,
         actorCognitoSub: String,
         languageTag: String,
         sessionType: String?,
+        externalSessionId: String? = null,
     ): String {
-        val sessionId = UUID.randomUUID().toString()
+        val sessionId = externalSessionId ?: UUID.randomUUID().toString()
         _state.value = ConversationState(
             fsmState = ConversationFsmState.CREATED,
             sessionId = sessionId,

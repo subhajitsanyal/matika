@@ -13,6 +13,8 @@ import com.carelog.conversation.audio.tts.TtsManager
 import com.carelog.conversation.audio.tts.TtsQueueMode
 import com.carelog.core.config.AppSettings
 import com.carelog.network.CloudApiService
+import com.carelog.network.PatientCredentials
+import com.carelog.network.PauseSessionReason
 import com.carelog.network.ProtocolResult
 import com.carelog.network.SessionType
 import com.carelog.network.TtsHints
@@ -67,8 +69,20 @@ class MatikaConversationViewModel @Inject constructor(
     private val navPatientCognitoSub: String? =
         savedStateHandle.get<String>("patientCognitoSub")
 
+    /**
+     * F23 — externally-provided session id from the voice
+     * patient-onboarding route. The FAB mints a UUID, derives the
+     * matching `pending-<sessionId>` placeholder patientCognitoSub
+     * from it, and passes both via nav args so the state machine and
+     * the wire payload stay in sync. Absent on patient_logging /
+     * caregiver_config routes — the state machine generates its own.
+     */
+    private val navSessionId: String? =
+        savedStateHandle.get<String>("sessionId")
+
     private companion object {
         const val TAG = "MatikaConversationVM"
+        const val PENDING_PATIENT_PREFIX = "pending-"
     }
 
     private val sttPartialTranscript = MutableStateFlow("")
@@ -85,6 +99,31 @@ class MatikaConversationViewModel @Inject constructor(
     private val lastProtocolResult = MutableStateFlow<ProtocolResult?>(null)
 
     /**
+     * F23 — voice patient-onboarding flag. True when the route mounted
+     * us with a `pending-<sessionId>` placeholder patientCognitoSub
+     * AND the session type is caregiver_onboarding. Surfaced to the UI
+     * so the screen can render the "Use form instead" escape button
+     * and route the credentials modal.
+     */
+    private val isVoicePatientOnboarding = MutableStateFlow(false)
+
+    /**
+     * F23 — true while the LLM has emitted `pause_session` with
+     * `reason: awaiting_patient_credentials` and the caregiver hasn't
+     * yet submitted the email/phone form modal. Drives the modal's
+     * visibility from the screen.
+     */
+    private val awaitingPatientCredentials = MutableStateFlow(false)
+
+    /**
+     * F23 — credentials the caregiver typed into the form modal.
+     * Stored once and echoed on every subsequent turn until the
+     * pivot lands (the handler requires them on the
+     * PROFILE_CONFIRMED + complete_session turn).
+     */
+    private val submittedPatientCredentials = MutableStateFlow<PatientCredentials?>(null)
+
+    /**
      * Single observable for the screen. Composed from the state
      * machine's authoritative snapshot plus local-only flows (STT
      * partial, error, listening flag, TTS speaking flag).
@@ -99,6 +138,8 @@ class MatikaConversationViewModel @Inject constructor(
             isListening,
             sessionEnded,
             lastProtocolResult,
+            isVoicePatientOnboarding,
+            awaitingPatientCredentials,
         ) { values ->
             @Suppress("UNCHECKED_CAST")
             MatikaConversationUiState(
@@ -110,6 +151,8 @@ class MatikaConversationViewModel @Inject constructor(
                 isListening = values[5] as Boolean,
                 sessionEnded = values[6] as Boolean,
                 protocolResult = values[7] as ProtocolResult?,
+                isVoicePatientOnboarding = values[8] as Boolean,
+                awaitingPatientCredentials = values[9] as Boolean,
             )
         }.stateIn(
             scope = viewModelScope,
@@ -148,6 +191,8 @@ class MatikaConversationViewModel @Inject constructor(
             // authenticated user logging their own vitals.
             val isCaregiverMode = !navPatientCognitoSub.isNullOrBlank()
             val patientCognitoSub = if (isCaregiverMode) navPatientCognitoSub!! else actorCognitoSub
+            val isVoiceOnboarding =
+                isCaregiverMode && patientCognitoSub.startsWith(PENDING_PATIENT_PREFIX)
             val sessionType =
                 if (isCaregiverMode) SessionType.CAREGIVER_ONBOARDING
                 else SessionType.PATIENT_LOGGING
@@ -160,17 +205,26 @@ class MatikaConversationViewModel @Inject constructor(
             lastUserUtterance.value = ""
             sttError.value = null
             lastProtocolResult.value = null
+            awaitingPatientCredentials.value = false
+            submittedPatientCredentials.value = null
+            isVoicePatientOnboarding.value = isVoiceOnboarding
             stateMachine.start(
                 patientCognitoSub = patientCognitoSub,
                 actorCognitoSub = actorCognitoSub,
                 languageTag = languageTag,
                 sessionType = sessionType,
+                // F23 — voice onboarding mints the sessionId at the
+                // FAB (so it can derive the matching `pending-<id>`
+                // placeholder patientCognitoSub). Thread it through so
+                // every turn's wire payload uses the same id.
+                externalSessionId = navSessionId,
             )
             sessionStarted = true
             Log.i(
                 TAG,
                 "Started v2 session sessionType=$sessionType actor=$actorCognitoSub " +
-                    "patient=$patientCognitoSub language=$languageTag",
+                    "patient=$patientCognitoSub language=$languageTag " +
+                    "voiceOnboarding=$isVoiceOnboarding externalSessionId=$navSessionId",
             )
         }
     }
@@ -330,6 +384,15 @@ class MatikaConversationViewModel @Inject constructor(
             languageTag = inputs.languageTag,
             turnSequence = inputs.turnSequence,
             sessionType = inputs.sessionType,
+            // F23 — once submitted, attach credentials to every turn
+            // until session-end. The pivot turn requires them; the
+            // earlier turns harmlessly carry the same block.
+            patientCredentials = submittedPatientCredentials.value,
+            // F23 — placeholder voice-onboarding turns must take the
+            // non-streaming `/conversation/turn` path. The streaming
+            // handler doesn't have the mid-session pivot wired.
+            forceNonStreaming = isVoicePatientOnboarding.value &&
+                inputs.patientCognitoSub.startsWith(PENDING_PATIENT_PREFIX),
         )
         result.fold(
             onSuccess = { response ->
@@ -343,6 +406,18 @@ class MatikaConversationViewModel @Inject constructor(
                 stateMachine.applyTurnResponse(response)
                 response.protocol?.let { lastProtocolResult.value = it }
                 speakResponse(response.responseText, response.ttsHints)
+                // F23 — surface awaiting_patient_credentials so the
+                // screen renders the form modal. Only fires while we
+                // don't already have credentials cached — repeats are
+                // ignored so a flaky LLM doesn't re-open the modal
+                // after the caregiver already filled it in.
+                val awaitingCreds = response.actions.any {
+                    it.type == TurnActionType.PAUSE_SESSION &&
+                        it.reason == PauseSessionReason.AWAITING_PATIENT_CREDENTIALS
+                }
+                if (awaitingCreds && submittedPatientCredentials.value == null) {
+                    awaitingPatientCredentials.value = true
+                }
                 if (response.actions.any { it.type == TurnActionType.COMPLETE_SESSION }) {
                     sessionEnded.value = true
                 }
@@ -352,6 +427,32 @@ class MatikaConversationViewModel @Inject constructor(
                 stateMachine.applyTurnFailure(err)
             },
         )
+    }
+
+    /**
+     * F23 — caregiver submitted the email/phone form modal. Cache the
+     * credentials so every subsequent turn carries them; close the
+     * modal. The conversation continues from where it paused — the
+     * next caregiver utterance will include the credentials in its
+     * TurnRequest, and the LLM will read back the full profile.
+     */
+    fun onPatientCredentialsSubmitted(email: String, phone: String) {
+        submittedPatientCredentials.value = PatientCredentials(
+            email = email.trim(),
+            phone = phone.trim(),
+        )
+        awaitingPatientCredentials.value = false
+        Log.i(TAG, "patient credentials submitted (email length=${email.length})")
+    }
+
+    /**
+     * F23 — caregiver dismissed the credentials modal without
+     * submitting (e.g. tapped outside). Re-shows next time the LLM
+     * emits the pause_session action; until then the conversation
+     * proceeds but the pivot turn will fail.
+     */
+    fun onPatientCredentialsDismissed() {
+        awaitingPatientCredentials.value = false
     }
 
     private suspend fun speakResponse(text: String, hints: TtsHints) {
@@ -433,4 +534,17 @@ data class MatikaConversationUiState(
      * `complete_session` turn. Null on patient_logging sessions.
      */
     val protocolResult: ProtocolResult? = null,
+    /**
+     * F23 — true when this conversation is the voice patient-onboarding
+     * flow (caregiver_onboarding session with `pending-<sessionId>`
+     * placeholder). Drives "Use form instead" escape-button visibility.
+     */
+    val isVoicePatientOnboarding: Boolean = false,
+    /**
+     * F23 — true while the LLM is asking the client to surface the
+     * email/phone form modal (`pause_session` action with
+     * `reason: awaiting_patient_credentials`). Renders an AlertDialog
+     * over the conversation UI.
+     */
+    val awaitingPatientCredentials: Boolean = false,
 )

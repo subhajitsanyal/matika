@@ -101,11 +101,29 @@ data class TurnRequest(
     val sessionType: String? = null,
     val actorCognitoSub: String? = null,
     val clientHints: ClientHints? = null,
+    /**
+     * F23 — caregiver-supplied email + phone for the patient being
+     * onboarded by voice. Set after the form modal is submitted, then
+     * echoed on every subsequent turn until session-end. The handler
+     * requires this block on the pivot turn (PROFILE_CONFIRMED →
+     * complete_session) and forwards it to create-patient-from-voice.
+     */
+    val patientCredentials: PatientCredentials? = null,
 )
 
 data class ClientHints(
     val preferStreaming: Boolean? = null,
     val deviceLatencyEstimateMs: Int? = null,
+)
+
+/**
+ * F23 — patient identity credentials captured via the voice-onboarding
+ * form modal. Wire shape matches `backend/lambdas/bedrock-router/src/
+ * context/types.ts` `PatientCredentials`.
+ */
+data class PatientCredentials(
+    val email: String,
+    val phone: String,
 )
 
 /** Session type constants matching backend validation. */
@@ -189,6 +207,12 @@ object TurnActionType {
     const val PAUSE_SESSION = "pause_session"
     const val COMPLETE_SESSION = "complete_session"
     const val CONFIRM_VALUE = "confirm_value"
+}
+
+/** [TurnAction.reason] vocabulary for `pause_session` actions. */
+object PauseSessionReason {
+    /** F23 — LLM is asking the client to surface the email+phone form modal. */
+    const val AWAITING_PATIENT_CREDENTIALS = "awaiting_patient_credentials"
 }
 
 data class TurnTelemetry(
