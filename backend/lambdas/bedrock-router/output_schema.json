@@ -97,12 +97,12 @@
       ]
     },
     "patientProfile": {
-      "description": "F23 — present only on caregiver_onboarding profile-extraction turns. Set when the LLM has captured fields that should be persisted at the mid-session pivot. See spec §6.9.",
+      "description": "F23 — present only on caregiver_onboarding profile-extraction turns. Set when the LLM has captured fields that should be persisted at the mid-session pivot. See spec §6.9. Empty string permitted on early turns before the name is captured; create-patient-from-voice rejects empty name at pivot time.",
       "type": "object",
       "additionalProperties": false,
       "required": ["name"],
       "properties": {
-        "name": { "type": "string", "minLength": 1 },
+        "name": { "type": "string" },
         "nameConfidence": { "type": "number", "minimum": 0, "maximum": 1 },
         "ageYears": { "type": ["number", "null"] },
         "ageConfidence": { "type": "number", "minimum": 0, "maximum": 1 },

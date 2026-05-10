@@ -46,6 +46,19 @@ export class PgRateLimiter implements RateLimiter {
   }
 
   async check(patientId: string): Promise<RateLimitDecision> {
+    // F23 — placeholder caregiver_onboarding turns reference no real
+    // patient row (pending-<sessionId> sentinel). Skip the DB query so
+    // it doesn't try to coerce the sentinel into a UUID; rate limiting
+    // resumes once the mid-session pivot resolves the sentinel to a
+    // real UUID, at which point subsequent turns hit the normal path.
+    if (patientId.startsWith('pending-')) {
+      return {
+        allowed: true,
+        softCapReached: false,
+        callsToday: 0,
+        remainingHard: this.config.hardLimit,
+      };
+    }
     // Use date_trunc on the server side so the boundary always matches the
     // DB's UTC clock, not the Lambda runtime's clock. Avoids drift on
     // Lambda cold-starts that span midnight.

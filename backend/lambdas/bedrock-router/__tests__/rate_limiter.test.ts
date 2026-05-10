@@ -110,6 +110,17 @@ describe('PgRateLimiter', () => {
     expect(decision.remainingHard).toBe(500);
   });
 
+  it('bypasses DB query for pending- sentinel patientId (F23 placeholder)', async () => {
+    const { client, calls } = stubClient(0);
+    const limiter = new PgRateLimiter(client, { softLimit: 100, hardLimit: 500 });
+    const decision = await limiter.check('pending-8ec929c2-b42e-44ea-8715-b8f3bf50c1dc');
+    expect(calls).toHaveLength(0); // no SQL issued
+    expect(decision.allowed).toBe(true);
+    expect(decision.softCapReached).toBe(false);
+    expect(decision.callsToday).toBe(0);
+    expect(decision.remainingHard).toBe(500);
+  });
+
   it('handles empty result rows defensively (returns 0)', async () => {
     const calls: Array<{ text: string; params?: unknown[] }> = [];
     const client: PgClient = {

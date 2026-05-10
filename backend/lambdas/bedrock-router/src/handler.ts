@@ -820,7 +820,36 @@ async function loadPatientContextOrPlaceholder(
     return await deps.patientLoader.load(realPatientCognitoSub);
   }
 
-  return buildPlaceholderPatientContext(event);
+  // F23 — placeholder session row needs a real users.id for the
+  // user_id column (V008 only relaxed patient_id, not user_id).
+  // Resolve the caregiver's actorCognitoSub now so the synthetic
+  // PatientContext carries it through to loadOrCreateTurnContext's
+  // INSERT. Throws if unresolvable — placeholder sessions cannot
+  // proceed without an attributable caregiver.
+  if (!event.actorCognitoSub) {
+    throw new HandlerError(
+      400,
+      'invalid_request',
+      'caregiver_onboarding placeholder session requires actorCognitoSub',
+    );
+  }
+  if (!deps.userResolver) {
+    throw new HandlerError(
+      500,
+      'internal_error',
+      'caregiver_onboarding placeholder session requires userResolver in deps',
+    );
+  }
+  const caregiverUserId = await deps.userResolver.resolveInternalId(event.actorCognitoSub);
+  if (!caregiverUserId) {
+    throw new HandlerError(
+      404,
+      'caregiver_not_found',
+      `No users row for actorCognitoSub=${event.actorCognitoSub}`,
+    );
+  }
+
+  return buildPlaceholderPatientContext(event, caregiverUserId);
 }
 
 // Helper extracted so tests can stub the lookup. Returns null if the
@@ -835,16 +864,22 @@ async function tryReadPivotedPatientCognitoSub(
 }
 
 // F23 — synthetic PatientContext used while the placeholder
-// caregiver_onboarding session is in profile-extraction phase. Empty
-// patient.id + userId are sentinel values; PatientContext.placeholder
-// = true is the load-bearing flag downstream code keys off of.
+// caregiver_onboarding session is in profile-extraction phase.
+// patient.id is empty (sentinel — patient row doesn't exist yet);
+// userId is the caregiver's internal users.id so the placeholder
+// interaction_sessions row's user_id FK points somewhere real.
+// PatientContext.placeholder = true is the load-bearing flag
+// downstream code keys off of.
 //
 // The patient's profile-fields-as-they're-being-captured live in the
 // LLM's structured-output `patientProfile` block on the WIRE, not in
 // this context. The handler doesn't accumulate them here — it only
 // reads patientProfile from the closing turn (PROFILE_CONFIRMED +
 // complete_session) and forwards to create-patient-from-voice.
-function buildPlaceholderPatientContext(event: TurnRequest): PatientContext {
+function buildPlaceholderPatientContext(
+  event: TurnRequest,
+  caregiverUserId: string,
+): PatientContext {
   return {
     patient: {
       id: '',
@@ -855,7 +890,7 @@ function buildPlaceholderPatientContext(event: TurnRequest): PatientContext {
       conditions: [],
       medicalHistorySummary: null,
     },
-    userId: '',
+    userId: caregiverUserId,
     protocol: [],
     topics: [],
     recentSessions: [],
