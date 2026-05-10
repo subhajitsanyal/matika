@@ -95,8 +95,131 @@ class RelativeApiService @Inject constructor(
     }
 
     /**
+     * F26 — Fetch threshold rows from the v2 `parameter_configs` table
+     * (the table that actually drives `evaluate-thresholds-batch` alerts).
+     *
+     * The legacy v1 `getThresholds` below points at `/patients/{id}/thresholds`
+     * which is unwired in API Gateway and would target the dormant v1
+     * `thresholds` table even if it were wired. ThresholdConfigScreen now
+     * calls THIS method instead. The legacy method is kept for any caller
+     * that still references it; will be removed when no callers remain.
+     *
+     * One row per parameter_configs entry — BP comes back as two rows
+     * (blood_pressure_systolic + blood_pressure_diastolic) because the
+     * v2 schema separates them. The screen iterates parameter_name strings.
+     */
+    suspend fun getParameterThresholds(
+        patientId: String,
+    ): List<ParameterThreshold> = withContext(Dispatchers.IO) {
+        val token = authRepository.getAccessToken()
+            ?: throw Exception("No auth token available")
+
+        val request = Request.Builder()
+            .url("$apiBaseUrl/patients/$patientId/parameter-configs")
+            .header("Authorization", "Bearer $token")
+            .get()
+            .build()
+
+        val response = httpClient.newCall(request).execute()
+        val responseBody = response.body.string()
+
+        if (!response.isSuccessful) {
+            throw Exception("API ${response.code}: $responseBody")
+        }
+
+        val json = JSONObject(responseBody)
+        val configs = json.getJSONArray("parameter_configs")
+        parseParameterThresholds(configs)
+    }
+
+    /**
+     * F26 — Update one parameter_configs row's threshold_min/max via
+     * PUT /patients/{id}/parameter-configs/{configId}. Server-side
+     * `manage-parameter-configs` keeps `threshold_set_by` aligned to
+     * the caller's role (caregiver vs doctor); we only send the two
+     * threshold values.
+     */
+    suspend fun updateParameterThreshold(
+        patientId: String,
+        configId: String,
+        minValue: Double?,
+        maxValue: Double?,
+    ): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val token = authRepository.getAccessToken() ?: return@withContext false
+
+            val body = JSONObject().apply {
+                // parameter_configs.threshold_min/max are numeric arrays in
+                // the schema. Send as JSON arrays so the API layer's
+                // pg-compatible binding keeps the expected shape.
+                put("threshold_min", JSONArray().apply { minValue?.let { put(it) } })
+                put("threshold_max", JSONArray().apply { maxValue?.let { put(it) } })
+            }.toString()
+
+            val request = Request.Builder()
+                .url("$apiBaseUrl/patients/$patientId/parameter-configs/$configId")
+                .header("Authorization", "Bearer $token")
+                .header("Content-Type", "application/json")
+                .put(body.toRequestBody("application/json".toMediaType()))
+                .build()
+
+            val response = httpClient.newCall(request).execute()
+            response.isSuccessful
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun parseParameterThresholds(jsonArray: JSONArray): List<ParameterThreshold> {
+        val list = mutableListOf<ParameterThreshold>()
+        for (i in 0 until jsonArray.length()) {
+            val obj = jsonArray.getJSONObject(i)
+            val parameterName = obj.getString("parameter_name")
+            // threshold_min / threshold_max come back as either a Postgres
+            // text array string ("{90}") or a JSON array ([90]). Both shapes
+            // coerce via firstNumericInsideArrayLike. Empty / absent → null.
+            val minValue = firstNumericInsideArrayLike(obj.opt("threshold_min"))
+            val maxValue = firstNumericInsideArrayLike(obj.opt("threshold_max"))
+            list.add(
+                ParameterThreshold(
+                    configId = obj.getString("id"),
+                    parameterName = parameterName,
+                    displayName = obj.optString("display_name", humanizeParameterName(parameterName)),
+                    minValue = minValue,
+                    maxValue = maxValue,
+                    unit = obj.optString("unit", ""),
+                    setByDoctor = !obj.isNull("threshold_set_by"),
+                ),
+            )
+        }
+        return list
+    }
+
+    private fun firstNumericInsideArrayLike(value: Any?): Double? {
+        if (value == null || value == JSONObject.NULL) return null
+        return when (value) {
+            is JSONArray -> if (value.length() > 0) value.optDouble(0).takeIf { !it.isNaN() } else null
+            is String -> {
+                // "{90,160}" or "{}" — strip braces, take first numeric chunk.
+                val trimmed = value.trim('{', '}', ' ')
+                if (trimmed.isEmpty()) null else trimmed.substringBefore(',').toDoubleOrNull()
+            }
+            is Number -> value.toDouble()
+            else -> null
+        }
+    }
+
+    private fun humanizeParameterName(name: String): String =
+        name.split('_').joinToString(" ") { it.replaceFirstChar(Char::uppercaseChar) }
+
+    /**
      * Fetch thresholds for a patient.
      */
+    @Deprecated(
+        "Use getParameterThresholds() — wires to v2 parameter_configs. " +
+            "This method points at the unwired v1 /patients/{id}/thresholds route.",
+        ReplaceWith("getParameterThresholds(patientId)"),
+    )
     suspend fun getThresholds(patientId: String): List<VitalThreshold> = withContext(Dispatchers.IO) {
         val token = authRepository.getAccessToken()
             ?: throw Exception("No auth token available")
@@ -734,6 +857,26 @@ data class VitalThreshold(
     val unit: String,
     val setByDoctor: Boolean = false,
     val doctorName: String? = null
+)
+
+/**
+ * F26 — v2 threshold model backed by `parameter_configs`. One row per
+ * configured parameter (BP splits into systolic + diastolic). Used by
+ * ThresholdConfigScreen via `RelativeApiService.getParameterThresholds`.
+ *
+ * `parameterName` matches the database `vital_type` enum
+ * (e.g. `blood_pressure_systolic`); `displayName` is the human-readable
+ * label written when the protocol-extraction pass persists the row
+ * (see `manage-parameter-configs` POST).
+ */
+data class ParameterThreshold(
+    val configId: String,
+    val parameterName: String,
+    val displayName: String,
+    val minValue: Double?,
+    val maxValue: Double?,
+    val unit: String,
+    val setByDoctor: Boolean = false,
 )
 
 data class ReminderConfig(

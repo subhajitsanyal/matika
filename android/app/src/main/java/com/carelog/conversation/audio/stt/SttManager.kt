@@ -26,11 +26,18 @@ import javax.inject.Singleton
  * Spec: docs/matika_spec_v2.md §3.1 + §8.3.
  *
  * Behaviour:
- *  - Always requests [RecognizerIntent.EXTRA_PREFER_OFFLINE]; the
- *    platform silently falls back to online recognition if the offline
- *    pack is missing. Pre-API 33 there is no clean signal that tells
- *    us which path actually ran, so we don't expose one — telemetry can
- *    record the preference at the call site.
+ *  - First attempt requests [RecognizerIntent.EXTRA_PREFER_OFFLINE].
+ *    On most devices the platform silently falls back to online
+ *    recognition if the offline pack is missing — but on Samsung One UI
+ *    and some Bengali/Hindi configurations the engine instead surfaces
+ *    error 12 (LANGUAGE_NOT_SUPPORTED) or 13 (LANGUAGE_UNAVAILABLE)
+ *    without trying the network. F25 fix: when that happens, we
+ *    transparently retry once with `EXTRA_PREFER_OFFLINE=false` so the
+ *    turn reaches Bedrock either way. The retry is invisible to the
+ *    collector — it only sees Partial → Final/Error from whichever
+ *    pass succeeds. Logcat carries "stt_offline_used=false" on the
+ *    fallback path so the agentic voice harness can record which
+ *    recognition mode actually served a turn.
  *  - Emits streaming [SttResult.Partial] events plus exactly one
  *    terminal [SttResult.Final] or [SttResult.Error]. Cancelling the
  *    collecting flow stops the recognizer; the engine may still emit
@@ -89,7 +96,18 @@ class SttManager @Inject constructor(
             return@callbackFlow
         }
 
-        val listener = object : RecognitionListener {
+        // Tracks whether we've already used the online-fallback path on
+        // this recognize() call. Kept on the heap (rather than as a
+        // listener field) so the listener can read+update it atomically
+        // across the original-arming and the retry callback.
+        val onlineFallbackUsed = AtomicBoolean(false)
+
+        // Builds a fresh RecognitionListener for the requested
+        // (preferOffline) pass. On error 12/13 from the offline-preferred
+        // pass we suppress the error from the collector and re-arm with
+        // preferOffline=false. On the same error from the fallback pass
+        // OR any other error from either pass, we surface to collector.
+        fun buildListener(preferOffline: Boolean): RecognitionListener = object : RecognitionListener {
             override fun onPartialResults(partialResults: Bundle?) {
                 extractFirstTranscript(partialResults)?.let {
                     trySend(SttResult.Partial(it))
@@ -113,7 +131,10 @@ class SttManager @Inject constructor(
                         ),
                     )
                 } else {
-                    Log.i(TAG, "RecognitionListener.onResults chars=${text.length}")
+                    Log.i(
+                        TAG,
+                        "RecognitionListener.onResults chars=${text.length} stt_offline_used=$preferOffline",
+                    )
                     trySend(SttResult.Final(text))
                 }
                 isListening.set(false)
@@ -121,7 +142,41 @@ class SttManager @Inject constructor(
             }
 
             override fun onError(error: Int) {
-                Log.w(TAG, "RecognitionListener.onError($error)")
+                Log.w(TAG, "RecognitionListener.onError($error) preferOffline=$preferOffline")
+
+                // F25 — silent online fallback. Only retry on the
+                // offline-preferred pass and only for the exact engine
+                // codes that mean "engine never tried the network."
+                // 12 = LANGUAGE_NOT_SUPPORTED, 13 = LANGUAGE_UNAVAILABLE.
+                val isLanguagePackError = error == 12 || error == 13
+                if (preferOffline && isLanguagePackError && onlineFallbackUsed.compareAndSet(false, true)) {
+                    Log.i(
+                        TAG,
+                        "stt_offline_used=false: language pack missing for $languageTag, " +
+                            "retrying with EXTRA_PREFER_OFFLINE=false",
+                    )
+                    // Re-arm on the SAME recognizer with online fallback.
+                    // Must run on Main (recognizer's Looper).
+                    mainScope.launch {
+                        val rec = recognizer ?: return@launch
+                        runCatching {
+                            rec.setRecognitionListener(buildListener(preferOffline = false))
+                            rec.startListening(buildRecognitionIntent(languageTag, preferOffline = false))
+                        }.onFailure {
+                            Log.e(TAG, "stt online-fallback re-arm failed", it)
+                            trySend(
+                                SttResult.Error(
+                                    mapAndroidErrorCode(error),
+                                    "RecognitionListener error: $error (online-fallback re-arm failed: ${it.message})",
+                                ),
+                            )
+                            isListening.set(false)
+                            channel.close()
+                        }
+                    }
+                    return
+                }
+
                 trySend(
                     SttResult.Error(
                         mapAndroidErrorCode(error),
@@ -140,7 +195,7 @@ class SttManager @Inject constructor(
                 // different system-level log, breaking the harness's
                 // logcat trigger. Emitting this from inside the app
                 // makes the trigger device-independent.
-                Log.i(TAG, "RecognitionListener.onReadyForSpeech: mic open")
+                Log.i(TAG, "RecognitionListener.onReadyForSpeech: mic open preferOffline=$preferOffline")
             }
             override fun onBeginningOfSpeech() {}
             override fun onRmsChanged(rmsdB: Float) {}
@@ -155,8 +210,8 @@ class SttManager @Inject constructor(
             val rec = recognizer ?: SpeechRecognizer
                 .createSpeechRecognizer(appContext)
                 .also { recognizer = it }
-            rec.setRecognitionListener(listener)
-            rec.startListening(buildRecognitionIntent(languageTag))
+            rec.setRecognitionListener(buildListener(preferOffline = true))
+            rec.startListening(buildRecognitionIntent(languageTag, preferOffline = true))
         }
 
         awaitClose {
@@ -185,7 +240,7 @@ class SttManager @Inject constructor(
         }
     }
 
-    private fun buildRecognitionIntent(languageTag: String): Intent =
+    private fun buildRecognitionIntent(languageTag: String, preferOffline: Boolean): Intent =
         Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(
                 RecognizerIntent.EXTRA_LANGUAGE_MODEL,
@@ -193,7 +248,7 @@ class SttManager @Inject constructor(
             )
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageTag)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, languageTag)
-            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, preferOffline)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, appContext.packageName)
         }

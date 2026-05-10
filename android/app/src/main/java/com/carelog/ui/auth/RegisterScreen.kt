@@ -233,6 +233,27 @@ fun RegisterScreen(
                 )
             }
 
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // F18 — DPDP Act / HIPAA cross-region inference disclosure.
+            // Bedrock cross-region inference profiles can route requests to
+            // AWS regions outside India; pilots can't legally ship without
+            // this notice. The "AWS regions outside India" substring is the
+            // load-bearing phrase asserted by EDGE-V2-16
+            // (cross_region_disclosure_scan.yaml). Pending product/legal
+            // review of final wording; do not soften without that sign-off.
+            Text(
+                text = "To answer your conversations quickly, your messages are " +
+                        "processed by AI on AWS and may be routed to AWS regions " +
+                        "outside India. By signing up, you agree to this, as " +
+                        "described in our Privacy Policy.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("register_disclosure")
+            )
+
             Spacer(modifier = Modifier.height(24.dp))
 
             // Error message

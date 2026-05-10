@@ -59,6 +59,19 @@ class SttResultTest {
     }
 
     @Test
+    fun `F25 — language-pack errors map to LANGUAGE_NOT_SUPPORTED`() {
+        // F25 (docs/testing_todos_v2.md): SttManager.recognize()'s
+        // online-fallback re-arm is gated on these two engine codes
+        // exactly. If a future Android API surface adds new
+        // language-pack-related error codes that ALSO need the
+        // fallback path, update both this assertion AND the gate in
+        // SttManager.onError. Keeping them pinned here so that future
+        // refactors of the mapping don't silently drop the fallback.
+        assertEquals(SttErrorCode.LANGUAGE_NOT_SUPPORTED, mapAndroidErrorCode(12))
+        assertEquals(SttErrorCode.LANGUAGE_NOT_SUPPORTED, mapAndroidErrorCode(13))
+    }
+
+    @Test
     fun `Final and Partial are distinct types not collapsed by data class equals`() {
         // `Partial("hi")` and `Final("hi")` carry the same string but are
         // different SttResult subtypes — make sure equals() doesn't lie.

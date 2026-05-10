@@ -62,10 +62,27 @@ class TrendsViewModel @Inject constructor(
                     endDate = endDate
                 )
 
-                // Fetch threshold for the selected vital (non-blocking — don't fail if thresholds API is unavailable)
+                // F26 — fetch threshold from v2 parameter_configs (the
+                // table that drives evaluate-thresholds-batch). Map the
+                // selected VitalType enum to the matching parameter_name.
+                // BP gets the SYSTOLIC threshold for the chart line —
+                // diastolic is logged separately and the trend chart
+                // only renders one breach band per view.
                 val threshold = try {
-                    val thresholds = apiService.getThresholds(patientId)
-                    thresholds.find { it.vitalType == _uiState.value.selectedVitalType }
+                    val thresholds = apiService.getParameterThresholds(patientId)
+                    val targetParameter = vitalTypeToParameterName(_uiState.value.selectedVitalType)
+                    thresholds.find { it.parameterName == targetParameter }
+                        ?.let { pt ->
+                            // Adapt to the legacy VitalThreshold shape the chart consumes.
+                            com.carelog.api.VitalThreshold(
+                                vitalType = _uiState.value.selectedVitalType,
+                                minValue = pt.minValue,
+                                maxValue = pt.maxValue,
+                                unit = pt.unit,
+                                setByDoctor = pt.setByDoctor,
+                                doctorName = null,
+                            )
+                        }
                 } catch (e: Exception) {
                     null // Thresholds are optional for the chart
                 }
@@ -85,6 +102,19 @@ class TrendsViewModel @Inject constructor(
         }
     }
 }
+
+// F26 — map Android's VitalType enum to the schema's vital_type enum
+// strings. BP picks systolic by convention (diastolic threshold is
+// rendered as a second band only in screens that explicitly request it).
+private fun vitalTypeToParameterName(vitalType: com.carelog.api.VitalType): String =
+    when (vitalType) {
+        com.carelog.api.VitalType.BLOOD_PRESSURE -> "blood_pressure_systolic"
+        com.carelog.api.VitalType.GLUCOSE -> "glucose"
+        com.carelog.api.VitalType.TEMPERATURE -> "temperature"
+        com.carelog.api.VitalType.WEIGHT -> "weight"
+        com.carelog.api.VitalType.PULSE -> "pulse"
+        com.carelog.api.VitalType.SPO2 -> "spo2"
+    }
 
 /**
  * UI state for the Trends screen.

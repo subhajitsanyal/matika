@@ -25,12 +25,16 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ShowChart
+import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -86,6 +90,9 @@ fun CaregiverHomeScreen(
     onNavigateToPatientLogs: (patientId: String) -> Unit = {},
     onNavigateToAlerts: (patientId: String) -> Unit = {},
     onNavigateToSettings: () -> Unit = {},
+    onNavigateToThresholds: () -> Unit = {},
+    onNavigateToReminders: () -> Unit = {},
+    onNavigateToTrends: () -> Unit = {},
     modifier: Modifier = Modifier,
     viewModel: CaregiverDashboardViewModel = hiltViewModel()
 ) {
@@ -207,11 +214,101 @@ fun CaregiverHomeScreen(
                     )
                 }
 
+                // F4 — Manage section. Three orphan v1 screens
+                // (Thresholds / Reminders / Trends) wired to entry points
+                // here so CG-V2-12, CG-V2-13, CG-V2-17 are reachable.
+                // testTags `caregiver_thresholds` / `caregiver_reminders` /
+                // `caregiver_trends` match the pre-existing journey-doc
+                // expectations from the orphaned RelativeDashboardScreen.
+                // The screens self-resolve patientId via
+                // authRepository.fetchLinkedPatientId(), so no patientId
+                // threading needed from here.
+                item(key = "manage_header") {
+                    Spacer(modifier = Modifier.height(24.dp))
+                    Text(
+                        text = "Manage",
+                        style = MaterialTheme.typography.titleLarge,
+                        modifier = Modifier
+                            .padding(top = 8.dp, bottom = 4.dp)
+                            .semantics { heading() },
+                    )
+                }
+
+                item(key = "manage_grid") {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        ManageCard(
+                            label = "Thresholds",
+                            icon = Icons.Filled.Tune,
+                            testTagId = "caregiver_thresholds",
+                            onClick = onNavigateToThresholds,
+                            modifier = Modifier.weight(1f),
+                        )
+                        ManageCard(
+                            label = "Reminders",
+                            icon = Icons.Filled.Alarm,
+                            testTagId = "caregiver_reminders",
+                            onClick = onNavigateToReminders,
+                            modifier = Modifier.weight(1f),
+                        )
+                        ManageCard(
+                            label = "Trends",
+                            icon = Icons.AutoMirrored.Filled.ShowChart,
+                            testTagId = "caregiver_trends",
+                            onClick = onNavigateToTrends,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+
                 // Bottom spacer for FAB
                 item(key = "spacer") {
                     Spacer(modifier = Modifier.height(80.dp))
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ManageCard(
+    label: String,
+    icon: ImageVector,
+    testTagId: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Card(
+        onClick = onClick,
+        modifier = modifier
+            .height(96.dp)
+            .testTag(testTagId)
+            .semantics { contentDescription = "Manage $label" },
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+        ),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(12.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                modifier = Modifier.size(28.dp),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = label,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
         }
     }
 }

@@ -16,11 +16,20 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Air
+import androidx.compose.material.icons.filled.Bloodtype
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.MonitorHeart
+import androidx.compose.material.icons.filled.MonitorWeight
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Thermostat
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -85,6 +94,12 @@ data class LastSessionSummary(
 fun PatientHomeScreen(
     onStartConversation: () -> Unit = {},
     onNavigateToSettings: () -> Unit = {},
+    onNavigateToBloodPressure: () -> Unit = {},
+    onNavigateToGlucose: () -> Unit = {},
+    onNavigateToTemperature: () -> Unit = {},
+    onNavigateToWeight: () -> Unit = {},
+    onNavigateToPulse: () -> Unit = {},
+    onNavigateToSpO2: () -> Unit = {},
     modifier: Modifier = Modifier,
     viewModel: PatientHomeViewModel = hiltViewModel()
 ) {
@@ -117,6 +132,7 @@ fun PatientHomeScreen(
             Column(
                 modifier = modifier
                     .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
                     .padding(16.dp),
                 verticalArrangement = Arrangement.Top,
                 horizontalAlignment = Alignment.CenterHorizontally
@@ -174,7 +190,7 @@ fun PatientHomeScreen(
                     }
                 }
 
-                Spacer(modifier = Modifier.weight(1f))
+                Spacer(modifier = Modifier.height(32.dp))
 
                 // Start Conversation button with animated color
                 val buttonColor by animateColorAsState(
@@ -251,8 +267,151 @@ fun PatientHomeScreen(
                     )
                 }
 
+                Spacer(modifier = Modifier.height(32.dp))
+
+                // F4 — manual-entry tiles for the six v1 vital screens.
+                // Conversation-first remains the primary CTA; the tiles
+                // are a secondary path for patients who prefer typed
+                // entry or are offline. testTags `vital_tile_<param>`
+                // are the entry points for PT-V2-15..20 + EDGE-V2-14.
+                ManualVitalsGrid(
+                    onNavigateToBloodPressure = onNavigateToBloodPressure,
+                    onNavigateToGlucose = onNavigateToGlucose,
+                    onNavigateToTemperature = onNavigateToTemperature,
+                    onNavigateToWeight = onNavigateToWeight,
+                    onNavigateToPulse = onNavigateToPulse,
+                    onNavigateToSpO2 = onNavigateToSpO2,
+                )
+
                 Spacer(modifier = Modifier.height(24.dp))
             }
+        }
+    }
+}
+
+@Composable
+private fun ManualVitalsGrid(
+    onNavigateToBloodPressure: () -> Unit,
+    onNavigateToGlucose: () -> Unit,
+    onNavigateToTemperature: () -> Unit,
+    onNavigateToWeight: () -> Unit,
+    onNavigateToPulse: () -> Unit,
+    onNavigateToSpO2: () -> Unit,
+) {
+    Text(
+        text = "Or log manually",
+        style = MaterialTheme.typography.titleMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 4.dp, bottom = 12.dp),
+    )
+
+    // Three rows × two tiles. Pairs chosen to keep related vitals
+    // adjacent: BP/Glucose (everyday), Temperature/Weight (slower
+    // cadence), Pulse/SpO2 (cardio-resp pair).
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        VitalTile(
+            label = "BP",
+            icon = Icons.Filled.MonitorHeart,
+            testTagId = "vital_tile_blood_pressure",
+            onClick = onNavigateToBloodPressure,
+            modifier = Modifier.weight(1f),
+        )
+        VitalTile(
+            label = "Sugar",
+            icon = Icons.Filled.Bloodtype,
+            testTagId = "vital_tile_glucose",
+            onClick = onNavigateToGlucose,
+            modifier = Modifier.weight(1f),
+        )
+    }
+
+    Spacer(modifier = Modifier.height(12.dp))
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        VitalTile(
+            label = "Temperature",
+            icon = Icons.Filled.Thermostat,
+            testTagId = "vital_tile_temperature",
+            onClick = onNavigateToTemperature,
+            modifier = Modifier.weight(1f),
+        )
+        VitalTile(
+            label = "Weight",
+            icon = Icons.Filled.MonitorWeight,
+            testTagId = "vital_tile_weight",
+            onClick = onNavigateToWeight,
+            modifier = Modifier.weight(1f),
+        )
+    }
+
+    Spacer(modifier = Modifier.height(12.dp))
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        VitalTile(
+            label = "Pulse",
+            icon = Icons.Filled.FavoriteBorder,
+            testTagId = "vital_tile_pulse",
+            onClick = onNavigateToPulse,
+            modifier = Modifier.weight(1f),
+        )
+        VitalTile(
+            label = "SpO2",
+            icon = Icons.Filled.Air,
+            testTagId = "vital_tile_spo2",
+            onClick = onNavigateToSpO2,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+@Composable
+private fun VitalTile(
+    label: String,
+    icon: ImageVector,
+    testTagId: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Card(
+        onClick = onClick,
+        modifier = modifier
+            .height(96.dp)
+            .testTag(testTagId)
+            .semantics { contentDescription = "Log $label manually" },
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+        ),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(12.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                modifier = Modifier.size(28.dp),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = label,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
         }
     }
 }

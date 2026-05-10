@@ -21,6 +21,7 @@ import com.carelog.api.RelativeApiService
 import com.carelog.auth.AuthRepository
 import com.carelog.auth.CareLogUser
 import com.carelog.auth.PersonaType
+import com.carelog.core.config.AppLanguage
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -83,6 +84,17 @@ fun SettingsScreen(
 
             // Account info card — all personas
             AccountInfoCard(user = user)
+
+            // F22 — language picker. All personas. Drives the language
+            // STT/TTS/LLM run on; takes effect on the next conversation
+            // session (MatikaConversationVM reads appSettings.language
+            // once per startSession). Pre-fix the only way to switch
+            // was direct DataStore manipulation via `adb run-as`.
+            val currentLanguage by viewModel.language.collectAsState(initial = AppLanguage.ENGLISH)
+            LanguagePickerCard(
+                current = currentLanguage,
+                onSelect = viewModel::setLanguage,
+            )
 
             // Caregiver sections (including legacy RELATIVE and ATTENDANT personas)
             @Suppress("DEPRECATION")
@@ -312,6 +324,85 @@ fun SettingsScreen(
 }
 
 @Composable
+private fun LanguagePickerCard(
+    current: AppLanguage,
+    onSelect: (AppLanguage) -> Unit,
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("settings_language_card"),
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = "Language",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Used for voice conversations and on-screen text. " +
+                    "Takes effect on the next conversation.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Three options. Native-script labels (Hindi / Bengali) so an
+            // elderly patient seeing the screen recognizes their language
+            // even if "Hindi" / "Bengali" is unfamiliar in English.
+            // testTag stems use ISO codes so the harness can target them
+            // without depending on glyph rendering.
+            LanguageOptionRow(
+                label = "English",
+                code = "en",
+                selected = current == AppLanguage.ENGLISH,
+                onClick = { onSelect(AppLanguage.ENGLISH) },
+            )
+            LanguageOptionRow(
+                label = "हिन्दी (Hindi)",
+                code = "hi",
+                selected = current == AppLanguage.HINDI,
+                onClick = { onSelect(AppLanguage.HINDI) },
+            )
+            LanguageOptionRow(
+                label = "বাংলা (Bengali)",
+                code = "bn",
+                selected = current == AppLanguage.BENGALI,
+                onClick = { onSelect(AppLanguage.BENGALI) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun LanguageOptionRow(
+    label: String,
+    code: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("language_option_$code"),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(
+            selected = selected,
+            onClick = onClick,
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 4.dp),
+        )
+    }
+}
+
+@Composable
 private fun AccountInfoCard(user: CareLogUser?) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -495,10 +586,17 @@ class SettingsViewModel @Inject constructor(
 
     val currentUser: StateFlow<CareLogUser?> = authRepository.currentUser
     val macMiniUrl = appSettings.macMiniBaseUrl
+    val language = appSettings.language
 
     fun setMacMiniUrl(url: String?) {
         viewModelScope.launch {
             appSettings.setMacMiniBaseUrl(url)
+        }
+    }
+
+    fun setLanguage(language: AppLanguage) {
+        viewModelScope.launch {
+            appSettings.setLanguage(language)
         }
     }
 

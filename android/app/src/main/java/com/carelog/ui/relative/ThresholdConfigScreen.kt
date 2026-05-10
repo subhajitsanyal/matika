@@ -96,7 +96,7 @@ fun ThresholdConfigScreen(
                             ThresholdCard(
                                 threshold = threshold,
                                 onUpdateThreshold = { min, max ->
-                                    viewModel.updateThreshold(threshold.vitalType, min, max)
+                                    viewModel.updateThreshold(threshold.configId, min, max)
                                 }
                             )
                         }
@@ -149,7 +149,7 @@ fun ThresholdConfigScreen(
 
 @Composable
 private fun ThresholdCard(
-    threshold: VitalThreshold,
+    threshold: ParameterThreshold,
     onUpdateThreshold: (Double?, Double?) -> Unit
 ) {
     var minValue by remember(threshold) {
@@ -186,18 +186,18 @@ private fun ThresholdCard(
                         modifier = Modifier
                             .size(40.dp)
                             .clip(RoundedCornerShape(12.dp))
-                            .background(getVitalColor(threshold.vitalType).copy(alpha = 0.1f)),
+                            .background(getParameterColor(threshold.parameterName).copy(alpha = 0.1f)),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = getVitalIcon(threshold.vitalType),
+                            text = getParameterIcon(threshold.parameterName),
                             style = MaterialTheme.typography.titleMedium
                         )
                     }
 
                     Column {
                         Text(
-                            text = threshold.vitalType.displayName,
+                            text = threshold.displayName,
                             style = MaterialTheme.typography.titleMedium
                         )
                         Text(
@@ -245,7 +245,7 @@ private fun ThresholdCard(
                     singleLine = true,
                     modifier = Modifier
                         .weight(1f)
-                        .testTag("threshold_${threshold.vitalType.name.lowercase()}_min"),
+                        .testTag("threshold_${threshold.parameterName}_min"),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = CareLogColors.Warning,
                         focusedLabelColor = CareLogColors.Warning
@@ -264,7 +264,7 @@ private fun ThresholdCard(
                     singleLine = true,
                     modifier = Modifier
                         .weight(1f)
-                        .testTag("threshold_${threshold.vitalType.name.lowercase()}_max"),
+                        .testTag("threshold_${threshold.parameterName}_max"),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = CareLogColors.Error,
                         focusedLabelColor = CareLogColors.Error
@@ -352,6 +352,30 @@ private fun getVitalIcon(vitalType: VitalType): String {
     }
 }
 
+// F26 — schema's vital_type enum has more values than the Android
+// VitalType enum (BP splits into systolic + diastolic). Map the
+// parameter_configs.parameter_name string directly so the screen
+// doesn't lose data when BP comes back as two rows.
+private fun getParameterColor(parameterName: String): Color = when (parameterName) {
+    "blood_pressure_systolic", "blood_pressure_diastolic" -> CareLogColors.BloodPressure
+    "glucose", "blood_glucose", "blood_glucose_fasting", "blood_glucose_postprandial" -> CareLogColors.Glucose
+    "temperature", "body_temperature_c", "body_temperature_f" -> CareLogColors.Temperature
+    "weight", "body_weight" -> CareLogColors.Weight
+    "pulse", "heart_rate" -> CareLogColors.Pulse
+    "spo2" -> CareLogColors.SpO2
+    else -> CareLogColors.Primary
+}
+
+private fun getParameterIcon(parameterName: String): String = when (parameterName) {
+    "blood_pressure_systolic", "blood_pressure_diastolic" -> "❤️"
+    "glucose", "blood_glucose", "blood_glucose_fasting", "blood_glucose_postprandial" -> "🩸"
+    "temperature", "body_temperature_c", "body_temperature_f" -> "🌡️"
+    "weight", "body_weight" -> "⚖️"
+    "pulse", "heart_rate" -> "💓"
+    "spo2" -> "🫁"
+    else -> "📊"
+}
+
 /**
  * ViewModel for threshold configuration.
  */
@@ -376,7 +400,10 @@ class ThresholdConfigViewModel @Inject constructor(
                 val patientId = authRepository.fetchLinkedPatientId()
                     ?: throw Exception("No patient linked to this account")
 
-                val thresholds = apiService.getThresholds(patientId)
+                // F26 — v2 path. Reads parameter_configs (the table that
+                // actually drives evaluate-thresholds-batch alerts), not
+                // the dormant v1 thresholds table.
+                val thresholds = apiService.getParameterThresholds(patientId)
 
                 _uiState.update {
                     it.copy(
@@ -393,16 +420,16 @@ class ThresholdConfigViewModel @Inject constructor(
         }
     }
 
-    fun updateThreshold(vitalType: VitalType, minValue: Double?, maxValue: Double?) {
+    fun updateThreshold(configId: String, minValue: Double?, maxValue: Double?) {
         viewModelScope.launch {
             val patientId = _uiState.value.patientId ?: return@launch
 
             try {
-                val success = apiService.updateThreshold(
+                val success = apiService.updateParameterThreshold(
                     patientId = patientId,
-                    vitalType = vitalType,
+                    configId = configId,
                     minValue = minValue,
-                    maxValue = maxValue
+                    maxValue = maxValue,
                 )
 
                 if (success) {
@@ -427,7 +454,7 @@ class ThresholdConfigViewModel @Inject constructor(
  */
 data class ThresholdConfigUiState(
     val isLoading: Boolean = false,
-    val thresholds: List<VitalThreshold> = emptyList(),
+    val thresholds: List<ParameterThreshold> = emptyList(),
     val patientId: String? = null,
     val saveSuccess: Boolean = false,
     val error: String? = null

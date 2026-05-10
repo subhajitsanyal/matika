@@ -459,7 +459,12 @@ fun CareLogNavHost() {
                 },
                 onNavigateToSettings = {
                     navController.navigate(CareLogRoutes.SETTINGS)
-                }
+                },
+                // F4 — Manage section. Routes already exist below; these
+                // callbacks just hook the cards to them.
+                onNavigateToThresholds = { navController.navigate(CareLogRoutes.THRESHOLDS) },
+                onNavigateToReminders = { navController.navigate(CareLogRoutes.REMINDERS) },
+                onNavigateToTrends = { navController.navigate(CareLogRoutes.TRENDS) },
             )
         }
 
@@ -704,7 +709,15 @@ fun CareLogNavHost() {
                 },
                 onNavigateToSettings = {
                     navController.navigate(CareLogRoutes.SETTINGS)
-                }
+                },
+                // F4 — manual vital entry. Routes already exist further
+                // down the file; this just hooks the home tiles up to them.
+                onNavigateToBloodPressure = { navController.navigate(CareLogRoutes.BLOOD_PRESSURE) },
+                onNavigateToGlucose = { navController.navigate(CareLogRoutes.GLUCOSE) },
+                onNavigateToTemperature = { navController.navigate(CareLogRoutes.TEMPERATURE) },
+                onNavigateToWeight = { navController.navigate(CareLogRoutes.WEIGHT) },
+                onNavigateToPulse = { navController.navigate(CareLogRoutes.PULSE) },
+                onNavigateToSpO2 = { navController.navigate(CareLogRoutes.SPO2) },
             )
         }
 
