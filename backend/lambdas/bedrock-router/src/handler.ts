@@ -19,6 +19,7 @@ import { randomUUID } from 'node:crypto';
 
 import type {
   BedrockInvoker,
+  InvokeResult,
   StreamUsage,
 } from './bedrock_client';
 import type { AlertEnqueuer, AlertTrigger } from './alert_queue';
@@ -36,7 +37,7 @@ import type {
   Turn,
 } from './context/types';
 
-import { detectEscalation, EscalationSignal, SessionContext as SignalSessionContext } from '../escalation/signal_detectors';
+import { detectEscalation, EscalationSignal, SessionContext as SignalSessionContext, RoutingDecision } from '../escalation/signal_detectors';
 import { extractPreModelHints } from './pre_model_hints';
 import { renderPatientContext } from './context/per_patient';
 import { renderTurnContext, applySlidingWindow } from './context/per_turn';
@@ -241,17 +242,45 @@ export async function handleTurn(event: TurnRequest, deps: HandlerDeps): Promise
     ? undefined
     : deps.config.guardrailVersion;
   const invokeStart = now();
-  const { parsed, meta: result } = await invokeWithRetry(body, async (b) => {
-    const r = await deps.bedrock.invoke({
-      modelId,
-      body: b,
-      guardrailId,
-      guardrailVersion,
-      configuredRegion: deps.config.inferenceRegion,
-    });
-    return { text: r.responseText, meta: r };
-  });
+  const { parsed, meta: result, guardrailBlocked: guardrailShortCircuited } = await invokeWithRetry(
+    body,
+    async (b) => {
+      const r = await deps.bedrock.invoke({
+        modelId,
+        body: b,
+        guardrailId,
+        guardrailVersion,
+        configuredRegion: deps.config.inferenceRegion,
+      });
+      return { text: r.responseText, meta: r };
+    },
+    turnCtx.sessionState.language,
+  );
   const latencyMs = now() - invokeStart;
+
+  // F19 — Bedrock Guardrail intervention short-circuits the structured-
+  // output flow. parsed.responseText carries the configured
+  // blocked_input_messaging copy; FSM state, captured values, and
+  // observation writes all stay frozen for this turn (the user's input
+  // was rejected — there is nothing to advance). Telemetry + alert path
+  // still fire so the model_call row marks guardrail_blocked=true and
+  // the caregiver gets the standard guardrail_block alert.
+  if (guardrailShortCircuited) {
+    return await respondGuardrailBlocked({
+      event,
+      patientCtx,
+      turnCtx,
+      tier,
+      modelId,
+      latencyMs,
+      result,
+      routing,
+      blockedResponseText: parsed.responseText,
+      softCapReached,
+      deps,
+      now,
+    });
+  }
 
   // 7. Apply state transition (validates FROM matches current state).
   const newFsmState = applyTransition(turnCtx.sessionState.fsmState, parsed.stateTransition);
@@ -452,6 +481,102 @@ export async function handleTurn(event: TurnRequest, deps: HandlerDeps): Promise
 
 // ---------- Helpers ----------
 
+// F19 — Build the 200 response when Bedrock's Guardrail intervened on
+// the user's input. The blocked-input copy comes from
+// `blockedResponseText` (Bedrock inlines the configured
+// `blocked_input_messaging` into the response). FSM state, captured
+// values, pending confirmations, and stillNeeded are all returned
+// unchanged from `turnCtx.sessionState`. We still:
+//   - record a model_call row with guardrail_blocked=true (cost &
+//     audit trail);
+//   - enqueue a guardrail_block emergency alert (per spec §11.5).
+// We do NOT call sessionPersister.update — the FSM didn't move, no
+// transcript was appended, no pending values changed. The session row
+// stays in the same shape it was before this turn.
+async function respondGuardrailBlocked(args: {
+  event: TurnRequest;
+  patientCtx: PatientContext;
+  turnCtx: TurnContext;
+  tier: Tier;
+  modelId: string;
+  latencyMs: number;
+  result: InvokeResult;
+  routing: RoutingDecision;
+  blockedResponseText: string;
+  softCapReached: boolean;
+  deps: HandlerDeps;
+  now: () => number;
+}): Promise<TurnResponse> {
+  const { event, patientCtx, turnCtx, tier, modelId, latencyMs, result, routing, blockedResponseText, softCapReached, deps, now } = args;
+
+  // Guardrail block always raises the guardrail_block trigger;
+  // detectEmergencyTriggers also folds in routing reason (e.g. an
+  // emergency keyword in the same blocked utterance).
+  const emergencyTriggers = detectEmergencyTriggers(routing.reason, null, true);
+  const alertPromise =
+    emergencyTriggers.length > 0 && deps.alertEnqueuer
+      ? deps.alertEnqueuer.enqueueEmergency(
+          buildEmergencyAlert({
+            patientId: event.patientId,
+            sessionId: event.sessionId,
+            triggers: emergencyTriggers,
+            transcript: event.transcript,
+            language: event.language,
+            now: () => new Date(now()),
+          }),
+        )
+      : Promise.resolve();
+
+  await Promise.all([
+    deps.modelCallRecorder.record(
+      buildModelCallRecord({
+        sessionId: event.sessionId,
+        patientId: patientCtx.patient.id, // internal patients.id UUID (FK target)
+        tier,
+        model: modelId,
+        streamed: false,
+        guardrailBlocked: true,
+        usage: {
+          inputTokens: result.inputTokens,
+          cachedInputTokens: result.cachedInputTokens,
+          outputTokens: result.outputTokens,
+        },
+        latencyMs,
+        inferenceRegion: result.inferenceRegion,
+        escalationReason: routing.reason,
+      }),
+    ),
+    alertPromise,
+  ]);
+
+  const responseBody: TurnResponseBody = {
+    responseText: blockedResponseText,
+    ttsHints: { language: turnCtx.sessionState.language, spellOutNumbers: false },
+    extractedValues: [],
+    sessionState: {
+      capturedThisSession: turnCtx.sessionState.capturedThisSession,
+      pendingConfirmation: turnCtx.sessionState.pendingConfirmation,
+      stillNeeded: turnCtx.sessionState.stillNeeded,
+      fsmState: turnCtx.sessionState.fsmState,
+    },
+    actions: [],
+    telemetry: {
+      tier,
+      model: modelId,
+      latencyMs,
+      inputTokens: result.inputTokens,
+      cachedInputTokens: result.cachedInputTokens,
+      outputTokens: result.outputTokens,
+      guardrailBlocked: true,
+      inferenceRegion: result.inferenceRegion,
+      escalationReason: routing.reason,
+      softCapReached,
+    },
+  };
+
+  return { statusCode: 200, body: JSON.stringify(responseBody) };
+}
+
 // Loads the TurnContext for this session. If the session row doesn't exist
 // yet (= first turn of a fresh session), INSERTs a fresh interaction_sessions
 // row and returns a default empty TurnContext. Other errors propagate.
@@ -524,11 +649,33 @@ const STRICTNESS_REMINDER =
 //
 // Generic over `meta` so both sync (InvokeResult) and streaming (aggregated
 // StreamUsage) callers get type-safe results.
+//
+// F19 — when Bedrock's Guardrail intervenes, the response carries the
+// configured `blocked_input_messaging` copy verbatim (no `<output>`
+// envelope, no `usage`). The parser would fail and `invokeWithRetry`
+// would surface a 503 to the caller. We detect this from the meta
+// (`guardrailBlocked` for non-streaming, `stopReason` ===
+// 'guardrail_intervened' for streaming), short-circuit the parser, and
+// return a synthetic StructuredOutput. The caller sees
+// `guardrailBlocked: true` in the result and is responsible for
+// skipping FSM transition + capture/observation merges (none of which
+// apply when the user's input was rejected).
 async function invokeWithRetry<R>(
   body: BedrockBody,
   invoke: (body: BedrockBody) => Promise<{ text: string; meta: R }>,
-): Promise<{ parsed: StructuredOutput; meta: R }> {
+  language: SessionState['language'],
+): Promise<{ parsed: StructuredOutput; meta: R; guardrailBlocked: boolean }> {
   const first = await invoke(body);
+  if (isGuardrailBlockedMeta(first.meta)) {
+    console.warn('guardrail_blocked_short_circuit', {
+      rawSnippet: first.text.slice(0, 400),
+    });
+    return {
+      parsed: buildGuardrailBlockedStub(first.text, language),
+      meta: first.meta,
+      guardrailBlocked: true,
+    };
+  }
   try {
     const detailed = parseStructuredOutputDetailed(first.text);
     if (detailed.source === 'recovered_bare_json') {
@@ -539,7 +686,7 @@ async function invokeWithRetry<R>(
         rawSnippet: first.text.slice(0, 400),
       });
     }
-    return { parsed: detailed.parsed, meta: first.meta };
+    return { parsed: detailed.parsed, meta: first.meta, guardrailBlocked: false };
   } catch (e) {
     if (!(e instanceof StructuredOutputParseError) || !RETRIABLE_PARSE_FAILURES.has(e.kind)) {
       throw e;
@@ -550,6 +697,18 @@ async function invokeWithRetry<R>(
     });
     const stricterBody = appendStrictnessReminder(body);
     const retry = await invoke(stricterBody);
+    if (isGuardrailBlockedMeta(retry.meta)) {
+      // Same input → guardrail almost always blocks again on retry.
+      // Short-circuit here too rather than throwing parse_failed_after_retry.
+      console.warn('guardrail_blocked_short_circuit_on_retry', {
+        rawSnippet: retry.text.slice(0, 400),
+      });
+      return {
+        parsed: buildGuardrailBlockedStub(retry.text, language),
+        meta: retry.meta,
+        guardrailBlocked: true,
+      };
+    }
     try {
       const detailed = parseStructuredOutputDetailed(retry.text);
       if (detailed.source === 'recovered_bare_json') {
@@ -557,7 +716,7 @@ async function invokeWithRetry<R>(
           rawSnippet: retry.text.slice(0, 400),
         });
       }
-      return { parsed: detailed.parsed, meta: retry.meta };
+      return { parsed: detailed.parsed, meta: retry.meta, guardrailBlocked: false };
     } catch (e2) {
       const kind = e2 instanceof StructuredOutputParseError ? e2.kind : 'unknown';
       console.warn('parse_failed_after_retry', {
@@ -571,6 +730,41 @@ async function invokeWithRetry<R>(
       );
     }
   }
+}
+
+// Sentinel emitted by buildGuardrailBlockedStub. The handler must
+// detect `result.guardrailBlocked === true` BEFORE applyTransition;
+// applyTransition will throw on this string, which is the intended
+// failure mode if anyone wires the stub through the FSM by mistake.
+export const GUARDRAIL_NOOP_TRANSITION = '__GUARDRAIL_NOOP__';
+
+// Detects "Bedrock's guardrail intervened" via either of the two
+// signals the SDK / streaming protocol expose. Used by both the
+// sync-invoke meta (`guardrailBlocked: true`) and the streaming meta
+// (`stopReason === 'guardrail_intervened'`).
+function isGuardrailBlockedMeta<R>(meta: R): boolean {
+  if (typeof meta !== 'object' || meta === null) return false;
+  const m = meta as { guardrailBlocked?: boolean; stopReason?: string | null };
+  return m.guardrailBlocked === true || m.stopReason === 'guardrail_intervened';
+}
+
+// Synthesizes a StructuredOutput from a guardrail-blocked Bedrock
+// response. The blocked-input copy lives in `responseText` (Bedrock
+// inlines the configured blocked_input_messaging there). FSM /
+// extracted-values / actions are all empty — the user's input was
+// rejected, so nothing in this turn should advance state.
+function buildGuardrailBlockedStub(
+  blockedMessageText: string,
+  language: SessionState['language'],
+): StructuredOutput {
+  return {
+    responseText: blockedMessageText,
+    ttsHints: { language, spellOutNumbers: false },
+    extractedValues: [],
+    actions: [],
+    stateTransition: GUARDRAIL_NOOP_TRANSITION,
+    escalationReason: null,
+  };
 }
 
 // Returns a copy of `body` with a strictness reminder appended to the per-turn
@@ -1132,12 +1326,86 @@ export async function handleTurnStream(
       return { text: buffer, usage, stopReason };
     };
 
-    const { parsed, meta } = await invokeWithRetry(body, async (b) => {
-      const r = await aggregateStream(b);
-      return { text: r.text, meta: r };
-    });
+    const { parsed, meta, guardrailBlocked: guardrailShortCircuited } = await invokeWithRetry(
+      body,
+      async (b) => {
+        const r = await aggregateStream(b);
+        return { text: r.text, meta: r };
+      },
+      turnCtx.sessionState.language,
+    );
 
     const latencyMs = now() - invokeStart;
+
+    // F19 — same short-circuit as the non-streaming path. Emit the
+    // blocked-message text as a single sentence event, record telemetry
+    // (guardrail_blocked=true) + enqueue alert, then close the stream.
+    // No FSM transition, no transcript append, no observation writes.
+    if (guardrailShortCircuited) {
+      const inferenceRegion = deps.config.inferenceRegion;
+      const emergencyTriggers = detectEmergencyTriggers(routing.reason, null, true);
+      const alertPromise =
+        emergencyTriggers.length > 0 && deps.alertEnqueuer
+          ? deps.alertEnqueuer.enqueueEmergency(
+              buildEmergencyAlert({
+                patientId: event.patientId,
+                sessionId: event.sessionId,
+                triggers: emergencyTriggers,
+                transcript: event.transcript,
+                language: event.language,
+                now: () => new Date(now()),
+              }),
+            )
+          : Promise.resolve();
+
+      await Promise.all([
+        deps.modelCallRecorder.record(
+          buildModelCallRecord({
+            sessionId: event.sessionId,
+            patientId: patientCtx.patient.id,
+            tier,
+            model: modelId,
+            streamed: true,
+            guardrailBlocked: true,
+            usage: meta.usage,
+            latencyMs,
+            inferenceRegion,
+            escalationReason: routing.reason,
+          }),
+        ),
+        alertPromise,
+      ]);
+
+      emitParsedOutput(emitter, parsed);
+      emitter.emit({
+        type: 'telemetry',
+        data: {
+          tier,
+          model: modelId,
+          latencyMs,
+          inputTokens: meta.usage.inputTokens,
+          cachedInputTokens: meta.usage.cachedInputTokens,
+          outputTokens: meta.usage.outputTokens,
+          guardrailBlocked: true,
+          inferenceRegion,
+          escalationReason: routing.reason,
+          softCapReached,
+        },
+      });
+      emitter.emit({
+        type: 'done',
+        data: {
+          sessionState: {
+            capturedThisSession: turnCtx.sessionState.capturedThisSession,
+            pendingConfirmation: turnCtx.sessionState.pendingConfirmation,
+            stillNeeded: turnCtx.sessionState.stillNeeded,
+            fsmState: turnCtx.sessionState.fsmState,
+          },
+        },
+      });
+      await emitter.end();
+      return;
+    }
 
     // Apply state transition + persist + record telemetry, same as the sync
     // handler. Errors here surface as ErrorEvent rather than thrown — the

@@ -66,6 +66,11 @@ interface AnthropicResponse {
     cache_creation_input_tokens?: number;
     cache_read_input_tokens?: number;
   };
+  // Bedrock decorates the response with this field when an associated
+  // Guardrail intervenes on the *input* — the model never runs, `usage`
+  // is absent, `stop_reason` is undefined, and `content[0].text` carries
+  // the configured `blocked_input_messaging` copy verbatim. (F19)
+  'amazon-bedrock-guardrailAction'?: 'INTERVENED' | string;
 }
 
 // Minimal interface so tests can mock without depending on the AWS SDK.
@@ -210,11 +215,19 @@ export function parseInvokeOutput(
   const cacheRead = usage.cache_read_input_tokens ?? 0;
   const totalInput = (usage.input_tokens ?? 0) + cacheCreation + cacheRead;
 
-  // Guardrail-intervention indicator: stop_reason of 'guardrail_intervened'
-  // (Bedrock convention) plus presence of guardrail trace metadata. We only
-  // check the stop_reason here; trace inspection is operational tooling, not
-  // routing.
-  const guardrailBlocked = parsed.stop_reason === 'guardrail_intervened';
+  // Guardrail-intervention indicator. Bedrock signals this two ways:
+  //   1. stop_reason === 'guardrail_intervened' — the model ran but the
+  //      *output* was blocked.
+  //   2. amazon-bedrock-guardrailAction === 'INTERVENED' — the *input*
+  //      was blocked before the model ran. usage / stop_reason are
+  //      absent in this case; content[0].text is the configured
+  //      blocked_input_messaging copy. (F19)
+  // Either way, the response carries the user-facing copy in
+  // responseText and downstream callers must skip the structured-output
+  // parser — neither variant emits the <output>...</output> envelope.
+  const guardrailBlocked =
+    parsed.stop_reason === 'guardrail_intervened' ||
+    parsed['amazon-bedrock-guardrailAction'] === 'INTERVENED';
 
   // Inference region: prefer the response header if Bedrock supplied it,
   // else fall back to the configured region.

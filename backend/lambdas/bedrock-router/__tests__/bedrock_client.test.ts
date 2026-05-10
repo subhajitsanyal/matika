@@ -82,6 +82,29 @@ describe('parseInvokeOutput', () => {
     expect(parseInvokeOutput(out, 'ap-southeast-1').guardrailBlocked).toBe(true);
   });
 
+  // F19 regression. When Bedrock's input guardrail intervenes, the model
+  // never runs: the response has no usage, no stop_reason, and a top-level
+  // `amazon-bedrock-guardrailAction: 'INTERVENED'` field. content[0].text
+  // is the configured blocked_input_messaging copy.
+  it('detects guardrail INPUT intervention via amazon-bedrock-guardrailAction', () => {
+    const out = makeOutput({
+      id: 'msg_4b',
+      type: 'message',
+      role: 'assistant',
+      content: [{ type: 'text', text: "I can't help with that here. Please contact your caregiver or a clinician." }],
+      model: 'claude-haiku-4-5',
+      'amazon-bedrock-guardrailAction': 'INTERVENED',
+      // no stop_reason, no usage — these are absent in real guardrail-blocked responses
+    });
+    const r = parseInvokeOutput(out, 'ap-southeast-1');
+    expect(r.guardrailBlocked).toBe(true);
+    expect(r.responseText).toBe("I can't help with that here. Please contact your caregiver or a clinician.");
+    // Tokens default to zero when usage is absent — the model didn't actually run.
+    expect(r.inputTokens).toBe(0);
+    expect(r.outputTokens).toBe(0);
+    expect(r.cachedInputTokens).toBe(0);
+  });
+
   it('falls back to configured region when header is absent', () => {
     const out = makeOutput({
       id: 'msg_5',

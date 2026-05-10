@@ -838,20 +838,24 @@ describe('handleTurn — emergency alert (T-V2-222)', () => {
     expect(calls.alertsEnqueued[0].triggers).toEqual(['guardrail_block']);
   });
 
-  it('combines multiple triggers in a single alert when several fire', async () => {
+  it('combines transcript_keyword + guardrail_block triggers when both fire on the same turn', async () => {
+    // F19 — when Bedrock's Guardrail intervenes, the LLM never runs, so
+    // llm_classification can't co-fire with guardrail_block. The realistic
+    // multi-trigger case is transcript-keyword + guardrail-block (the
+    // patient typed something that hit both the local emergency-keyword
+    // regex and the Bedrock content guardrail).
     const { deps, calls } = makeDeps({
       invokeResult: makeInvokeResult({
-        responseText: `<output>
-{"responseText":"Please contact your caregiver immediately.","ttsHints":{"language":"en-IN","spellOutNumbers":false},"extractedValues":[],"actions":[],"stateTransition":"EXTRACTING -> EMERGENCY","escalationReason":"emergency"}
-</output>`,
+        responseText: 'I cannot help with that. Please contact your caregiver.',
         guardrailBlocked: true,
       }),
     });
     await handleTurn({ ...baseRequest, transcript: 'I have chest pain' }, deps);
     expect(calls.alertsEnqueued).toHaveLength(1);
     expect(calls.alertsEnqueued[0].triggers).toEqual(
-      expect.arrayContaining(['transcript_keyword', 'llm_classification', 'guardrail_block']),
+      expect.arrayContaining(['transcript_keyword', 'guardrail_block']),
     );
+    expect(calls.alertsEnqueued[0].triggers).not.toContain('llm_classification');
   });
 
   it('does NOT enqueue an alert on a non-emergency turn', async () => {
@@ -1481,6 +1485,85 @@ describe('TurnRequest.actorCognitoSub validation', () => {
     await expect(
       handleTurn({ ...baseRequest, actorCognitoSub: '   ' as unknown as string }, deps),
     ).rejects.toThrow('actorCognitoSub: empty string');
+  });
+});
+
+// ---------- F19: Bedrock Guardrail input intervention ----------
+
+describe('handleTurn — F19 Guardrail input intervention', () => {
+  // Realistic guardrail-blocked invoke result. responseText is the raw
+  // blocked_input_messaging copy (no <output> envelope) — this is what
+  // Bedrock returns when its INPUT guardrail intervenes. Token usage is
+  // zero because the model never ran.
+  function guardrailBlockedResult(): InvokeResult {
+    return makeInvokeResult({
+      responseText: "I can't help with that here. Please contact your caregiver or a clinician.",
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      guardrailBlocked: true,
+      rawStopReason: null,
+    });
+  }
+
+  it('returns 200 with the blocked-message text (no parser 503)', async () => {
+    const { deps } = makeDeps({ invokeResult: guardrailBlockedResult() });
+    const result = await handleTurn(baseRequest, deps);
+    expect(result.statusCode).toBe(200);
+    const body = JSON.parse(result.body);
+    expect(body.responseText).toBe(
+      "I can't help with that here. Please contact your caregiver or a clinician.",
+    );
+    expect(body.telemetry.guardrailBlocked).toBe(true);
+  });
+
+  it('does NOT retry (guardrail block is deterministic — same input blocks again)', async () => {
+    const { deps, calls } = makeDeps({ invokeResult: guardrailBlockedResult() });
+    await handleTurn(baseRequest, deps);
+    expect(calls.invokeCalls).toHaveLength(1);
+  });
+
+  it('records a model_call row with guardrail_blocked=true', async () => {
+    const { deps, calls } = makeDeps({ invokeResult: guardrailBlockedResult() });
+    await handleTurn(baseRequest, deps);
+    expect(calls.modelCallRecords).toHaveLength(1);
+    expect(calls.modelCallRecords[0].guardrailBlocked).toBe(true);
+  });
+
+  it('skips FSM transition + session persister update (state stays frozen)', async () => {
+    const { deps, calls } = makeDeps({ invokeResult: guardrailBlockedResult() });
+    const result = await handleTurn(baseRequest, deps);
+    const body = JSON.parse(result.body);
+    // FSM did not advance — same as turnCtx baseline.
+    expect(body.sessionState.fsmState).toBe('EXTRACTING');
+    expect(body.sessionState.capturedThisSession).toEqual([]);
+    expect(body.sessionState.pendingConfirmation).toEqual([]);
+    // No persister update — the row is unchanged on a blocked input.
+    expect(calls.persisterUpdates).toHaveLength(0);
+  });
+
+  it('returns empty extractedValues + actions (nothing to extract from a blocked input)', async () => {
+    const { deps } = makeDeps({ invokeResult: guardrailBlockedResult() });
+    const result = await handleTurn(baseRequest, deps);
+    const body = JSON.parse(result.body);
+    expect(body.extractedValues).toEqual([]);
+    expect(body.actions).toEqual([]);
+  });
+
+  it('enqueues a guardrail_block emergency alert', async () => {
+    const { deps, calls } = makeDeps({ invokeResult: guardrailBlockedResult() });
+    await handleTurn(baseRequest, deps);
+    expect(calls.alertsEnqueued).toHaveLength(1);
+    expect(calls.alertsEnqueued[0].triggers).toContain('guardrail_block');
+  });
+
+  it('uses the session language for ttsHints', async () => {
+    const ctx = baseTurnCtx();
+    ctx.sessionState.language = 'hi-IN';
+    const { deps } = makeDeps({ turnCtx: ctx, invokeResult: guardrailBlockedResult() });
+    const result = await handleTurn(baseRequest, deps);
+    const body = JSON.parse(result.body);
+    expect(body.ttsHints.language).toBe('hi-IN');
   });
 });
 
