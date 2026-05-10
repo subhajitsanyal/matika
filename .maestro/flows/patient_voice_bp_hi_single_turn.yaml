@@ -1,0 +1,62 @@
+# PT-V2-05 (Hindi voice, single-turn) — Patient logs blood pressure
+# in Hindi via the voice path. Tests Soda hi-IN STT + Bedrock T2
+# multilingual extraction + TTS Lekha response.
+#
+# **F22 workaround.** No UI exposes AppLanguage today, so the patient
+# session always seeds `en-IN` from a fresh install. To exercise this
+# Hindi flow, the orchestrator MUST seed AppLanguage=hi via the
+# DataStore preferences file BEFORE launchApp:
+#
+#   adb shell "run-as com.carelog sh -c \
+#     'cat > /data/user/0/com.carelog/files/datastore/carelog_settings.preferences_pb'" \
+#     < <generated-hi-pb>
+#
+# Without that seed, the session boots `en-IN` and the Hindi
+# utterance hits an English STT pack — Soda returns NO_MATCH or
+# garbled text and Bedrock can't extract Hindi numerals.
+#
+# Run (once DataStore is seeded):
+#   source ~/.matika-test-creds.env
+#   scripts/matika-voice-run.sh patient_voice_bp_hi_single_turn --no-install \
+#     --turn "hi|165|मेरा रक्तचाप एक सौ चालीस बटा नब्बे है।|600"
+#
+# **clearState: false.** Required — clearState wipes the DataStore
+# back to defaults, undoing the language=hi seed. The flow assumes
+# the orchestrator (or a wrapper script) has stopped the app + seeded
+# DataStore + restarted the app once before this flow's launchApp.
+
+appId: com.carelog
+---
+# clearState=false: keep DataStore (language=hi) intact.
+- launchApp:
+    clearState: false
+
+# Login is conditional. The orchestrator may run this flow either:
+#   1. cold (DataStore seeded but no active session) → login first
+#   2. warm (signed in from a prior flow that didn't clearState) →
+#      jump straight to start_conversation
+- runFlow:
+    when:
+      visible:
+        id: login_email
+    commands:
+      - tapOn: { id: login_email }
+      - inputText: ${MATIKA_PATIENT_EMAIL}
+      - tapOn: { id: login_password }
+      - inputText: ${MATIKA_PATIENT_PASSWORD}
+      - hideKeyboard
+      - tapOn: { id: login_button }
+
+- extendedWaitUntil: { visible: { id: patient_home_start_conversation }, timeout: 30000 }
+- tapOn: { id: patient_home_start_conversation }
+- tapOn: { text: "Allow|While using the app", optional: true }
+- extendedWaitUntil: { visible: { id: matika_mic }, timeout: 30000 }
+- tapOn: { id: matika_mic }
+
+# Non-vacuous: response_card mounts only after Bedrock returns a
+# non-blank text. For Hindi, this should be a Hindi string from the
+# model. matika_response_card has no language assertion (would be
+# nice to add a substring check on Devanagari range, but the current
+# flow asserts on visibility only).
+- extendedWaitUntil: { visible: { id: matika_response_card }, timeout: 90000 }
+- extendedWaitUntil: { visible: { id: matika_mic }, timeout: 30000 }

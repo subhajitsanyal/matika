@@ -56,3 +56,9 @@ tfplan
 # Agentic sweep artefacts — per-sweep evidence trees, gitignored by design
 # (see docs/journeys.md §3.1 + .agents/qa-testing.md "Constraints")
 test-automation/results/
+# Voice harness audio assets generated locally (gTTS Bengali, etc.) —
+# kept out of the tree so we don't ship binaries. Re-generate with the
+# script in test-automation/audio/README.md when needed.
+test-automation/audio/*.mp3
+test-automation/audio/*.aiff
+test-automation/audio/*.wav

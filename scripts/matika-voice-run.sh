@@ -37,11 +37,14 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # `adb logcat -e PATTERN` filters on the MESSAGE field only, not on the
-# tag or the full line. Don't include `SodaSpeechRecognizer` in the
-# pattern — it's the tag, not part of the message. The string below is
-# the literal message Soda emits when SpeechRecognizer.startListening()
-# fires from MatikaConversationViewModel.
-TRIGGER='Offline recognizer - start listening'
+# tag or the full line. The trigger fires inside SttManager's
+# RecognitionListener.onReadyForSpeech() — emitted on every device the
+# moment the SpeechRecognizer hands the mic to the user, regardless of
+# OEM. Earlier we relied on Google Soda's "Offline recognizer - start
+# listening" system log; that line only appears on Pixel/Google ROMs
+# and was silent on Samsung One UI, breaking the harness during the
+# 2026-05-09 voice sweep.
+TRIGGER='RecognitionListener.onReadyForSpeech'
 TURN_TIMEOUT_S="${MATIKA_TURN_TIMEOUT_S:-90}"
 
 INSTALL_FLAGS=()

@@ -132,8 +132,16 @@ class SttManager @Inject constructor(
                 channel.close()
             }
 
-            // Required overrides; we don't use these signals today.
-            override fun onReadyForSpeech(params: Bundle?) {}
+            override fun onReadyForSpeech(params: Bundle?) {
+                // Deterministic mic-armed signal for the agentic voice
+                // harness (`scripts/matika-voice-run.sh`). Soda's own
+                // "Offline recognizer - start listening" line is emitted
+                // only on Pixel/Google builds — Samsung devices fire a
+                // different system-level log, breaking the harness's
+                // logcat trigger. Emitting this from inside the app
+                // makes the trigger device-independent.
+                Log.i(TAG, "RecognitionListener.onReadyForSpeech: mic open")
+            }
             override fun onBeginningOfSpeech() {}
             override fun onRmsChanged(rmsdB: Float) {}
             override fun onBufferReceived(buffer: ByteArray?) {}

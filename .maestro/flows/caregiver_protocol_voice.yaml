@@ -1,0 +1,78 @@
+# CG-V2-03 (caregiver protocol-config, voice) — caregiver speaks the
+# monitoring protocol on the v2 caregiver-onboarding conversation
+# screen. Same path as `caregiver_protocol_setup.yaml` but uses
+# `matika_mic` instead of `matika_text_fallback`.
+#
+# Run:
+#   source ~/.matika-test-creds.env
+#   scripts/matika-voice-run.sh caregiver_protocol_voice \
+#     --turn "en|160|I want to track her blood pressure every morning, fasting blood sugar twice a week, and her weight on Sundays.|800"
+#
+# What this proves end-to-end:
+#   - Caregiver login → Add Patient FAB → form-based onboarding form
+#     succeeds → MatikaConversationScreen mounts in caregiver mode
+#     (sessionType=caregiver_onboarding).
+#   - Tap mic → SpeechRecognizer listens → Mac speaks the protocol
+#     utterance → Soda transcribes → /conversation/turn round-trips
+#     to Bedrock T3 Sonnet → response_card mounts.
+#
+# Verification done in RDS post-run by checking model_call.tier='T3'
+# (Sonnet default for caregiver sessions per spec) +
+# interaction_sessions.session_type='caregiver_onboarding'.
+#
+# Pre-conditions same as caregiver_protocol_setup.yaml + bench:
+#   - Speaker placement near phone mic, low ambient noise.
+#   - APK installed; backend dev /health green.
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+# Cognito-unique patient email so we can re-run without conflict.
+- runScript: ../scripts/generate_patient_email.js
+
+# ── Caregiver login ─────────────────────────────────────────
+- extendedWaitUntil: { visible: { id: login_email }, timeout: 15000 }
+- tapOn: { id: login_email }
+- inputText: ${MATIKA_CAREGIVER_EMAIL}
+- tapOn: { id: login_password }
+- inputText: ${MATIKA_CAREGIVER_PASSWORD}
+- hideKeyboard
+- tapOn: { id: login_button }
+
+# ── Caregiver dashboard → onboard FAB ──────────────────────
+- extendedWaitUntil: { visible: { id: onboard_patient_fab }, timeout: 60000 }
+- tapOn: { id: onboard_patient_fab }
+
+# ── Patient onboarding form ─────────────────────────────────
+- extendedWaitUntil: { visible: { id: onboarding_name }, timeout: 10000 }
+- tapOn: { id: onboarding_name }
+- inputText: ${output.patientName}
+- tapOn: { id: onboarding_email }
+- inputText: ${output.patientEmail}
+- hideKeyboard
+- scrollUntilVisible: { element: { id: onboarding_create_button }, direction: DOWN }
+- tapOn: { id: onboarding_create_button }
+
+# ── Credentials dialog → dismiss ───────────────────────────
+- extendedWaitUntil: { visible: "Patient Account Created", timeout: 30000 }
+- tapOn: "Done"
+
+# ── Voice path on the caregiver-onboarding conversation ────
+# matika_text_fallback uniquely identifies the v2 conversation screen.
+# Once it's visible we know MatikaConversationScreen has mounted in
+# caregiver mode and the session has started.
+- extendedWaitUntil: { visible: { id: matika_text_fallback }, timeout: 30000 }
+# Mic tap kicks off SpeechRecognizer; matika-voice-run.sh's logcat
+# trigger fires on the resulting onReadyForSpeech log line and the
+# Mac speaks the protocol utterance.
+- extendedWaitUntil: { visible: { id: matika_mic }, timeout: 15000 }
+- tapOn: { id: matika_mic }
+# Mic permission may prompt on the very first acoustic test of a
+# fresh-state run — usually pre-granted from prior caregiver flows.
+- tapOn: { text: "Allow|While using the app", optional: true }
+
+# response_card mounts only after a successful Bedrock round-trip.
+- extendedWaitUntil: { visible: { id: matika_response_card }, timeout: 90000 }
+- extendedWaitUntil: { visible: { id: matika_mic }, timeout: 30000 }

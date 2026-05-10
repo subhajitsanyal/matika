@@ -1,0 +1,52 @@
+# PT-V2-06 (Bengali voice, single-turn) — Patient logs blood pressure
+# in Bengali via the voice path. Tests Soda bn-IN STT + Bedrock T2
+# multilingual extraction.
+#
+# **F22 + audio prerequisites.** Same DataStore override as PT-V2-05
+# but with language=bn instead of language=hi. macOS has no native
+# Bengali `say` voice, so the orchestrator must export
+# MATIKA_BN_AUDIO=<absolute-path-to-mp3-or-aiff> pointing to a
+# pre-generated Bengali utterance. We generate it via gTTS
+# (`pip install gtts`); see `test-automation/audio/bn-IN-bp-130-85.mp3`.
+#
+# Run:
+#   source ~/.matika-test-creds.env
+#   export MATIKA_BN_AUDIO=$PWD/test-automation/audio/bn-IN-bp-130-85.mp3
+#   # First seed DataStore with language=bn (run once per cold install):
+#   adb shell am force-stop com.carelog
+#   adb shell "run-as com.carelog sh -c \
+#     'cat > /data/user/0/com.carelog/files/datastore/carelog_settings.preferences_pb'" \
+#     < <generated-bn-pb>
+#   scripts/matika-voice-run.sh patient_voice_bp_bn_single_turn --no-install \
+#     --turn "bn|0|placeholder|800"
+#
+# Note: the lang|rate|utterance|predelay turn-spec for `bn` ignores
+# rate + utterance — `matika-say.sh` switches to `afplay
+# $MATIKA_BN_AUDIO` for Bengali. We still pass them so the harness
+# parser doesn't reject the spec.
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: false
+
+- runFlow:
+    when:
+      visible:
+        id: login_email
+    commands:
+      - tapOn: { id: login_email }
+      - inputText: ${MATIKA_PATIENT_EMAIL}
+      - tapOn: { id: login_password }
+      - inputText: ${MATIKA_PATIENT_PASSWORD}
+      - hideKeyboard
+      - tapOn: { id: login_button }
+
+- extendedWaitUntil: { visible: { id: patient_home_start_conversation }, timeout: 30000 }
+- tapOn: { id: patient_home_start_conversation }
+- tapOn: { text: "Allow|While using the app", optional: true }
+- extendedWaitUntil: { visible: { id: matika_mic }, timeout: 30000 }
+- tapOn: { id: matika_mic }
+
+- extendedWaitUntil: { visible: { id: matika_response_card }, timeout: 90000 }
+- extendedWaitUntil: { visible: { id: matika_mic }, timeout: 30000 }

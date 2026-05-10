@@ -1,0 +1,45 @@
+# PT-V2-04 (English voice, multi-parameter) — Patient says BP +
+# glucose + weight in one utterance. Tests Bedrock T2 multi-parameter
+# extraction in a single turn.
+#
+# Run:
+#   source ~/.matika-test-creds.env
+#   scripts/matika-voice-run.sh patient_voice_bp_en_multi_param --no-install \
+#       --turn "en|160|My BP is one twenty over seventy eight, my sugar this morning was one ten, and I weigh seventy two kilograms.|800"
+#
+# Pre-conditions: Jane's parameter_configs already includes BP; the
+# Bedrock prompt should still extract glucose + weight even though
+# they aren't in her configured protocol — extracted observations are
+# the source of truth for "what was said," and parameter_configs only
+# gates breach evaluation. Per docs/journeys.md PT-V2-04 §pass: three
+# observations should land in S3 (`8480-6`, `8462-4`, `2339-0`,
+# `29463-7`).
+#
+# Single-turn variant — does NOT confirm. The "complete_session"
+# action arrives on a follow-up confirmation turn (PT-V2-04 §step-2),
+# but we get acoustic flakes on short "Yes." utterances. Cover that
+# in the multi-turn variant separately.
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil: { visible: { id: login_email }, timeout: 15000 }
+- tapOn: { id: login_email }
+- inputText: ${MATIKA_PATIENT_EMAIL}
+- tapOn: { id: login_password }
+- inputText: ${MATIKA_PATIENT_PASSWORD}
+- hideKeyboard
+- tapOn: { id: login_button }
+- extendedWaitUntil: { visible: { id: patient_home_start_conversation }, timeout: 30000 }
+- tapOn: { id: patient_home_start_conversation }
+- tapOn: { text: "Allow|While using the app", optional: true }
+- extendedWaitUntil: { visible: { id: matika_mic }, timeout: 30000 }
+- tapOn: { id: matika_mic }
+
+# Wait for the Bedrock round-trip to complete and response_card to
+# mount. matika-voice-run.sh speaks the multi-param utterance during
+# the listening window. Timeout extended to 90s — multi-parameter
+# extractions occasionally take longer in the model call.
+- extendedWaitUntil: { visible: { id: matika_response_card }, timeout: 90000 }
+- extendedWaitUntil: { visible: { id: matika_mic }, timeout: 30000 }

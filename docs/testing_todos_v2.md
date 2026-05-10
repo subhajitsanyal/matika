@@ -6,6 +6,76 @@
 
 ---
 
+## Voice sweep (2026-05-10) — newly raised + resolved
+
+### F20 — `matika-voice-run.sh` logcat trigger was Pixel-only (RESOLVED — verified live 2026-05-10)
+
+**Severity:** High for voice journeys. Was: every voice run on the Samsung S21+ test bench failed because `matika-voice-run.sh`'s `TRIGGER='Offline recognizer - start listening'` never matched any logcat line on this OEM (Soda's "Offline recognizer..." system log is Pixel/Google ROM only).
+**Owner:** `qa-testing` + `android-app`.
+**Status:** Fixed and verified end-to-end. Added a deterministic `Log.i(TAG, "RecognitionListener.onReadyForSpeech: mic open")` line in `SttManager.kt:onReadyForSpeech`, and updated `scripts/matika-voice-run.sh` `TRIGGER` constant to match. Verified 2026-05-10 — five back-to-back voice runs (PT-V2-03/04/05/06 + CG-V2-03) all caught the trigger at the right moment.
+
+### F21 — Wedged `say` queue blocks voice runs (RESOLVED — verified 2026-05-10)
+
+**Severity:** High for voice journeys. Symptom: Soda returns NO_MATCH (error 7) on every voice utterance even though the harness fires correctly. Cause: Mac's `say` processes from prior runs accumulate in a stuck state, blocking the audio queue. Five orphan `say` processes were holding the queue across sweeps.
+**Owner:** `qa-testing`.
+**Status:** Mitigation: `killall say` before each voice run; folded into preflight. Once cleared, PT-V2-03 single-turn passed cleanly.
+
+### F22 — No UI exposes `AppLanguage` picker (NEW — open)
+
+**Severity:** Medium. Blocks PT-V2-05 (Hindi) and PT-V2-06 (Bengali) end-to-end testing. Patient session always seeds `language=en-IN` from a fresh install regardless of intent.
+**Owner:** `android-app` + product.
+**Estimated effort:** ~2 hours (small UI change).
+
+**Reproduction.** `AppSettings.setLanguage()` exists at `android/app/src/main/java/com/carelog/core/config/AppSettings.kt:114` but is never called from any composable. `MatikaConversationViewModel.kt:140` reads `appSettings.language.first()` once per session; the only way to influence it today is to write the DataStore protobuf directly:
+```bash
+adb shell am force-stop com.carelog
+python3 -c "
+def kv(k,v):
+    val = b'\\x2a'+bytes([len(v)])+v.encode()
+    inner = b'\\x0a'+bytes([len(k)])+k.encode()+b'\\x12'+bytes([len(val)])+val
+    return b'\\x0a'+bytes([len(inner)])+inner
+import sys
+sys.stdout.buffer.write(kv('mac_mini_base_url','http://10.0.0.200:8000')+kv('language','hi'))
+" > /tmp/prefs_hi.pb
+adb shell "run-as com.carelog sh -c 'cat > /data/user/0/com.carelog/files/datastore/carelog_settings.preferences_pb'" < /tmp/prefs_hi.pb
+```
+
+**Fix sketch.** Either (a) add a language picker on PatientHomeScreen / SettingsScreen wired to `AppSettings.setLanguage()`, or (b) add a `Build.DEBUG`-gated broadcast receiver `com.carelog.SET_LANG` that accepts `--es lang hi/bn/en` for testing.
+
+### F23 — No "Add Patient via Conversation" entry (NEW — open)
+
+**Severity:** Medium. Blocks CG-V2-04 as written. The journey expects an alternative onboarding path where the caregiver speaks the patient profile and Sonnet extracts it.
+**Owner:** `android-app` + product (decide whether to ship voice profile extraction).
+**Estimated effort:** ~1 day if voice profile extraction is in scope; ~30 min if just reclassifying the journey.
+
+**Reproduction.** `CaregiverHomeScreen.kt:124` exposes `onboard_patient_fab` → `onNavigateToOnboarding` → form-based `PatientOnboardingScreen`. `PatientOnboardingConversationScreen` exists at `CareLogNavHost.kt:482` but has no caregiver-side nav arrow. The post-form `MatikaConversationScreen` (caregiver_onboarding session_type) is the same screen exercised by CG-V2-03 — it expects a protocol utterance, not a patient-profile utterance.
+
+**Fix sketch.** Either (a) add a secondary FAB or AppBar action "Add Patient via Conversation" that navigates to `PATIENT_ONBOARDING_CONVERSATION`, or (b) accept that CG-V2-02 (form) + CG-V2-03 (voice protocol) together cover the intent and reclassify CG-V2-04 as "manual / out-of-agentic-scope".
+
+### F24 — Soda `bn-IN` offline pack absent on test device (NEW — open)
+
+**Severity:** Low (pilot is en-IN/hi-IN first per PRD). Blocks PT-V2-06 (Bengali).
+**Owner:** `qa-testing` (manual install) or `android-app` (online fallback per F25).
+
+**Reproduction.** PT-V2-06 voice run 2026-05-10 with language=bn-IN seeded in DataStore + gTTS Bengali audio: `MatikaConversationVM: Started v2 session ... language=bn-IN` → `SttManager: RecognitionListener.onError(12)`. The bn-IN pack is in the device-personalization Captions list (`device_personalization_services/Captions__supported_languages` includes `hi-IN`) but the offline pack itself is not installed for Bengali.
+
+**Fix.** Install the offline pack via `Settings → System → Languages → Speech → Offline speech recognition → Bengali (India)`. Note: even with the pack installed, F25 (online fallback) is still required to handle devices where the pack download is gated by network or storage.
+
+### F25 — `SttManager` does not implement online fallback (NEW — open)
+
+**Severity:** Medium. Breaks EDGE-V2-17's contract. When the offline pack for the requested language is missing, the spec says the app should silently use online STT and tag `stt_offline_used=false` telemetry. Today the user gets a hard error and the turn never reaches Bedrock.
+**Owner:** `android-app`.
+**Estimated effort:** ~2-3 hours.
+
+**Reproduction.** Same as F24: language not supported by offline pack → `RecognitionListener.onError(12)` → `SttManager` emits `SttResult.Error(LANGUAGE_NOT_SUPPORTED, ...)` → `MatikaConversationViewModel` surfaces it as a user-visible message. There is no retry path with `EXTRA_PREFER_OFFLINE=false`.
+
+**Fix sketch.**
+1. In `SttManager.kt:recognize`, on `RecognitionListener.onError(12)` (LANGUAGE_NOT_SUPPORTED), retry once with the same intent but `EXTRA_PREFER_OFFLINE=false` (and surface the result to the same callbackFlow).
+2. Tag `interaction_session.stt_offline_used` (would need a new column or a metadata field) so the backend can record whether the turn used online STT.
+3. Optional: surface a one-time UX hint ("Speech pack missing — using online recognition") that doesn't block the turn.
+
+---
+
 ## Why this file exists
 
 The first Standard sweep covered **6 of 79 catalog journeys** by execution; the other 73 were paper-classified. Each non-executed journey has a documented reason — but a "reason" is not a result. This file is the durable backlog of work needed to convert "blocked" / "manual" status into actual execution.
