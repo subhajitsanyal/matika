@@ -10,6 +10,7 @@ import com.amplifyframework.core.Amplify
 // import com.amplifyframework.storage.s3.AWSS3StoragePlugin
 import com.carelog.discovery.HealthCheckService
 import com.carelog.discovery.MacMiniDiscovery
+import com.carelog.notifications.DeviceTokenManager
 import com.carelog.sync.SyncManager
 import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
@@ -37,6 +38,9 @@ class CareLogApplication : Application(), Configuration.Provider {
     @Inject
     lateinit var healthCheckService: HealthCheckService
 
+    @Inject
+    lateinit var deviceTokenManager: DeviceTokenManager
+
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
             .setWorkerFactory(workerFactory)
@@ -50,6 +54,11 @@ class CareLogApplication : Application(), Configuration.Provider {
         syncManager.initialize()
         macMiniDiscovery.startDiscovery()
         healthCheckService.startPolling()
+        // F17 — observe auth state and register FCM token on every sign-in.
+        // FirebaseMessagingService.onNewToken alone is insufficient because
+        // it fires once per FCM enrollment (often pre-login), so the auth
+        // header is missing and the call no-ops.
+        deviceTokenManager.start()
     }
 
     private fun initializeAmplify() {

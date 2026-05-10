@@ -1,0 +1,17 @@
+{
+  "name": "carelog-expire-stale-sessions",
+  "version": "1.0.0",
+  "description": "EventBridge cron sweeper that flips long-idle interaction_sessions rows to terminal_incomplete. Half of F2 (docs/testing_todos_v2.md).",
+  "main": "index.js",
+  "scripts": {
+    "test": "jest",
+    "package": "zip -r function.zip index.js node_modules package.json"
+  },
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.978.0",
+    "pg": "^8.11.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

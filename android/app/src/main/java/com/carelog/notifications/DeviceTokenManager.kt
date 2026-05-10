@@ -4,9 +4,15 @@ import android.content.Context
 import android.provider.Settings
 import android.util.Log
 import com.carelog.auth.AuthRepository
+import com.carelog.auth.AuthState
 import com.google.firebase.messaging.FirebaseMessaging
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -140,5 +146,42 @@ class DeviceTokenManager @Inject constructor(
         // On Android 13+, notification permission is handled separately via runtime permission
         // For earlier versions, we just need to register the token
         registerToken()
+    }
+
+    // Application-scoped coroutine for the auth observer. Survives the
+    // entire process lifetime, so transitions to Authenticated land
+    // regardless of which Activity is foregrounded. SupervisorJob means
+    // a one-off failure (e.g. transient backend 500) doesn't kill the
+    // observer; the next Authenticated emission re-fires the call.
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * Wire the FCM-token-registration call to fire on every login.
+     *
+     * F17 (docs/testing_todos_v2.md): the FirebaseMessagingService's
+     * `onNewToken` only fires once per FCM enrollment (often before
+     * login → no access token → no-op). Without this observer, a fresh
+     * sign-in never registers a device-tokens row and no push lands.
+     *
+     * Distinct-until-changed on the *user identity* (not just the
+     * Authenticated wrapper) so persona-update re-emissions of
+     * Authenticated don't re-fire the network call repeatedly. Backend
+     * upserts on (user_id, device_token) so duplicates are harmless,
+     * but no point spamming.
+     *
+     * Called from CareLogApplication.onCreate.
+     */
+    fun start() {
+        scope.launch {
+            authRepository.authState
+                .map { state -> (state as? AuthState.Authenticated)?.user?.userId }
+                .distinctUntilChanged()
+                .collect { userId ->
+                    if (userId != null) {
+                        Log.d(TAG, "auth → Authenticated, registering FCM token for user=$userId")
+                        initializeNotifications()
+                    }
+                }
+        }
     }
 }

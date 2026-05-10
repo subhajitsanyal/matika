@@ -48,3 +48,34 @@ resource "aws_lambda_permission" "check_missed_measurements_eventbridge" {
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.check_missed_measurements.arn
 }
+
+# ============================================================
+# Rule 3: expire-stale-sessions (F2 — every hour)
+#
+# Closes interaction_sessions rows that have been sitting in
+# status='in_progress' for longer than SESSION_IDLE_MINUTES (default
+# 30). Catches app crashes, force-stops, network drops, and OS-killed
+# processes — paths the LLM-driven terminus and explicit-close
+# endpoints can't reach. Hourly cadence is fine because the lambda's
+# own staleness check is bounded by SESSION_IDLE_MINUTES, not by
+# how often it runs.
+# ============================================================
+
+resource "aws_cloudwatch_event_rule" "expire_stale_sessions" {
+  name                = "matika-expire-stale-sessions-${var.environment}"
+  description         = "F2 — flips long-idle interaction_sessions rows from in_progress to incomplete"
+  schedule_expression = "rate(1 hour)"
+}
+
+resource "aws_cloudwatch_event_target" "expire_stale_sessions" {
+  rule = aws_cloudwatch_event_rule.expire_stale_sessions.name
+  arn  = var.expire_stale_sessions_lambda_arn
+}
+
+resource "aws_lambda_permission" "expire_stale_sessions_eventbridge" {
+  statement_id  = "AllowEventBridgeInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = var.expire_stale_sessions_lambda_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.expire_stale_sessions.arn
+}

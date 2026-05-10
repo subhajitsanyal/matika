@@ -49,11 +49,23 @@ exports.handler = async (event) => {
   try {
     const httpMethod = event.httpMethod || event.requestContext?.http?.method;
     const claims = event.requestContext?.authorizer?.claims || {};
-    const userId = claims.sub;
+    const cognitoSub = claims.sub;
 
-    if (!userId) {
+    if (!cognitoSub) {
       return errorResponse(401, 'Unauthorized');
     }
+
+    // Resolve Cognito sub -> internal users.id UUID. device_tokens.user_id
+    // FKs to users.id, not to cognito_sub. Same fix pattern as F15.
+    const userResult = await client.query(
+      `SELECT id FROM users WHERE cognito_sub = $1`,
+      [cognitoSub]
+    );
+    if (userResult.rows.length === 0) {
+      console.warn(`No users row for cognito_sub=${cognitoSub}; cannot register device token`);
+      return errorResponse(404, 'User not found');
+    }
+    const userId = userResult.rows[0].id;
 
     switch (httpMethod) {
       case 'POST':
@@ -73,6 +85,22 @@ exports.handler = async (event) => {
 
 /**
  * Register a device token.
+ *
+ * Two paths depending on whether the corresponding SNS Platform Application
+ * is provisioned in this environment:
+ *
+ *   - Provisioned (PLATFORM_ARNS[platform] is set): create or update the SNS
+ *     PlatformEndpoint, persist its ARN alongside the FCM token. Pushes
+ *     work end-to-end after this.
+ *
+ *   - Not provisioned (env var unset, dev-today state): skip all SNS calls,
+ *     persist the row with endpoint_arn=NULL. notification-sender will see
+ *     no endpoint and stamp alerts.is_sent=false, send_error=
+ *     'no_transport_or_no_device_token' (matches the F17 doc's predicted
+ *     observable state). Once the Platform App is provisioned and the env
+ *     var is set, the next sign-in re-runs this path, takes the SNS branch,
+ *     and updates the row with a real endpoint_arn — no client-side change
+ *     needed to flip from broken to working.
  */
 async function registerToken(client, event, userId) {
   const body = typeof event.body === 'string' ? JSON.parse(event.body) : event.body;
@@ -89,9 +117,7 @@ async function registerToken(client, event, userId) {
   }
 
   const platformArn = PLATFORM_ARNS[platform];
-  if (!platformArn) {
-    return errorResponse(500, 'Platform not configured');
-  }
+  const snsProvisioned = Boolean(platformArn);
 
   try {
     // Check if we have an existing endpoint for this device
@@ -100,44 +126,54 @@ async function registerToken(client, event, userId) {
       [deviceId, userId]
     );
 
-    let endpointArn;
+    let endpointArn = null;
 
-    if (existingResult.rows.length > 0) {
-      // Update existing endpoint
-      endpointArn = existingResult.rows[0].endpoint_arn;
+    if (snsProvisioned) {
+      if (existingResult.rows.length > 0 && existingResult.rows[0].endpoint_arn) {
+        // Update existing endpoint
+        endpointArn = existingResult.rows[0].endpoint_arn;
 
-      try {
-        // Check if endpoint still exists and update token
-        await snsClient.send(new GetEndpointAttributesCommand({
-          EndpointArn: endpointArn,
-        }));
+        try {
+          // Check if endpoint still exists and update token
+          await snsClient.send(new GetEndpointAttributesCommand({
+            EndpointArn: endpointArn,
+          }));
 
-        // Update the token on existing endpoint
-        await snsClient.send(new SetEndpointAttributesCommand({
-          EndpointArn: endpointArn,
-          Attributes: {
-            Token: deviceToken,
-            Enabled: 'true',
-          },
-        }));
-      } catch (snsError) {
-        // Endpoint doesn't exist anymore, create new one
-        if (snsError.name === 'NotFoundException') {
-          endpointArn = await createEndpoint(platformArn, deviceToken, userId);
-        } else {
-          throw snsError;
+          // Update the token on existing endpoint
+          await snsClient.send(new SetEndpointAttributesCommand({
+            EndpointArn: endpointArn,
+            Attributes: {
+              Token: deviceToken,
+              Enabled: 'true',
+            },
+          }));
+        } catch (snsError) {
+          // Endpoint doesn't exist anymore, create new one
+          if (snsError.name === 'NotFoundException') {
+            endpointArn = await createEndpoint(platformArn, deviceToken, userId);
+          } else {
+            throw snsError;
+          }
         }
+      } else {
+        // No prior endpoint (or row exists with endpoint_arn=NULL because
+        // this env was previously unprovisioned). Create one now.
+        endpointArn = await createEndpoint(platformArn, deviceToken, userId);
       }
     } else {
-      // Create new endpoint
-      endpointArn = await createEndpoint(platformArn, deviceToken, userId);
+      console.warn(
+        `${platform.toUpperCase()}_PLATFORM_ARN not set — storing device token without SNS endpoint. ` +
+        'Pushes for this device will fail with no_transport_or_no_device_token until the Platform Application is provisioned.'
+      );
     }
 
-    // Upsert device token record
+    // Upsert device token record. ON CONFLICT key is (user_id, device_id) —
+    // see V007 migration. Keeps one row per (user, device); FCM token
+    // rotations on the same device replace the prior token.
     await client.query(
       `INSERT INTO device_tokens (user_id, device_id, device_token, platform, endpoint_arn, updated_at)
        VALUES ($1, $2, $3, $4, $5, NOW())
-       ON CONFLICT (device_id, user_id)
+       ON CONFLICT (user_id, device_id)
        DO UPDATE SET
          device_token = EXCLUDED.device_token,
          endpoint_arn = EXCLUDED.endpoint_arn,
@@ -145,7 +181,10 @@ async function registerToken(client, event, userId) {
       [userId, deviceId, deviceToken, platform, endpointArn]
     );
 
-    console.log(`Registered device token for user ${userId}, device ${deviceId}`);
+    console.log(
+      `Registered device token for user ${userId}, device ${deviceId}, ` +
+      `endpoint=${endpointArn || 'NULL (SNS unprovisioned)'}`
+    );
 
     return successResponse(200, {
       message: 'Device token registered successfully',

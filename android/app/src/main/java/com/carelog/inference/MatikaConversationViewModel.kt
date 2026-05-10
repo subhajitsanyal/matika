@@ -12,6 +12,7 @@ import com.carelog.conversation.audio.tts.NumberFormatter
 import com.carelog.conversation.audio.tts.TtsManager
 import com.carelog.conversation.audio.tts.TtsQueueMode
 import com.carelog.core.config.AppSettings
+import com.carelog.network.CloudApiService
 import com.carelog.network.ProtocolResult
 import com.carelog.network.SessionType
 import com.carelog.network.TtsHints
@@ -53,6 +54,7 @@ class MatikaConversationViewModel @Inject constructor(
     private val stateMachine: ConversationStateMachine,
     private val authRepository: AuthRepository,
     private val appSettings: AppSettings,
+    private val cloudApiService: CloudApiService,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
@@ -254,6 +256,11 @@ class MatikaConversationViewModel @Inject constructor(
      * have nothing to show even though the server has already
      * persisted any confirmed values. The next [startSession] call
      * provisions a fresh state machine cleanly.
+     *
+     * Also fires a fire-and-forget POST /sessions/{id}/end so the
+     * backend marks the row status='complete' (F2 — explicit-close
+     * half). Failures are swallowed: this is telemetry-only and must
+     * not block the UI navigation that triggered the stop.
      */
     fun onStopPressed() {
         sttJob?.cancel()
@@ -261,6 +268,23 @@ class MatikaConversationViewModel @Inject constructor(
         ttsManager.stop()
         sessionStarted = false
         sessionEnded.value = true
+
+        val sessionId = stateMachine.state.value.sessionId
+        if (sessionId != null) {
+            viewModelScope.launch {
+                try {
+                    val response = cloudApiService.endSession(sessionId)
+                    if (!response.isSuccessful) {
+                        Log.w(
+                            TAG,
+                            "endSession non-2xx (ignored) sessionId=$sessionId code=${response.code()}",
+                        )
+                    }
+                } catch (t: Throwable) {
+                    Log.w(TAG, "endSession threw (ignored) sessionId=$sessionId", t)
+                }
+            }
+        }
     }
 
     fun onErrorDismissed() {

@@ -116,6 +116,22 @@ interface CloudApiService {
     suspend fun sendInvite(
         @Body request: SendInviteRequest
     ): Response<Unit>
+
+    /**
+     * Mark a conversation session as explicitly closed (F2). Sent when
+     * the user hits Stop or navigates away mid-session — gives the
+     * backend a clean status='complete' transition that the LLM-driven
+     * terminus path can't always observe (e.g., the user bails after
+     * one turn). Idempotent on the server: a second call against an
+     * already-terminal row returns the existing terminal state.
+     *
+     * The Android client treats this as fire-and-forget telemetry —
+     * failures must not block the UI navigation that triggered them.
+     */
+    @POST("sessions/{sessionId}/end")
+    suspend fun endSession(
+        @Path("sessionId") sessionId: String
+    ): Response<Unit>
 }
 
 // ── Response Models ──────────────────────────────────────────

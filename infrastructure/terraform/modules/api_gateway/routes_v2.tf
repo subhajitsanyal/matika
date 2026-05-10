@@ -63,6 +63,28 @@ resource "aws_api_gateway_resource" "health" {
   path_part   = "health"
 }
 
+# F2 — /sessions/{sessionId}/end. Two-segment path under a new
+# /sessions resource. The lambda handler resolves caller→user_id
+# from the Cognito authorizer claims; the route only needs the
+# COGNITO_USER_POOLS authorizer to enforce a logged-in user.
+resource "aws_api_gateway_resource" "sessions" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  parent_id   = aws_api_gateway_rest_api.main.root_resource_id
+  path_part   = "sessions"
+}
+
+resource "aws_api_gateway_resource" "session_id" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  parent_id   = aws_api_gateway_resource.sessions.id
+  path_part   = "{sessionId}"
+}
+
+resource "aws_api_gateway_resource" "session_end" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  parent_id   = aws_api_gateway_resource.session_id.id
+  path_part   = "end"
+}
+
 # ============================================================
 # METHODS + INTEGRATIONS
 # ============================================================
@@ -137,6 +159,66 @@ resource "aws_api_gateway_integration" "conversation_photo_presign_post" {
   integration_http_method = "POST"
   type                    = "AWS_PROXY"
   uri                     = var.photo_presign_invoke_arn
+}
+
+# POST /sessions/{sessionId}/end — F2 explicit-close
+resource "aws_api_gateway_method" "session_end_post" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.session_end.id
+  http_method   = "POST"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+  request_parameters = {
+    "method.request.path.sessionId" = true
+  }
+}
+
+resource "aws_api_gateway_integration" "session_end_post" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.session_end.id
+  http_method             = aws_api_gateway_method.session_end_post.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = var.end_session_invoke_arn
+}
+
+# F17 — POST /device-tokens (register FCM/APNs token)
+resource "aws_api_gateway_method" "device_tokens_post" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.device_tokens.id
+  http_method   = "POST"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+}
+
+resource "aws_api_gateway_integration" "device_tokens_post" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.device_tokens.id
+  http_method             = aws_api_gateway_method.device_tokens_post.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = var.device_token_invoke_arn
+}
+
+# F17 — DELETE /device-tokens?deviceId=... (unregister on sign-out)
+resource "aws_api_gateway_method" "device_tokens_delete" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.device_tokens.id
+  http_method   = "DELETE"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+  request_parameters = {
+    "method.request.querystring.deviceId" = true
+  }
+}
+
+resource "aws_api_gateway_integration" "device_tokens_delete" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.device_tokens.id
+  http_method             = aws_api_gateway_method.device_tokens_delete.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = var.device_token_invoke_arn
 }
 
 # GET /health — unauthenticated by design

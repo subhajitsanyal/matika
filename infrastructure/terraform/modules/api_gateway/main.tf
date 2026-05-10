@@ -1070,6 +1070,17 @@ resource "aws_api_gateway_deployment" "main" {
       aws_api_gateway_integration.conversation_photo_presign_post.id,
       aws_api_gateway_method.health_get.id,
       aws_api_gateway_integration.health_get.id,
+      # F2 — POST /sessions/{sessionId}/end
+      aws_api_gateway_resource.sessions.id,
+      aws_api_gateway_resource.session_id.id,
+      aws_api_gateway_resource.session_end.id,
+      aws_api_gateway_method.session_end_post.id,
+      aws_api_gateway_integration.session_end_post.id,
+      # F17 — POST + DELETE /device-tokens
+      aws_api_gateway_method.device_tokens_post.id,
+      aws_api_gateway_integration.device_tokens_post.id,
+      aws_api_gateway_method.device_tokens_delete.id,
+      aws_api_gateway_integration.device_tokens_delete.id,
     ]))
   }
 

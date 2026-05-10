@@ -120,6 +120,12 @@ module "api_gateway" {
   bedrock_vision_invoke_arn = module.lambda.bedrock_vision_invoke_arn
   health_check_invoke_arn   = module.lambda.health_check_invoke_arn
   photo_presign_invoke_arn  = module.lambda.photo_presign_invoke_arn
+
+  # F2 — POST /sessions/{sessionId}/end
+  end_session_invoke_arn = module.lambda.end_session_invoke_arn
+
+  # F17 — POST/DELETE /device-tokens
+  device_token_invoke_arn = module.lambda.device_token_invoke_arn
 }
 
 # HealthLake Module
@@ -226,6 +232,10 @@ module "eventbridge" {
   # v2 daily cost-telemetry rollup
   cost_telemetry_rollup_lambda_arn  = module.lambda.cost_telemetry_rollup_arn
   cost_telemetry_rollup_lambda_name = module.lambda.cost_telemetry_rollup_function_name
+
+  # F2 — hourly stale-session sweep
+  expire_stale_sessions_lambda_arn  = module.lambda.expire_stale_sessions_arn
+  expire_stale_sessions_lambda_name = module.lambda.expire_stale_sessions_function_name
 }
 
 # Monitoring Module (CloudWatch alarms, SNS, dashboard)

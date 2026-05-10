@@ -1,0 +1,18 @@
+{
+  "name": "carelog-device-token",
+  "version": "1.0.0",
+  "description": "POST/DELETE /device-tokens — registers FCM/APNs tokens and SNS Platform Endpoints. F17.",
+  "main": "index.js",
+  "scripts": {
+    "test": "jest",
+    "package": "zip -r function.zip index.js node_modules package.json"
+  },
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.978.0",
+    "@aws-sdk/client-sns": "^3.978.0",
+    "pg": "^8.11.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

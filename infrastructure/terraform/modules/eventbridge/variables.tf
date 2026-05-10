@@ -38,3 +38,17 @@ variable "cost_telemetry_rollup_lambda_name" {
   description = "Function name of matika-<env>-cost-telemetry-rollup Lambda (for permission resource)"
   type        = string
 }
+
+# ============================================================
+# F2 — session sweep
+# ============================================================
+
+variable "expire_stale_sessions_lambda_arn" {
+  description = "ARN of matika-<env>-expire-stale-sessions Lambda (EventBridge target for hourly F2 sweep)"
+  type        = string
+}
+
+variable "expire_stale_sessions_lambda_name" {
+  description = "Function name of matika-<env>-expire-stale-sessions Lambda (for permission resource)"
+  type        = string
+}

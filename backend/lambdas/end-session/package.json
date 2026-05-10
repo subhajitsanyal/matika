@@ -1,0 +1,17 @@
+{
+  "name": "carelog-end-session",
+  "version": "1.0.0",
+  "description": "API Gateway POST /sessions/{sessionId}/end — explicit-close half of F2 (docs/testing_todos_v2.md).",
+  "main": "index.js",
+  "scripts": {
+    "test": "jest",
+    "package": "zip -r function.zip index.js node_modules package.json"
+  },
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.978.0",
+    "pg": "^8.11.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

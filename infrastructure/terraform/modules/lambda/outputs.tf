@@ -6,6 +6,26 @@ output "post_authentication_arn" {
   value = aws_lambda_function.post_authentication.arn
 }
 
+# F2 — explicit-close endpoint
+output "end_session_invoke_arn" {
+  description = "Invoke ARN for end-session (POST /sessions/{sessionId}/end)"
+  value       = aws_lambda_function.end_session.invoke_arn
+}
+
+output "end_session_function_name" {
+  value = aws_lambda_function.end_session.function_name
+}
+
+# F2 — sweep cron
+output "expire_stale_sessions_arn" {
+  description = "ARN for expire-stale-sessions (used by EventBridge target)"
+  value       = aws_lambda_function.expire_stale_sessions.arn
+}
+
+output "expire_stale_sessions_function_name" {
+  value = aws_lambda_function.expire_stale_sessions.function_name
+}
+
 output "create_patient_invoke_arn" {
   value = aws_lambda_function.create_patient.invoke_arn
 }
@@ -168,6 +188,9 @@ output "all_function_names" {
     aws_lambda_function.cost_telemetry_rollup.function_name,
     aws_lambda_function.health_check.function_name,
     aws_lambda_function.photo_presign.function_name,
+    # F2 — session lifecycle
+    aws_lambda_function.end_session.function_name,
+    aws_lambda_function.expire_stale_sessions.function_name,
   ]
 }
 

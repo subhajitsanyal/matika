@@ -84,6 +84,21 @@ resource "aws_iam_role_policy" "rds_cognito_inline" {
         Effect   = "Allow"
         Action   = ["kms:Decrypt"]
         Resource = [var.s3_kms_key_arn]
+      },
+      {
+        # F17 — SNS Platform Endpoint lifecycle for device-token Lambda.
+        # Resource = "*" because Platform Endpoint ARNs are minted at
+        # registration time and aren't known to terraform. Constrained
+        # by action set: only endpoint-attribute mutations, no Publish
+        # (notification-sender's role has Publish; device-token does not).
+        Effect = "Allow"
+        Action = [
+          "sns:CreatePlatformEndpoint",
+          "sns:GetEndpointAttributes",
+          "sns:SetEndpointAttributes",
+          "sns:DeleteEndpoint"
+        ]
+        Resource = ["*"]
       }
     ]
   })
@@ -271,6 +286,16 @@ resource "aws_iam_role_policy" "rds_sqs_inline" {
         Effect   = "Allow"
         Action   = ["kms:Decrypt", "kms:GenerateDataKey"]
         Resource = [var.sqs_kms_key_arn]
+      },
+      {
+        # F17 — sns:Publish for notification-sender against the per-device
+        # SNS Platform Endpoints minted by device-token. Endpoint ARNs
+        # aren't predictable at terraform-plan time so Resource = "*";
+        # the role only carries Publish (no endpoint-mutation actions),
+        # which scopes the blast radius enough for v2 dev.
+        Effect   = "Allow"
+        Action   = ["sns:Publish"]
+        Resource = ["*"]
       }
     ]
   })
@@ -325,6 +350,23 @@ data "archive_file" "post_authentication" {
   type        = "zip"
   source_dir  = "${var.lambdas_source_path}/post-authentication"
   output_path = "${path.module}/archives/post-authentication.zip"
+}
+
+# F2 — explicit-close half. POST /sessions/{sessionId}/end marks an
+# in_progress interaction_session row as 'complete' when the patient
+# (or caregiver) hits Stop without saying "I'm done".
+data "archive_file" "end_session" {
+  type        = "zip"
+  source_dir  = "${var.lambdas_source_path}/end-session"
+  output_path = "${path.module}/archives/end-session.zip"
+}
+
+# F2 — sweep half. EventBridge cron flips long-idle in_progress rows
+# to 'incomplete' (catches app crashes, force-stops, network drops).
+data "archive_file" "expire_stale_sessions" {
+  type        = "zip"
+  source_dir  = "${var.lambdas_source_path}/expire-stale-sessions"
+  output_path = "${path.module}/archives/expire-stale-sessions.zip"
 }
 
 data "archive_file" "create_patient" {
@@ -510,6 +552,50 @@ resource "aws_lambda_function" "post_authentication" {
 
   environment {
     variables = local.rds_env
+  }
+}
+
+# F2 — explicit-close endpoint behind POST /sessions/{sessionId}/end.
+resource "aws_lambda_function" "end_session" {
+  function_name    = "${local.function_prefix}-end-session"
+  role             = aws_iam_role.lambda_rds_cognito.arn
+  handler          = "index.handler"
+  runtime          = "nodejs20.x"
+  timeout          = 10
+  memory_size      = 192
+  filename         = data.archive_file.end_session.output_path
+  source_code_hash = data.archive_file.end_session.output_base64sha256
+
+  vpc_config {
+    subnet_ids         = var.private_subnet_ids
+    security_group_ids = [var.lambda_security_group_id]
+  }
+
+  environment {
+    variables = local.rds_env
+  }
+}
+
+# F2 — hourly EventBridge sweep that closes long-idle sessions.
+resource "aws_lambda_function" "expire_stale_sessions" {
+  function_name    = "${local.function_prefix}-expire-stale-sessions"
+  role             = aws_iam_role.lambda_rds_cognito.arn
+  handler          = "index.handler"
+  runtime          = "nodejs20.x"
+  timeout          = 30
+  memory_size      = 256
+  filename         = data.archive_file.expire_stale_sessions.output_path
+  source_code_hash = data.archive_file.expire_stale_sessions.output_base64sha256
+
+  vpc_config {
+    subnet_ids         = var.private_subnet_ids
+    security_group_ids = [var.lambda_security_group_id]
+  }
+
+  environment {
+    variables = merge(local.rds_env, {
+      SESSION_IDLE_MINUTES = tostring(var.session_idle_minutes)
+    })
   }
 }
 
@@ -1004,6 +1090,13 @@ resource "aws_lambda_function" "notification_sender" {
   environment {
     variables = merge(local.rds_env, {
       SQS_ALERT_QUEUE_URL = var.alerts_queue_url
+      # F17 — SNS Platform Application ARNs for sns:Publish. Defaults to
+      # empty string in environments that haven't provisioned the SNS
+      # Platform Apps yet (e.g., dev today, blocked on FCM credentials);
+      # notification-sender treats empty as "no_transport_or_no_device_token"
+      # and stamps alerts.is_sent=false, send_error accordingly.
+      ANDROID_PLATFORM_ARN = var.android_platform_arn
+      IOS_PLATFORM_ARN     = var.ios_platform_arn
     })
   }
 }
@@ -1064,7 +1157,13 @@ resource "aws_lambda_function" "device_token" {
   }
 
   environment {
-    variables = local.rds_env
+    variables = merge(local.rds_env, {
+      # F17 — same as notification-sender. Empty in unprovisioned envs;
+      # the lambda's graceful-degradation path stores rows with
+      # endpoint_arn=NULL and skips SNS calls.
+      ANDROID_PLATFORM_ARN = var.android_platform_arn
+      IOS_PLATFORM_ARN     = var.ios_platform_arn
+    })
   }
 }
 
@@ -1285,6 +1384,15 @@ resource "aws_lambda_permission" "create_patient" {
   statement_id  = "AllowAPIGateway"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.create_patient.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${var.api_execution_arn}/*"
+}
+
+# F2 — POST /sessions/{sessionId}/end
+resource "aws_lambda_permission" "end_session" {
+  statement_id  = "AllowAPIGateway"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.end_session.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${var.api_execution_arn}/*"
 }

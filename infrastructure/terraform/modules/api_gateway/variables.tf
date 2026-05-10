@@ -147,3 +147,17 @@ variable "photo_presign_invoke_arn" {
   type        = string
   default     = ""
 }
+
+# F2 — explicit-close endpoint
+variable "end_session_invoke_arn" {
+  description = "Invoke ARN for matika-<env>-end-session (POST /sessions/{sessionId}/end)"
+  type        = string
+  default     = ""
+}
+
+# F17 — device-token registration endpoint
+variable "device_token_invoke_arn" {
+  description = "Invoke ARN for matika-<env>-device-token (POST/DELETE /device-tokens)"
+  type        = string
+  default     = ""
+}

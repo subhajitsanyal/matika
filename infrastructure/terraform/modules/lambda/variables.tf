@@ -167,3 +167,31 @@ variable "hard_rate_limit_per_patient" {
   type        = number
   default     = 500
 }
+
+# F2 — sweep window for the expire-stale-sessions cron lambda. Sessions
+# whose updated_at is older than this many minutes get flipped from
+# in_progress to incomplete on the next sweep.
+variable "session_idle_minutes" {
+  description = "Idle window before the F2 cron sweep marks an in_progress interaction_sessions row as incomplete"
+  type        = number
+  default     = 30
+}
+
+# F17 — SNS Platform Application ARNs. Threaded through to device-token
+# and notification-sender as ANDROID_PLATFORM_ARN / IOS_PLATFORM_ARN env
+# vars. Default empty so envs without provisioned Platform Apps (dev
+# today, blocked on FCM service-account JSON) still terraform-apply
+# cleanly; both lambdas treat empty as "no SNS transport, store/skip
+# accordingly". Wire to module.sns.android_platform_application_arn /
+# ios_platform_application_arn once the SNS module is instantiated.
+variable "android_platform_arn" {
+  description = "SNS Platform Application ARN for Android FCM. Empty when unprovisioned; lambdas degrade to NULL endpoint_arn / no_transport_or_no_device_token."
+  type        = string
+  default     = ""
+}
+
+variable "ios_platform_arn" {
+  description = "SNS Platform Application ARN for iOS APNs. Empty when unprovisioned (same semantics as android_platform_arn)."
+  type        = string
+  default     = ""
+}
