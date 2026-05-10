@@ -389,6 +389,55 @@ App polls every 30 seconds while in conversational state.
 
 `POST /interactions/log`, `POST /observations/batch`, `GET /patients/{id}/summary`, etc. — unchanged from v1. See `docs/carelog_spec.md` §4.2.
 
+### 4.5 `POST /patients/from-voice` — voice-extracted patient creation
+
+Backs the voice-onboarding path defined in PRD §6.3.1 / §8.1. Distinct from the legacy form-driven `POST /patients` (kept for the form-fallback escape hatch). Authenticated as the caregiver who initiated the voice session; creates the new `patients` row + Cognito user atomically and emits the SMS/email invite.
+
+**Called by:** `bedrock-router` only (not directly by Android). Invoked when a `caregiver_onboarding` session emits `complete_session` action AND the session is in **patient-profile-extraction phase** (see §6.9). Bedrock-router unpacks the LLM-extracted profile from the structured-output `patientProfile` block and POSTs to this endpoint, then transitions the session into protocol-extraction phase using the freshly-minted `patient_cognito_sub`.
+
+**Request body:**
+```json
+{
+  "sessionId": "uuid-v4",
+  "caregiverCognitoSub": "uuid-v4",
+  "patientProfile": {
+    "name": "Mrs. Sharma",
+    "ageYears": 72,
+    "dateOfBirth": null,
+    "gender": "female",
+    "conditions": ["hypertension", "type 2 diabetes"],
+    "medications": ["metformin 500mg twice daily"],
+    "allergies": [],
+    "emergencyContactName": "Mr. Sharma",
+    "primaryDoctor": "Dr. Iyer",
+    "primaryLanguage": "hi-IN"
+  },
+  "patientCredentials": {
+    "email": "m.sharma@gmail.com",
+    "phone": "+919876543210"
+  }
+}
+```
+
+`patientProfile.ageYears` and `dateOfBirth` are mutually exclusive — exactly one must be non-null. `patientCredentials.email` and `patientCredentials.phone` are mandatory (collected via the form-modal step in PRD §8.1.4.4 — voice never extracts these).
+
+**Response (200):**
+```json
+{
+  "patientCognitoSub": "uuid-v4",
+  "patientShortId": "CL-ABCDEF",
+  "patientDbId": "uuid-v4",
+  "inviteSent": true
+}
+```
+
+**Errors:**
+- `409 patient_already_exists` — caregiver already has an active `persona_links` row to a patient with the same name; PRD §6.5 disambiguation prompt fires before this endpoint is hit, but defense-in-depth.
+- `400 invalid_profile` — required fields missing or malformed.
+- `502 cognito_create_failed` — Cognito user creation failed (e.g., email collides with an existing user); rolls back the `patients` insert in the same transaction.
+
+**Atomicity.** All four side effects — `patients` row, `users` row, `persona_links` row linking the caregiver, Cognito user creation, SMS/email invite enqueue — happen in one transaction with rollback on any failure. The synthetic `pending-<sessionId>` `interaction_sessions` row created at session-start gets its `patient_id` updated to the new `patients.id` in the same transaction.
+
 ---
 
 ## 5. Data Schemas
@@ -570,6 +619,77 @@ Sliding window of last 6 turns kept in `interaction_session.transcript_history` 
 Language is set per-session in `interaction_session.language` (default from patient profile). On every turn, the app passes the actual `SpeechRecognizer` locale used. If it differs from session language for 2 consecutive turns, the engine switches the session language and acknowledges ("ঠিক আছে, আমরা বাংলায় কথা বলব।").
 
 Mid-utterance code-switching is handled by the LLM directly — both Haiku and Sonnet handle Hindi/English and Bengali/English code-mixing well; Sonnet handles dense code-switching better and is the escalation target for `code_switch_density_high`.
+
+### 6.9 `caregiver_onboarding` Session — Two-Pass Shape
+
+Backs the voice patient onboarding flow defined in PRD §6.3.1 / §8.1. One continuous voice session that spans **two extraction phases** with a single mid-session pivot when the patient row is created.
+
+#### Phases
+
+| Phase | FSM bracket | Patient context | Extraction target | Persistence |
+|---|---|---|---|---|
+| **profile** | `CREATED` → `EXTRACTING_PROFILE` → `AWAITING_PROFILE_CONFIRMATION` → `PROFILE_CONFIRMED` | Synthetic `pending-<sessionId>` placeholder (no `patients` row yet) | Patient profile fields (PRD §6.3.1 table) | None mid-phase. At `PROFILE_CONFIRMED` + `complete_session` action → `POST /patients/from-voice` (§4.5). |
+| **protocol** | `PROFILE_CONFIRMED` → `EXTRACTING` → `PENDING_CONFIRMATION` → `COMPLETE` → `TERMINAL` | Real patient context (loaded fresh from `patients` row created at the pivot) | `parameter_configs` + `patient_topics` rows | Existing T-V2-302 protocol-extraction pass at `complete_session` writes both. |
+
+#### Session-bootstrap path
+
+When the bedrock-router receives a turn for a session whose `interaction_sessions` row doesn't exist AND the request's `sessionType === 'caregiver_onboarding'` AND the request's `patientId` matches the synthetic `pending-<sessionId>` shape, the context loader returns a `PatientContext` stub with `patient.id = null` instead of throwing. The system prompt for caregiver_onboarding-profile knows how to drive a profile-extraction conversation without any seeded patient data.
+
+The placeholder session row IS created in `interaction_sessions` (so F2's idle sweep can collect abandoned ones; see PRD §6.5 row "synthetic placeholder leak"). Its `patient_id` column is initially NULL — schema needs a migration to allow NULL on this column for `caregiver_onboarding` rows only (or a sentinel UUID `00000000-0000-0000-0000-000000000000` if the FK constraint can't be relaxed).
+
+#### Mid-session pivot
+
+On the turn that emits `complete_session` while in `PROFILE_CONFIRMED`, bedrock-router:
+
+1. Calls `POST /patients/from-voice` with the consolidated profile + the form-collected email/phone block (passed from Android in `event.patientCredentials`).
+2. On success, UPDATEs the active `interaction_sessions` row's `patient_id` to the freshly-created `patients.id`.
+3. Emits a special LLM turn that pivots the conversation: "I've created Mrs. Sharma's profile. Now let's set up what we'll monitor for her." This is generated by a small dedicated prompt template (`prompts/system_v2_caregiver_onboarding_pivot.md`) — does not require a Bedrock turn; Sonnet has already emitted the closing readback.
+4. Subsequent turns hit the protocol-extraction path with the real `patientId` populated, and existing T-V2-302 logic kicks in at the eventual `complete_session`.
+
+#### Structured output extension
+
+The LLM's structured output (§6.4) gains an optional `patientProfile` block, present only on turns within the profile phase. Schema:
+
+```json
+{
+  "responseText": "...",
+  "ttsHints": { "language": "hi-IN", "spellOutNumbers": false },
+  "extractedValues": [],
+  "actions": [{ "type": "complete_session" }],
+  "stateTransition": "AWAITING_PROFILE_CONFIRMATION -> PROFILE_CONFIRMED",
+  "escalationReason": null,
+  "patientProfile": {
+    "name": "Mrs. Sharma",
+    "nameConfidence": 0.95,
+    "ageYears": 72,
+    "ageConfidence": 0.85,
+    "gender": "female",
+    "conditions": ["hypertension"],
+    "medications": [],
+    "allergies": [],
+    "emergencyContactName": "Mr. Sharma",
+    "primaryDoctor": "Dr. Iyer",
+    "primaryLanguage": "hi-IN"
+  }
+}
+```
+
+Confidence fields are used by the LLM to guide its own re-asks; bedrock-router doesn't act on them at the API layer (the LLM already incorporated them into its readback strategy).
+
+#### FSM additions
+
+Two new states added to the §6.2 state machine, valid only on `caregiver_onboarding` sessions:
+
+- `EXTRACTING_PROFILE` — profile-extraction phase active. Reachable from `CREATED`. Successors: `AWAITING_PROFILE_CONFIRMATION`, `PAUSED` (when LLM emits `pause_session` with `reason='awaiting_patient_credentials'` to trigger the form modal).
+- `AWAITING_PROFILE_CONFIRMATION` — final readback delivered, waiting for caregiver yes / no / "change <field>". Successors: `PROFILE_CONFIRMED`, `EXTRACTING_PROFILE` (on field-change request), `PAUSED`.
+- `PROFILE_CONFIRMED` — atomically reachable only from the `complete_session` action processed by bedrock-router AFTER `create-patient-from-voice` returns 200. Successor: `EXTRACTING` (re-entering the existing protocol-extraction lifecycle).
+
+#### Failure / abandonment
+
+- Voice extraction never confirms → caregiver eventually closes the app or hits the F2 idle window. Sweep marks the session `incomplete`; no `patients` row was ever created; no Cognito user; no invite.
+- `create-patient-from-voice` returns `409 patient_already_exists` → bedrock-router emits a special turn surfacing the disambiguation prompt (PRD §6.5 row); session stays in `AWAITING_PROFILE_CONFIRMATION` until caregiver resolves.
+- `create-patient-from-voice` returns `502 cognito_create_failed` → bedrock-router emits a turn explaining the email may be in use, and offers the form-fallback escape. Session stays in `AWAITING_PROFILE_CONFIRMATION`.
+- App-side bail-out via "Use form instead" → app fires `POST /sessions/{sessionId}/end` (F2's explicit-close endpoint), then routes to the form-based onboarding screen pre-populated from whatever fields the LLM had captured up to that point.
 
 ---
 

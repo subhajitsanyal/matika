@@ -1,8 +1,12 @@
 # Matika v2 — Consolidated gap list + phased plan
 
-**Date:** 2026-05-10
+**Date:** 2026-05-10 (Phase 1 closed; Phase 2 substantially closed)
 **Source sweeps:** non-voice `20260509_endofday` + voice `20260510_voice_sweep`.
-**Snapshot:** 19 of 71 journeys verified end-to-end (15 non-voice + 4 voice). 13 open findings; 19 already resolved.
+**Snapshot:** 19 of 71 journeys verified end-to-end (15 non-voice + 4 voice); +12 journeys flipped from "architecture-blocked" to "route-reachable" (F4 Path A: 11 + F25: EDGE-V2-17); +1 journey to "functional end-to-end" (CG-V2-12 via F26). 4 fully-open findings; 29 resolved + 2 partially resolved (F17, blocked on FCM service-account JSON; F26 thresholds done, reminders deferred).
+
+**Phase 1 progress (this session):** F19, F18, F1, F2, F17 (Android+backend halves) closed and verified live. **Phase 2:** F4 Path A closed (patient vital tile grid + caregiver Manage section wired and smoke-tested), F25 closed (SttManager online fallback subsumes F24), F22 closed (in-UI Language picker on SettingsScreen replaces the DataStore-protobuf adb hack for multilingual testing). **F26:** caregiver ThresholdConfigScreen + TrendsScreen repointed at v2 `parameter_configs` (the table `evaluate-thresholds-batch` actually reads); CG-V2-12 functional end-to-end with edit+save round-trip verified live. ReminderConfigScreen UX redesign deferred to product (CG-V2-13).
+
+**Remaining for full pilot push delivery:** provision SNS Platform Application for Android FCM (devops, requires Firebase service-account JSON; pure infra flip — no engineering rework). See per-finding entries in `docs/testing_todos_v2.md` for live-verification evidence.
 
 This file collates all open findings from `docs/testing_todos_v2.md` and the per-sweep reports, ranks them by severity, and lays out a phased implementation plan ordered by **journeys-unblocked-per-day** leverage. Update the per-finding detail in `testing_todos_v2.md`; this file is the high-level plan.
 

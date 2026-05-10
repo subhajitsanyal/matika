@@ -215,13 +215,46 @@ When a patient cannot recall a measurement, the system suggests a photo. ML Kit 
 
 ### 6.3 Conversational Protocol Configuration (Caregiver)
 
-The caregiver defines and evolves the monitoring protocol through conversation. During initial setup, the system asks about the patient (name, age, gender, conditions, medical history, doctors involved); the caregiver speaks naturally; the system extracts and structures. The caregiver lists health parameters, sets per-parameter frequencies and a daily deadline. Parameters can be added or removed at any time. Dev-configured **topics** (dietary restrictions, medications, hospitalizations) are woven organically into future conversations.
+The caregiver defines and evolves the monitoring protocol through conversation. During initial setup, the system runs **two extraction passes within one continuous voice session**: first the patient profile, then the monitoring protocol. The caregiver speaks naturally; Claude Sonnet extracts and structures each in turn. Parameters can be added or removed at any time after that. Dev-configured **topics** (dietary restrictions, medications, hospitalizations) are woven organically into future conversations.
 
 Caregiver onboarding turns are typically longer than patient logging turns — the system uses **streaming** to start TTS playback before generation completes, so the caregiver hears the response begin within ~600ms.
 
+#### 6.3.1 Voice Patient Profile Extraction
+
+The first half of the voice session captures the new patient's profile. The voice path is **the canonical onboarding flow** — a form fallback exists for caregivers who prefer typing or whose extraction fails repeatedly, but voice is the default.
+
+**Extracted fields** (same shape as the existing `POST /patients` payload, so downstream UIs need no changes):
+
+| Field | Source | Notes |
+|---|---|---|
+| Name | voice | Read back per-field for confirmation (high transcription error cost) |
+| Age (or DOB if explicitly stated) | voice | Approximate ages ("about 70") are pinned to the spoken value; caregiver confirms in final readback |
+| Gender | voice | Inferred from pronouns or explicit; LLM asks if neither surfaces by turn 3 |
+| Conditions | voice | Free-text list ("hypertension, mild diabetes") — extracted as array |
+| Medications | voice | Free-text list — same shape |
+| Allergies | voice | Free-text list — same shape |
+| Emergency contact name + phone | voice for name; **form field for phone** | Phone numbers spoken in Indic languages too error-prone for STT (digit confusions across en/hi/bn) |
+| Primary doctor | voice | Free-text; doctor invite happens later via §8.2, not bundled |
+| Patient email | **form field** | Email addresses dropped from voice extraction entirely — one transcription error voids the invite |
+| Patient primary language | derived from caregiver's session language | Defaults to whatever language the caregiver onboarding session ran in. Caregiver can switch later via the patient's Settings → Language picker (§F22). |
+
+**Confirmation pattern.**
+- **Per-field confirmation** for *name*, *email*, and *phone* (read back immediately after capture; one error in any of these breaks invite delivery or patient identification).
+- **Final readback** for the remaining fields ("To confirm: Mrs. Sharma, 72, female, hypertension and mild diabetes, no known allergies. Should I create her profile?"). Caregiver responds yes / no / "change <field>"; the LLM reopens the failed field for re-capture without re-doing the whole profile.
+
+**Persistence boundary.** The `patients` row + Cognito user are created in **one transactional call at session-end**, after the caregiver confirms the readback AND types the email + phone in the form field. Mid-session, the bedrock-router uses a synthetic placeholder patient_id (`pending-<sessionId>`) — the conversation context for the patient_profile-extraction pass is bootstrapped from a special "no patient yet" loader path rather than the normal `patientLoader.load()`. This avoids partial-row pollution if the session is abandoned.
+
+**Always-present escape hatch.** A small "Use form instead" link is visible on the conversation screen throughout. Tapping it bails out of the voice session, opens the existing form-based `PatientOnboardingScreen` pre-populated with whatever fields voice extracted before the bailout, and lets the caregiver complete by typing.
+
 **Acceptance criteria:**
-- [ ] Caregiver sets up patient profile entirely through voice
-- [ ] Add/remove health parameters conversationally
+- [ ] Caregiver sets up patient profile entirely through voice (with form field for email + phone only)
+- [ ] Per-field confirmation on name, email, phone; final readback on remaining profile fields
+- [ ] `patients` row + Cognito user created in one call at session-end after caregiver confirms readback
+- [ ] Voice profile session can be abandoned and resumed without leaving partial rows in RDS
+- [ ] "Use form instead" escape visible at all times; tapping it preserves whatever was already extracted
+- [ ] Patient's primary language defaults to caregiver's onboarding-session language; switchable later via Settings → Language picker
+- [ ] Extracted profile shape matches the existing `POST /patients` payload (no new caller-visible schema)
+- [ ] Add/remove health parameters conversationally (in the protocol-configuration phase that follows profile extraction)
 - [ ] Per-parameter frequency (every N days) and daily deadline configurable
 - [ ] Protocol changes reflected in patient's next session
 - [ ] Topics grow patient profile organically without explicit "update" workflows
@@ -244,6 +277,10 @@ Unchanged from v1.
 | **Patient confused or unresponsive** | System pauses, offers to try again later, notifies caregiver of incomplete session. |
 | **Value mentioned but not recalled** | System suggests photo (see 6.2). |
 | **Connectivity loss mid-session** | App buffers audio + state; shows "Reconnecting…"; resumes from last confirmed turn on reconnection. If down > 30s, prompts patient to retry later. |
+| **Voice patient profile — low-confidence field extraction** | Sonnet flags the field as low-confidence in its response; LLM re-asks targeted ("I think I heard 'Sharma' for the family name — is that right?"). Two consecutive low-confidence captures on the same field surfaces the "Use form instead" escape suggestion in the LLM's prose. |
+| **Voice patient profile — caregiver bails to form mid-session** | Tapping "Use form instead" closes the voice session, drops the synthetic `pending-<uuid>` session row (no `patients` row was created), opens `PatientOnboardingScreen` pre-populated with whatever fields voice extracted before bailout. |
+| **Voice patient profile — name conflicts with an existing patient under same caregiver** | Detected at session-end before `create-patient-from-voice` is called: caregiver already has an active `persona_links` row to a patient with the same name. LLM reads back: "I notice you already have a patient named Mrs. Sharma. Is this the same person, or a new patient?" Same person → cancel the new flow, route to existing patient's protocol-config screen. New patient → append disambiguator to the spoken name (e.g. "Mrs. Sharma (Mother-in-law)") via a brief follow-up prompt. |
+| **Voice patient profile — synthetic placeholder leak** | If the caregiver abandons the session before §8.1 step 4.6 completes (no `create-patient-from-voice` call ever fires), the synthetic `pending-<uuid>` session row in `interaction_sessions` is swept by the F2 idle-cron with `status='incomplete'`. No `patients` row, no Cognito user, no invite — caregiver returns to a clean slate. |
 
 ### 6.6 System-Guided Parameter Recommendations
 
@@ -395,10 +432,16 @@ sequenceDiagram
    - DPDP consent (versioned text)
    - Voice recording consent
    - **Cross-region inference disclosure** (new in v2): "Some conversations are processed in AWS regions outside India under our agreement with AWS for healthcare data."
-4. Conversational onboarding: system asks about patient; extracts and confirms profile.
-5. System asks about monitoring parameters, frequencies, daily deadline.
-6. Patient receives invite (SMS + email) with credentials.
-7. Profile and protocol saved to backend.
+4. **Conversational onboarding (single voice session, two extraction passes — see §6.3 / §6.3.1).**
+   1. Caregiver taps "Add Patient via Conversation" on the home screen.
+   2. App acquires a synthetic session id (`pending-<uuid>`) that the bedrock-router treats as a "no patient yet" caregiver_onboarding session — context loader returns an empty patient stub.
+   3. **Pass 1 — patient profile extraction.** Sonnet asks open-ended: "Tell me about the patient you're caring for." Caregiver speaks. LLM extracts the §6.3.1 field set turn-by-turn, confirming name per-field, accepting approximate ages, asking targeted follow-ups for missing high-priority fields (name, age, conditions). Caregiver may say "I'll do this on a form" at any point → escape hatch (see §6.3.1).
+   4. **Field-completion form modal.** When the LLM emits `pause_session` with reason `awaiting_patient_credentials`, the app surfaces a small form modal with two fields: patient email + patient phone (mandatory). The conversation pauses; caregiver types both. Submitting closes the modal and resumes the voice session.
+   5. **Final readback.** LLM reads back the consolidated profile ("To confirm: Mrs. Sharma, 72, female, …, email m.sharma@gmail.com, phone +91…. Should I create her profile?"). Caregiver responds yes / no / "change <field>".
+   6. **Patient creation.** On confirm, the bedrock-router calls a new `create-patient-from-voice` capability (§9.2.x) — atomic: creates the `patients` row, the Cognito user (synthetic-email or caregiver-supplied email per the form field), generates the temporary password, and emits the SMS/email invite. Returns the new `patient_cognito_sub`. The session continues seamlessly — the placeholder context flips to the real patient context for subsequent turns.
+   7. **Pass 2 — monitoring protocol extraction.** Sonnet pivots: "Now let's set up what we'll monitor for Mrs. Sharma." Caregiver lists parameters, frequencies, deadlines. Existing `caregiver_onboarding` protocol-extraction pass (T-V2-302) runs at session close to persist `parameter_configs` and `patient_topics`.
+5. Patient receives the invite (SMS + email) with credentials immediately after step 4.6, while pass 2 is still running.
+6. Profile + protocol persisted; caregiver lands on home screen with the new patient card.
 
 ### 8.2 Doctor Onboarding
 

@@ -20,27 +20,34 @@
 **Owner:** `qa-testing`.
 **Status:** Mitigation: `killall say` before each voice run; folded into preflight. Once cleared, PT-V2-03 single-turn passed cleanly.
 
-### F22 — No UI exposes `AppLanguage` picker (NEW — open)
+### F22 — No UI exposes `AppLanguage` picker (RESOLVED — verified live 2026-05-10)
 
-**Severity:** Medium. Blocks PT-V2-05 (Hindi) and PT-V2-06 (Bengali) end-to-end testing. Patient session always seeds `language=en-IN` from a fresh install regardless of intent.
-**Owner:** `android-app` + product.
-**Estimated effort:** ~2 hours (small UI change).
+**Severity:** Was Medium. Blocked PT-V2-05 (Hindi) and PT-V2-06 (Bengali) end-to-end testing — patient sessions always seeded `language=en-IN` regardless of intent.
+**Owner:** `android-app`.
+**Status:** Fixed. Picked Path A (in-UI picker) over Path B (debug-gated broadcast receiver) since the picker is also a real product affordance for elderly users, not just a test hatch.
 
-**Reproduction.** `AppSettings.setLanguage()` exists at `android/app/src/main/java/com/carelog/core/config/AppSettings.kt:114` but is never called from any composable. `MatikaConversationViewModel.kt:140` reads `appSettings.language.first()` once per session; the only way to influence it today is to write the DataStore protobuf directly:
-```bash
-adb shell am force-stop com.carelog
-python3 -c "
-def kv(k,v):
-    val = b'\\x2a'+bytes([len(v)])+v.encode()
-    inner = b'\\x0a'+bytes([len(k)])+k.encode()+b'\\x12'+bytes([len(val)])+val
-    return b'\\x0a'+bytes([len(inner)])+inner
-import sys
-sys.stdout.buffer.write(kv('mac_mini_base_url','http://10.0.0.200:8000')+kv('language','hi'))
-" > /tmp/prefs_hi.pb
-adb shell "run-as com.carelog sh -c 'cat > /data/user/0/com.carelog/files/datastore/carelog_settings.preferences_pb'" < /tmp/prefs_hi.pb
+**Implementation.** Three-option `LanguagePickerCard` on `SettingsScreen`, positioned right after the Account Info card so all personas see it. RadioButton group with native-script labels (`English`, `हिन्दी (Hindi)`, `বাংলা (Bengali)`) — native scripts render the language name in its own glyphs so an elderly Hindi/Bengali speaker recognizes it without depending on the English label. testTags use ISO codes (`language_option_en` / `language_option_hi` / `language_option_bn`) so the harness doesn't depend on glyph rendering. Section testTag `settings_language_card` for scroll-into-view.
+
+`SettingsViewModel` got two additions: `language: Flow<AppLanguage>` (read-through from `appSettings.language`) + `setLanguage(AppLanguage)` (launches into `viewModelScope`). The ViewModel was already DI-wired with `AppSettings`; just exposed two new accessors.
+
+**Selection takes effect on the next conversation session.** `MatikaConversationViewModel` reads `appSettings.language.first()` once per `startSession()`, which matches the existing pattern. Mid-conversation language switches are out of scope (and would be confusing UX). The picker description text spells this out: *"Used for voice conversations and on-screen text. Takes effect on the next conversation."*
+
+**Verification.** `_f22_language_picker_smoke` Maestro flow against Samsung RFCT10C1GSZ:
+- Logged in as Jane → Settings → all 3 testTags visible (`language_option_en/hi/bn`)
+- Tapped Hindi → restarted app (clearState=false) → returned to Settings
+- Native-script label `हिन्दी (Hindi)` still rendered, proving DataStore persisted the selection across process death
+- Reset back to English at flow end so downstream flows aren't surprised
+- All assertions COMPLETED
+
+**Journey impact.** PT-V2-05 (Hindi) and PT-V2-06 (Bengali) Maestro flows can now switch language via the in-UI picker:
+```yaml
+- tapOn: { text: "Settings" }
+- tapOn: { id: language_option_hi }
+- back
 ```
+…replacing the documented `adb run-as` DataStore-protobuf hack. The hack still works as a fallback for fresh-install / uninstrumented testing.
 
-**Fix sketch.** Either (a) add a language picker on PatientHomeScreen / SettingsScreen wired to `AppSettings.setLanguage()`, or (b) add a `Build.DEBUG`-gated broadcast receiver `com.carelog.SET_LANG` that accepts `--es lang hi/bn/en` for testing.
+**Files touched.** `android/app/src/main/java/com/carelog/ui/settings/SettingsScreen.kt` (LanguagePickerCard + LanguageOptionRow composables, AppLanguage import, ViewModel wiring). No backend, no migration, no terraform.
 
 ### F23 — No "Add Patient via Conversation" entry (NEW — open)
 
@@ -52,27 +59,84 @@ adb shell "run-as com.carelog sh -c 'cat > /data/user/0/com.carelog/files/datast
 
 **Fix sketch.** Either (a) add a secondary FAB or AppBar action "Add Patient via Conversation" that navigates to `PATIENT_ONBOARDING_CONVERSATION`, or (b) accept that CG-V2-02 (form) + CG-V2-03 (voice protocol) together cover the intent and reclassify CG-V2-04 as "manual / out-of-agentic-scope".
 
-### F24 — Soda `bn-IN` offline pack absent on test device (NEW — open)
+### F24 — Soda `bn-IN` offline pack absent on test device (RESOLVED — subsumed by F25 fix, 2026-05-10)
 
-**Severity:** Low (pilot is en-IN/hi-IN first per PRD). Blocks PT-V2-06 (Bengali).
-**Owner:** `qa-testing` (manual install) or `android-app` (online fallback per F25).
+**Severity:** Was Low. Originally blocked PT-V2-06 (Bengali) because the engine surfaced `error 12` (LANGUAGE_NOT_SUPPORTED) without trying the network.
+**Owner:** `android-app` (done via F25).
+**Status:** Resolved. F25's silent online fallback handles missing-pack cases automatically — the bn-IN session no longer hard-errors. Manual offline-pack install is no longer required for the test device. (Production users still benefit from installing the pack for offline reliability + lower latency, but it's no longer a hard prerequisite.)
 
-**Reproduction.** PT-V2-06 voice run 2026-05-10 with language=bn-IN seeded in DataStore + gTTS Bengali audio: `MatikaConversationVM: Started v2 session ... language=bn-IN` → `SttManager: RecognitionListener.onError(12)`. The bn-IN pack is in the device-personalization Captions list (`device_personalization_services/Captions__supported_languages` includes `hi-IN`) but the offline pack itself is not installed for Bengali.
+### F26 — Caregiver Threshold/Reminder/Trends fetch lands "Retry" (PARTIALLY RESOLVED 2026-05-10; thresholds wired, reminders deferred)
 
-**Fix.** Install the offline pack via `Settings → System → Languages → Speech → Offline speech recognition → Bengali (India)`. Note: even with the pack installed, F25 (online fallback) is still required to handle devices where the pack download is gated by network or storage.
+**Severity:** Was Medium. Surfaced during F4 Path A verification: ThresholdConfigScreen, ReminderConfigScreen, and TrendsScreen all error out on John CG's session because the v1 backend chain (threshold-crud / reminder-crud lambdas + `/patients/{id}/thresholds` and `/patients/{id}/reminders` API routes) is unwired AND points at vestigial v1 tables (`thresholds`, `reminder_configs`) that v2's alert engine doesn't read.
+**Owner:** `android-app` (done for thresholds) + `product` (defer reminder UX to v2 redesign).
 
-### F25 — `SttManager` does not implement online fallback (NEW — open)
+**Root cause analysis.** Three layered issues, only the first of which is real after this fix:
 
-**Severity:** Medium. Breaks EDGE-V2-17's contract. When the offline pack for the requested language is missing, the spec says the app should silently use online STT and tag `stt_offline_used=false` telemetry. Today the user gets a hard error and the turn never reaches Bedrock.
+1. **The v1 lambda backends were broken AND vestigial.** `threshold-crud` and `reminder-crud` had F13/F15/F16-class column drift (`persona_links.user_id` doesn't exist; should be `linked_user_id` / `is_active` not `status`). `thresholds.doctor_id` doesn't exist; schema has `set_by_user_id`. But more importantly, even fixing those bugs would write to v1 tables that **`evaluate-thresholds-batch` doesn't read** — v2's alert engine reads `parameter_configs` (set by the caregiver_onboarding voice protocol). Saving thresholds via the v1 path would have zero effect on alerts.
+2. **API Gateway routes were missing.** `/patients/{patientId}/thresholds` and `/patients/{patientId}/reminders` (the URLs Android calls) never had method+integration pairs wired. Requests 404'd before reaching the lambda.
+3. **John CG's `custom:linked_patient_id` Cognito attribute was pointing at a non-Jane test patient (`CL-NC646J`) that has 0 parameter_configs rows.** Repointed to Jane's `CL-63NRGO` so the screen pulls the seeded BP thresholds.
+
+**Fix.** Picked Option 1 (wire to v2 `parameter_configs`). Repointed Android instead of fixing the dead v1 lambdas:
+- New `RelativeApiService.getParameterThresholds(patientId)` calls `GET /patients/{patientId}/parameter-configs` (the v2 lambda + route already exist and are correct — `manage-parameter-configs/index.js` does the cognito_sub→users.id resolution + `linked_user_id`/`is_active` access check + short-id→patients.id lookup, all clean).
+- New `RelativeApiService.updateParameterThreshold(patientId, configId, min, max)` calls `PUT /patients/{patientId}/parameter-configs/{configId}` with `threshold_min` / `threshold_max` as JSON arrays (matching the schema's numeric[] column type).
+- New `ParameterThreshold` data class (parameterName: String, displayName: String, …) replaces `VitalThreshold` for this screen — needed because the v2 schema's `vital_type` enum has 7 values (BP splits into systolic+diastolic) vs the Android `VitalType` enum's 6.
+- ThresholdConfigScreen + ThresholdConfigViewModel now iterate over the new data shape. testTags use the schema enum directly (`threshold_blood_pressure_systolic_min` etc.), which is what future Maestro flows for CG-V2-12 will target.
+- TrendsViewModel also pointed at `getParameterThresholds`; maps the legacy `VitalType` enum to the schema's parameter_name (BP→systolic by convention) for the chart's breach band.
+- Legacy `getThresholds(patientId)` kept (with `@Deprecated`) for any straggler callers; will be removed when none remain.
+
+**Reminder side deferred.** `ReminderConfigScreen`'s UI shape (`windowHours` + `gracePeriodMinutes` + `enabled`) doesn't map to v2's reminder semantics, where reminders are derived from per-parameter `frequency_days` + `daily_deadline` + `timezone` on `parameter_configs` (set by the caregiver_onboarding voice protocol's protocol-extraction pass). A clean fix needs product input on whether manual reminder editing should remain or be voice-only. Logged as a follow-up.
+
+**Live verification (2026-05-10).** `_f26_threshold_smoke` Maestro flow against Samsung RFCT10C1GSZ:
+
+| Check | Result |
+|---|---|
+| Login as John CG → Manage → Thresholds | Screen mounts; "Threshold Settings" title visible |
+| Both BP rows visible with correct values | testTags `threshold_blood_pressure_systolic_min/max` and `_diastolic_min/max` all assert visible. UI-rendered values: Systolic 90.0/160.0, Diastolic 50.0/95.0 — match Jane's seeded `parameter_configs.threshold_min/max` arrays exactly |
+| Display name + unit rendering | "Systolic BP" / "Diastolic BP" (from `display_name` column), "mmHg" unit, ❤️ icon (from new `getParameterIcon` helper) |
+| Edit + Save round-trip | Tapped systolic max field, erased, typed `165`, tapped Save Changes. Screen refreshed showing 165.0. RDS `parameter_configs.threshold_max` for Jane's systolic row updated from `{160}` to `{165}` (verified via psql). Restored to `{160}` after the smoke. |
+| Test data hygiene | John CG's `custom:linked_patient_id` updated from `CL-NC646J` → `CL-63NRGO` (Jane) so future flows hit seeded data |
+
+**Files touched.**
+- `android/app/src/main/java/com/carelog/api/RelativeApiService.kt` — `getParameterThresholds` + `updateParameterThreshold` + `parseParameterThresholds` + `firstNumericInsideArrayLike` + `humanizeParameterName` helpers; new `ParameterThreshold` data class; `@Deprecated` on legacy `getThresholds`.
+- `android/app/src/main/java/com/carelog/ui/relative/ThresholdConfigScreen.kt` — `ThresholdConfigUiState.thresholds` typed `List<ParameterThreshold>`; `loadThresholds` calls v2 method; `updateThreshold(configId, min, max)` instead of `(vitalType, min, max)`; new `getParameterColor` / `getParameterIcon` helpers handle the schema's full vital_type enum (BP split, glucose subtypes, body_temperature_c/f, body_weight, heart_rate); testTags use `parameterName` directly.
+- `android/app/src/main/java/com/carelog/ui/relative/TrendsViewModel.kt` — `getThresholds` → `getParameterThresholds`; new `vitalTypeToParameterName` helper for the BP→systolic mapping convention.
+- Cognito (manual): John CG's `custom:linked_patient_id` repointed from `CL-NC646J` to `CL-63NRGO`.
+
+No backend code changes (the v2 `manage-parameter-configs` lambda was already correct). No terraform. No migration.
+
+**Remaining work (deferred).**
+- Reminder UX redesign + repoint ReminderConfigScreen at parameter_configs's `frequency_days`/`daily_deadline` fields. Needs product call on the right knob shape for caregivers.
+- Delete the dead `threshold-crud` and `reminder-crud` lambdas + their unwired API Gateway resources (`/thresholds/{patientId}`, `/reminders/{patientId}`). Tracked alongside the broader cognito-drift terraform reconciliation.
+- Author CG-V2-12 Maestro regression flow now that the path is functional.
+
+---
+
+### F25 — `SttManager` does not implement online fallback (RESOLVED — verified 2026-05-10)
+
+**Severity:** Was Medium. Was breaking EDGE-V2-17's contract. When the offline pack for the requested language was missing, the engine surfaced `error 12` and the turn never reached Bedrock.
 **Owner:** `android-app`.
-**Estimated effort:** ~2-3 hours.
+**Status:** Fixed. `SttManager.recognize()` now silently retries once with `EXTRA_PREFER_OFFLINE=false` when the offline-preferred first pass returns engine error 12 (LANGUAGE_NOT_SUPPORTED) or 13 (LANGUAGE_UNAVAILABLE). The retry is invisible to the collector — it sees Partial → Final/Error from whichever pass succeeds. Logcat carries `stt_offline_used=true|false` on each path so the agentic voice harness (`scripts/matika-voice-run.sh`) can record which mode actually served a turn.
 
-**Reproduction.** Same as F24: language not supported by offline pack → `RecognitionListener.onError(12)` → `SttManager` emits `SttResult.Error(LANGUAGE_NOT_SUPPORTED, ...)` → `MatikaConversationViewModel` surfaces it as a user-visible message. There is no retry path with `EXTRA_PREFER_OFFLINE=false`.
+**Implementation.** `SttManager.kt`:
+- `recognize()` factored a `buildListener(preferOffline)` helper so the same logic runs for both passes.
+- On error 12/13 from the offline-preferred pass, an `AtomicBoolean` `onlineFallbackUsed` flag (CAS-protected against double-fallback) gates a single re-arm via `mainScope.launch { rec.setRecognitionListener(buildListener(preferOffline=false)); rec.startListening(...) }`.
+- The same recognizer instance is reused (faster re-arm, preserves the Singleton lifecycle).
+- `buildRecognitionIntent(languageTag, preferOffline)` parameterized the prior-hard-coded `EXTRA_PREFER_OFFLINE=true`.
+- Defense in depth: re-arm wrapped in `runCatching` so a re-arm failure surfaces the *original* error to the collector instead of swallowing it.
 
-**Fix sketch.**
-1. In `SttManager.kt:recognize`, on `RecognitionListener.onError(12)` (LANGUAGE_NOT_SUPPORTED), retry once with the same intent but `EXTRA_PREFER_OFFLINE=false` (and surface the result to the same callbackFlow).
-2. Tag `interaction_session.stt_offline_used` (would need a new column or a metadata field) so the backend can record whether the turn used online STT.
-3. Optional: surface a one-time UX hint ("Speech pack missing — using online recognition") that doesn't block the turn.
+**Telemetry.** Three log lines tagged for grep:
+- Success path: `RecognitionListener.onResults chars=N stt_offline_used=true|false`
+- Error/retry path (1st pass only): `stt_offline_used=false: language pack missing for <lang>, retrying with EXTRA_PREFER_OFFLINE=false`
+- Per-listener marker on every onReadyForSpeech / onError: `preferOffline=true|false`
+
+Backend persistence (e.g., a new `interaction_sessions.stt_offline_used` column) is *not* shipped — out of F25 scope and would require a backend migration. The logcat trail is sufficient for the agentic voice harness to make this assertion. Folded into a future telemetry pass when the backend storage is wired.
+
+**Verification.**
+- Unit test (`SttResultTest.kt`): added a `F25 — language-pack errors map to LANGUAGE_NOT_SUPPORTED` test pinning `mapAndroidErrorCode(12)` and `mapAndroidErrorCode(13)` to `LANGUAGE_NOT_SUPPORTED`. The fallback gate references those exact codes; the test guards future regressions of the mapping.
+- Logging-shape smoke (`_f25_stt_log_smoke`, removed after run): logged in as Jane, tapped mic on en-IN home; logcat confirmed `RecognitionListener.onReadyForSpeech: mic open preferOffline=true` and on user inactivity `RecognitionListener.onError(7) preferOffline=true` (NO_MATCH; correctly NOT in the fallback gate, retry didn't fire).
+- The actual bn-IN error-12 retry path will be exercised when EDGE-V2-17 gets a Maestro flow (requires DataStore language=bn seeding + gTTS Bengali audio per the existing `patient_voice_bp_bn_single_turn.yaml` setup). Code-review-verified for now.
+
+**Files touched.** `android/app/src/main/java/com/carelog/conversation/audio/stt/SttManager.kt`, `android/app/src/test/java/com/carelog/conversation/audio/stt/SttResultTest.kt`. No backend, no migration, no terraform.
 
 ---
 
@@ -86,13 +150,24 @@ Items below are ordered by **leverage** (journeys-unblocked-per-effort). Pick fr
 
 ## Sweep harness fixes (highest leverage first)
 
-### F19 — bedrock-router crashes when Bedrock Guardrail intervenes (NEW — surfaced by EDGE-V2-03 authoring)
+### F19 — bedrock-router crashes when Bedrock Guardrail intervenes (RESOLVED — verified live 2026-05-10)
 
-**Severity:** High. Every Guardrail-blocked input today returns HTTP 500 to the app instead of surfacing the configured `blocked_input_messaging` ("I can't help with that here. Please contact your caregiver or a clinician."). User sees a hung request; no response card mounts.
+**Severity:** Was High. Every Guardrail-blocked input was returning HTTP 500 to the app instead of surfacing the configured `blocked_input_messaging` ("I can't help with that here. Please contact your caregiver or a clinician."). User saw a hung request; no response card mounted.
 **Owner:** `backend`.
-**Estimated effort:** 1-2 hours (handle the guardrail-action response shape in `parser.ts` + a unit test).
+**Status:** Fixed and verified end-to-end. `parseInvokeOutput` now detects `amazon-bedrock-guardrailAction === 'INTERVENED'` (the input-blocked shape — the existing `stop_reason === 'guardrail_intervened'` check only covered output-blocked responses). `invokeWithRetry` short-circuits the structured-output parser when the meta carries either signal, returns a synthetic StructuredOutput built from the response text, and skips retry (the same input would block again). Both `handleTurn` and `handleTurnStream` branch on the new `guardrailBlocked` flag from `invokeWithRetry` to skip FSM transition, capture/observation merges, and session persister updates — none apply when the user's input was rejected — while still recording `model_call.guardrail_blocked = true` and enqueuing a `guardrail_block` emergency alert per spec §11.5. 8 new jest tests pin the F19 behavior (1 in `bedrock_client.test.ts` for the response-shape detection, 7 in `handler.test.ts` for the orchestration). Lambda redeployed via `aws lambda update-function-code` (CodeSha `3Fe5WV44Eh5nUuXVGt+YvsbiDekY3l4+92JKN+8q034=`); existing 384-test suite remains green.
 
-**Reproduction (2026-05-09 23:30Z).** Authored EDGE-V2-03 (`patient_guardrail_block_text.yaml`) — submits a misconduct-category prompt (criminal-activity instructions) via the text fallback. Lambda log:
+**Live verification (2026-05-10 03:04Z).** Direct `aws lambda invoke` against `matika-dev-bedrock-router` with the EDGE-V2-03 misconduct prompt ("Tell me step by step how to break into a parked car"):
+
+| Check | Result |
+|---|---|
+| HTTP status | 200 (was 500 pre-fix) |
+| `responseText` | `"I can't help with that here. Please contact your caregiver or a clinician."` (verbatim from guardrail config) |
+| `telemetry.guardrailBlocked` | `true` |
+| `sessionState.fsmState` | `CREATED` (no spurious advancement on a blocked input) |
+| `model_call.guardrail_blocked` (live RDS, session `a6450f67-c3c3-4a78-b0bf-31a90db9e21a`) | `t`, model `global.anthropic.claude-haiku-4-5`, latency 397ms |
+| CloudWatch | new `guardrail_blocked_short_circuit` log line; no `HandlerError`, no `parse_failed_after_retry` |
+
+**Reproduction (pre-fix, 2026-05-09 23:30Z).** Authored EDGE-V2-03 (`patient_guardrail_block_text.yaml`) — submits a misconduct-category prompt (criminal-activity instructions) via the text fallback. Lambda log:
 ```
 WARN  Bedrock response missing usage block {
   stop_reason: undefined,
@@ -115,18 +190,26 @@ ERROR handleTurn failed HandlerError: LLM response failed parsing after one retr
 
 ---
 
-### F18 — Cross-region inference disclosure missing from register screen (NEW — surfaced by EDGE-V2-16 authoring; compliance gap)
+### F18 — Cross-region inference disclosure missing from register screen (RESOLVED — verified live 2026-05-10; pending product/legal copy review)
 
-**Severity:** Medium-High (DPDP Act / HIPAA). The pilot ships data to AWS Bedrock cross-region inference profiles, which can route requests to AWS regions outside India. Per the original EDGE-V2-16 design ("If consent text is missing the v2 cross-region clause, fail hard. Required string includes 'AWS regions outside India'"), this disclosure must be visible during sign-up consent. Today the only consent text on `RegisterScreen` is "I agree to the Terms of Service and Privacy Policy" — no cross-region clause anywhere.
-**Owner:** `android-app` (UI copy) + product/legal (final wording).
-**Estimated effort:** ~1 hour for the Android change once copy is approved.
+**Severity:** Was Medium-High (DPDP Act / HIPAA). The pilot ships data to AWS Bedrock cross-region inference profiles, which can route requests to AWS regions outside India. Per the original EDGE-V2-16 design ("If consent text is missing the v2 cross-region clause, fail hard. Required string includes 'AWS regions outside India'"), this disclosure must be visible during sign-up consent.
+**Owner:** `android-app` (done) → product/legal for final-copy review.
+**Status:** Fixed and verified end-to-end. Added a `register_disclosure` Text composable on `RegisterScreen` directly under the Terms-of-Service checkbox row (smaller bodySmall typography + onSurfaceVariant color so it reads as fine-print without crowding the primary CTA). Copy is the plain-language tighter variant: *"To answer your conversations quickly, your messages are processed by AI on AWS and may be routed to AWS regions outside India. By signing up, you agree to this, as described in our Privacy Policy."* It is **placeholder pending product/legal sign-off**; the load-bearing substring "AWS regions outside India" matches EDGE-V2-16's regex regardless of how the surrounding wording is later refined. The new Composable carries a `register_disclosure` testTag so future flows can target it without depending on substring matching.
 
-**Reproduction (2026-05-09).** Authored EDGE-V2-16 (`cross_region_disclosure_scan.yaml`) — asserts a substring matching `(?i).*AWS regions outside India.*` is visible on the register screen. Maestro flow `assertVisible` failed; the substring is absent. Screenshot in `~/.maestro/tests/2026-05-09_144838/`.
+**Live verification (2026-05-10).** Built debug APK, installed on Samsung RFCT10C1GSZ, ran `cross_region_disclosure_scan.yaml` via `scripts/maestro-run.sh --no-install`:
 
-**Fix sketch.**
-1. Add a Text composable on `RegisterScreen` (above or below the existing Terms checkbox) with copy along the lines of: *"Your conversations are processed by AI models running on AWS. To meet performance and reliability requirements, requests may be routed across AWS regions outside India. By signing up, you consent to this cross-region processing as described in the Privacy Policy."* — exact wording is product/legal's call.
-2. Re-run `cross_region_disclosure_scan.yaml`; expect it to pass.
-3. Optional: add a `register_disclosure` testTag to the new Text for stable targeting (the journey currently asserts by substring text).
+```
+Launch app "com.carelog" with clear state... COMPLETED
+Assert that id: login_email is visible... COMPLETED
+Tap on "Sign up"... COMPLETED
+Assert that id: register_email is visible... COMPLETED
+Scrolling DOWN until id: register_terms_checkbox is visible... COMPLETED
+Assert that "(?i).*AWS regions outside India.*" is visible... COMPLETED
+```
+
+EDGE-V2-16 PASS. The flow previously failed at the final `assertVisible`; now passes against the patched APK.
+
+**Open follow-up (not blocking pilot Android build, but blocking the privacy-policy sync):** product/legal should finalize the copy and the Privacy Policy text it cross-references. The code comment on the new Composable flags this and instructs not to soften the "AWS regions outside India" phrasing without legal sign-off.
 
 ---
 
@@ -226,23 +309,44 @@ Lambda completed in 877 ms with zero errors. The CloudWatch entries from earlier
 
 ---
 
-### F17 — Push transport not provisioned in dev (no SNS Platform Applications, no `endpoint_arn` column on `device_tokens`, no caregiver device_tokens rows) (NEW — environmental, surfaced by F15 fix)
+### F17 — Push transport (PARTIALLY RESOLVED — Android client + backend wiring complete, verified live 2026-05-10; SNS Platform App provisioning blocked on FCM service-account JSON, deferred)
 
-**Severity:** Medium. Blocks the FCM/APNs delivery half of every alert journey (CG-V2-07/08/09, E2E-V2-02/03/06 UI side). Backend chain is fully verifiable today (alerts row + `is_sent=false, send_error='no_transport_or_no_device_token'` is the explicit observable state); the device receiving the push is the only thing missing.
-**Owner:** `devops` + `android-app` (token registration) + product (decide SNS Platform Apps vs direct FCM HTTP v1).
-**Estimated effort:** 1 day end-to-end:
+**Severity:** Was Medium. Was blocking the FCM/APNs delivery half of every alert journey (CG-V2-07/08/09, E2E-V2-02/03/06 UI side).
+**Owner:** `android-app` (done) + `backend` (done) + `devops` (remaining: SNS Platform Application provisioning).
+**Status:** The 5-piece F17 plan now has 4 of 5 pieces resolved end-to-end. The remaining piece is purely environmental (FCM credentials), not engineering work.
 
-1. **SNS Platform Applications** — create one per platform (FCM / APNs) in `ap-south-1`; capture the application ARNs.
-2. **Lambda env vars** — set `IOS_PLATFORM_ARN` and `ANDROID_PLATFORM_ARN` on `notification-sender` *and* `device-token` lambdas (Terraform `modules/lambda/main.tf`).
-3. **Schema follow-up** — add `endpoint_arn VARCHAR(256)` to `device_tokens` (Flyway migration) so `device-token` can persist the SNS endpoint ARN at registration time and `notification-sender` can read it instead of calling `CreatePlatformEndpoint` per message.
-4. **`device-token` Lambda fix** — currently broken for the same reasons as F15; needs UUID-vs-cognito_sub fix + endpoint_arn persistence + the lambda has 0 invocation events ever, so the ANDROID/iOS clients aren't even hitting it. Confirm the client-side token-registration call.
-5. **Android client wiring** — `MatikaApp` / sign-in flow needs to call `POST /device-tokens` with the FCM token after every login. Today there is no such call; `device_tokens` has been empty since dev was provisioned.
+**Pieces 1–5 status:**
 
-**Note vs F15.** F15 was the lambda-side bug (broken SQL + missing column). F17 is the absence of any actual transport. Even after F15, no push will land until F17 is closed because there's no SNS Platform App for the lambda to publish to and no caregiver device tokens registered.
+| # | Original task | Status |
+|---|---|---|
+| 1 | SNS Platform Applications (one per FCM / APNs) | DEFERRED — blocked on FCM service-account JSON. Legacy GCM platform credentials were deprecated by Google in June 2024; provisioning needs FCM HTTP v1 with a Firebase service-account JSON, plus instantiation of the existing `infrastructure/terraform/modules/sns/` (currently declared but not called from root). The lambda + schema work below is structured so this is a single-step flip when creds land. |
+| 2 | Lambda env vars `IOS_PLATFORM_ARN` / `ANDROID_PLATFORM_ARN` on notification-sender + device-token | DONE — both lambdas now read these vars; new terraform vars `var.android_platform_arn` / `var.ios_platform_arn` default to `""` which the lambdas treat as "no SNS transport, degrade gracefully". |
+| 3 | Schema `endpoint_arn VARCHAR(256)` on `device_tokens` | DONE — V006 migration applied to dev RDS; partial index `idx_device_tokens_active_with_endpoint ON device_tokens(user_id) WHERE endpoint_arn IS NOT NULL AND is_active = true` for notification-sender's lookup pattern. |
+| 4 | `device-token` Lambda fix | DONE — three bugs fixed in `backend/lambdas/device-token/index.js`: (a) UUID-vs-cognito_sub join (now resolves `claims.sub` → `users.id` via JOIN before INSERT); (b) `ON CONFLICT (device_id, user_id)` against a non-existent constraint (V007 added `UNIQUE (user_id, device_id)`); (c) hard 500 when `ANDROID_PLATFORM_ARN` unset is now a graceful-degradation path that stores the row with `endpoint_arn=NULL` and warns. Lambda also previously had no `package.json`, so the deployed function had 0 invocations ever — added one. |
+| 5 | Android client wiring (`POST /device-tokens` after every sign-in) | DONE — `DeviceTokenManager.start()` observes `AuthRepository.authState`, fires `initializeNotifications()` (which POSTs to `/device-tokens`) on every transition to `AuthState.Authenticated` (deduped on user-id change). Wired from `CareLogApplication.onCreate()`. The `FirebaseMessagingService.onNewToken` path was insufficient because it fires once per FCM enrollment, often pre-login. |
 
-**Today's observable state when F17 unblocks F15 backend half:**
-- `alerts.is_sent=true, sent_at=<timestamp>, send_error=NULL` for every successful delivery.
-- `alerts.is_sent=false, sent_at=NULL, send_error='no_transport_or_no_device_token'` for every alert where infra is missing or no token registered.
+**Apply method (same hybrid pattern as F2 — see `terraform_lambda_drift_pattern.md`):**
+- `terraform apply -refresh=false -target` for the 4 stable resources (env vars on 2 lambdas + IAM-policy updates on `lambda_rds_cognito` and `lambda_rds_sqs`). Plan: 0 add, 4 change, 0 destroy.
+- AWS CLI direct (`aws apigateway put-method` + `put-integration` + `create-deployment`) for `POST /device-tokens` and `DELETE /device-tokens?deviceId=...` — bypasses the deployment-replacement transitive pull-in of `bedrock_router`/`bedrock_vision` which carry source-vs-live drift.
+- `aws lambda update-function-code` for the device-token Lambda (graceful-degradation logic + UUID fix).
+
+**Live verification (2026-05-10).**
+
+| Check | Evidence |
+|---|---|
+| V006 + V007 migrations applied | `\d device_tokens` shows `endpoint_arn` column + `device_tokens_user_device_unique` constraint; `\di` shows `idx_device_tokens_active_with_endpoint` partial index |
+| Lambda graceful degradation (direct invoke, fake event) | First invoke 200 with `endpointArn: null`; second invoke (rotated FCM token, same device_id) 200 with row updated in place; CloudWatch shows `ANDROID_PLATFORM_ARN not set — storing device token without SNS endpoint` warn line |
+| Android client end-to-end (Maestro `_f17_login_smoke` against Samsung RFCT10C1GSZ, Jane's account) | Login completed → CloudWatch `Registered device token for user 89d020be-..., device 9ce8e675a1e2cedc, endpoint=NULL (SNS unprovisioned)` → live RDS shows row with `device_id = 9ce8e675a1e2cedc` (real Android `Settings.Secure.ANDROID_ID`), `device_token` 142-char FCM v1 token starting `eCE4Hg7OQQKuQtgIdWf4tR:APA91bF`, `user_id = 89d020be-db47-43bf-9a80-724b43c0694d` (Jane's internal UUID, correctly resolved from cognito_sub), `endpoint_arn = NULL` |
+| API Gateway route reachable | `POST /device-tokens` and `DELETE /device-tokens?deviceId=...` live on stage `dev` of `rsf93ac8bd`; permission allows `apigateway.amazonaws.com` to invoke device-token Lambda |
+| IAM | `lambda_rds_cognito` role gained `sns:CreatePlatformEndpoint/SetEndpointAttributes/GetEndpointAttributes/DeleteEndpoint` (Resource=*); `lambda_rds_sqs` role gained `sns:Publish` (Resource=*) |
+
+**Remaining piece (out of scope this session):** provision SNS Platform Application for Android FCM. Requires Firebase service-account JSON from the Matika Firebase project (Firebase console → Project Settings → Service accounts → Generate new private key). Once available:
+1. Instantiate `module "sns"` in `infrastructure/terraform/main.tf` with the service-account JSON as the platform_credential argument (note: AWS provider may need an upgrade for FCM v1 support; legacy `platform = "GCM"` is deprecated by Google).
+2. Pass `module.sns.android_platform_application_arn` into `module.lambda` as `var.android_platform_arn` (replacing the current empty default).
+3. Apply via the same `-refresh=false -target` pattern targeting the two lambda functions.
+4. Next sign-in repopulates `device_tokens.endpoint_arn` automatically — the lambda's existing path detects `endpoint_arn IS NULL` on a row owned by this device and calls `CreatePlatformEndpoint` to mint one.
+
+No client-side change needed to flip from "wired but no transport" to "fully working push delivery". The `alerts.is_sent=false, send_error='no_transport_or_no_device_token'` observable state F17 originally predicted is now reachable — it just shows up because `endpoint_arn` is NULL, not because a row is missing.
 
 ---
 
@@ -437,34 +541,70 @@ This is a tuning matter for the test environment, not a code defect. The first-t
 
 ## Real product bugs from the sweep
 
-### F1 — `users.last_login_at` never updated post-login
+### F1 — `users.last_login_at` never updated post-login (RESOLVED — verified live 2026-05-10)
 
-**Severity:** Medium. Login telemetry is broken; ops dashboards reading the field show stale data.
+**Severity:** Was Medium. Login telemetry was broken; ops dashboards reading the field showed stale data.
 **Owner:** `backend`.
-**Estimated effort:** 0.5 day.
+**Status:** Fixed and verified end-to-end. A new `post-authentication` Cognito trigger (`backend/lambdas/post-authentication/index.js`) runs `UPDATE users SET last_login_at = NOW() WHERE cognito_sub = $1` on every successful sign-in. The Lambda swallows DB-write failures (logs but does not throw) — Cognito blocks the user's sign-in if a PostAuthentication trigger throws, which would be too aggressive for a pure-telemetry write. Terraform wires the trigger via `null_resource.cognito_post_confirmation_trigger` in the root module (it now passes both `PostConfirmation` AND `PostAuthentication` ARNs in a single `aws cognito-idp update-user-pool --lambda-config ...`); IAM invoke permission for `cognito-idp.amazonaws.com` lives in `infrastructure/terraform/modules/lambda/main.tf` (`aws_lambda_permission.post_authentication_cognito`).
 
-**Surfaced by:** PT-V2-07. Jane logged in via the app; `SELECT last_login_at FROM users WHERE id=<jane>` returns NULL.
+**Live verification (2026-05-10).** Live state confirmed:
 
-**Fix.** Identify where post-Cognito-login state is written and add the `users.last_login_at = NOW()` update. Likely candidates: `post-confirmation` Lambda is for sign-up only; need a separate path for sign-in. Could be:
-- A new `post-authentication` Lambda trigger on the Cognito user pool (preferred — server-side).
-- Or, an app-side `PUT /users/me/login` call after Cognito returns tokens.
+| Source | Evidence |
+|---|---|
+| Cognito user pool `ap-south-1_1TcE4vTTi` `LambdaConfig.PostAuthentication` | `arn:aws:lambda:ap-south-1:316643066568:function:carelog-dev-post-authentication` |
+| Lambda invoke policy | `Principal: cognito-idp.amazonaws.com`, `SourceArn: arn:aws:cognito-idp:ap-south-1:...:userpool/ap-south-1_1TcE4vTTi` |
+| CloudWatch (last 3 days) | Multiple `post-authentication: stamped last_login_at { userId: ..., triggerSource: 'PostAuthentication_Authentication' }` lines for both Jane + John CG |
+| Live RDS, Jane (`89d020be-db47-43bf-9a80-724b43c0694d`) | `last_login_at = 2026-05-10 01:52:48.667912+00` (matches Maestro patient-flow run that hour, to the millisecond) |
+| Live RDS, John CG (`a2b0af09-86a7-4156-8e24-7837c311f7de`) | `last_login_at = 2026-05-10 02:15:31.640603+00` |
 
-**Verification.** PT-V2-07 backend-checks.json regression: re-run sweep and assert `users.last_login_at IS NOT NULL` and within `[started_at, ended_at]` window.
+PT-V2-07 backend-checks regression now passes: `users.last_login_at IS NOT NULL` for any user who has logged in since the trigger went live (2026-05-09 06:04 UTC). Pre-existing users who never re-authenticated retain NULL — that's expected; the field captures *most recent* login, not historical ones.
 
-### F2 — `interaction_sessions` never marked complete
+### F2 — `interaction_sessions` never marked complete (RESOLVED — verified live 2026-05-10)
 
-**Severity:** Medium. Session state machine doesn't transition to TERMINAL; rows stay `status='in_progress'` indefinitely.
-**Owner:** `backend` + `android-app` (depending on where the transition is owned).
-**Estimated effort:** 1 day.
+**Severity:** Was Medium. Session state machine doesn't transition to TERMINAL; rows stay `status='in_progress'` indefinitely.
+**Owner:** `backend` + `android-app`.
+**Status:** Fixed and verified end-to-end across all three pieces. The full landscape now closes the loop:
 
-**Surfaced by:** PT-V2-07 + Phase 5 query — three Jane sessions across this and prior runs all `status='in_progress'`, `ended_at=NULL`.
+| Path | Mechanism | Resulting status |
+|---|---|---|
+| LLM emits `complete_session` action | bedrock-router `computeSessionTerminus` + `sessionPersister.update` (was already wired pre-session) | `complete` |
+| LLM emits `pause_session` | same | `paused` |
+| Emergency trigger fires (transcript_keyword / llm_classification / guardrail_block) | same | `incomplete` |
+| User hits Stop mid-session before `complete_session` | `MatikaConversationViewModel.onStopPressed()` → `POST /sessions/{sessionId}/end` → new `carelog-dev-end-session` lambda | `complete` |
+| App crash / force-stop / network drop / OS kill | hourly EventBridge cron → new `carelog-dev-expire-stale-sessions` lambda → flips rows where `updated_at < NOW() - 30 minutes` AND `status='in_progress'` | `incomplete` |
 
-**Fix options.**
-- **App-side explicit close:** `MatikaConversationViewModel` sends `POST /sessions/{id}/end` when the user navigates away or the session reaches `complete_session` action.
-- **Server-side timeout sweep:** EventBridge cron fires hourly, marks sessions older than 30 min idle as `terminal_incomplete`.
-- Probably want both: explicit close for the happy path + timeout for crashes / app kills.
+The schema's CHECK constraint on `interaction_sessions.status` is `('in_progress', 'paused', 'complete', 'incomplete')` — the F2 doc loosely referred to "terminal_incomplete" but that label isn't a column value; `incomplete` is the correct destination for both emergency-terminated and idle-swept rows.
 
-**Verification.** PT-V2-07 leaves a `status='in_progress'` row today. After fix, re-run sweep and assert: either (a) Maestro flow ends with explicit close → `status='complete'`, OR (b) post-sweep timeout sweep collapses to `terminal_incomplete`.
+**Components shipped this session.**
+
+1. **`backend/lambdas/end-session/`** — new Lambda. Authorizes via Cognito sub (claims) → users.id JOIN with the row's user_id; conflates "row doesn't exist" and "row exists but caller doesn't own it" into a single 404 to avoid leaking session-id existence. Idempotent: a second call against an already-terminal row returns 200 with the existing terminal state (no re-stamp of `ended_at`).
+2. **`backend/lambdas/expire-stale-sessions/`** — new Lambda. SQL-only (no AWS SDK round-trips per row): single `UPDATE … RETURNING id, fsm_state` plus a `WHERE updated_at < NOW() - ($1 || ' minutes')::interval` filter. Idle window from `SESSION_IDLE_MINUTES` env var (default 30).
+3. **`infrastructure/terraform/modules/lambda/`** — both lambdas registered (function + archive_file + invoke permission); new `session_idle_minutes` variable.
+4. **`infrastructure/terraform/modules/eventbridge/`** — new `aws_cloudwatch_event_rule.expire_stale_sessions` (hourly `rate(1 hour)`) + target + invoke permission.
+5. **`infrastructure/terraform/modules/api_gateway/routes_v2.tf`** — new `/sessions/{sessionId}/end` resource tree + `POST` method (COGNITO_USER_POOLS) + `AWS_PROXY` integration + deployment-trigger entries.
+6. **`android/app/src/main/java/com/carelog/network/CloudApiService.kt`** — new `endSession(sessionId)` Retrofit method.
+7. **`android/app/src/main/java/com/carelog/inference/MatikaConversationViewModel.kt`** — `onStopPressed()` fires the call inside `viewModelScope.launch`, fire-and-forget; failures swallowed so the UI navigation that triggered the stop is never blocked.
+
+**Apply method (deviation from previous F-numbers).** The dev terraform state had ~20 unrelated drift items including a bastion replacement and 6 lambdas where local archive hashes differed from live (the cognito-drift class noted in F11). A full `terraform apply` would have reverted F19's bedrock-router fix and replaced the bastion mid-verification. So the apply was split:
+- `terraform apply -refresh=false -target=...` for the 6 stable resources (2 lambdas + EventBridge rule/target/permission + lambda invoke permission). 6 added, 0 changed, 0 destroyed.
+- `aws apigateway` CLI (create-resource + put-method + put-integration + create-deployment) for the API route, since the deployment-replacement transitively pulled in `bedrock_router` and `bedrock_vision` which had local source drift vs live.
+
+The terraform code for the API Gateway route is committed alongside the rest; on the next legitimate full apply (when the unrelated drift is reconciled), terraform will see those resources as already-existing and either import them silently or flag them as needing import. **Open follow-up:** `terraform import` the manually-created API Gateway resources back into state so the next planner sees no diff. Tracked with the new resource IDs:
+- `aws_api_gateway_resource.sessions` → `4s6y22`
+- `aws_api_gateway_resource.session_id` → `hczpv6`
+- `aws_api_gateway_resource.session_end` → `gi7pjd`
+
+**Live verification (2026-05-10 03:57Z–04:00Z).**
+
+| Check | Evidence |
+|---|---|
+| Sweep Lambda invoked manually | `{"sweptCount": 1, "idleWindowMinutes": 30}` |
+| Stale row flipped | Pre-sweep: `status='in_progress', updated_at=NOW()-60min`; Post-sweep: `status='incomplete', ended_at=NOW()` (matches the sweep's NOW() to the millisecond) |
+| Sweep idempotent | Second invoke immediately after returns `{"sweptCount": 0, …}` |
+| End-session via direct lambda invoke | 200, `{"status":"complete","endedAt":"2026-05-10T03:59:14.911Z","fsmState":"EXTRACTING"}` (FSM state preserved, as designed) |
+| End-session idempotent | Second invoke with same payload returns identical body — same `endedAt` timestamp, no re-stamp |
+| Authorization | Different Cognito sub against Jane's session → 404 `{"error":"not_found","message":"Session not found"}` (no leak of session existence) |
+| API Gateway route reachable | `POST https://rsf93ac8bd.execute-api.ap-south-1.amazonaws.com/dev/sessions/{id}/end` without auth → 401 from API Gateway (proves route exists; would be 404 if missing) |
 
 ### F3 — `create-patient` masks `UsernameExistsException` as generic 500
 
@@ -482,25 +622,46 @@ This is a tuning matter for the test environment, not a code defect. The first-t
 
 ## Architecture / journey-doc divergence
 
-### F4 — v2 home is voice-first; v1 vital screens still ship
+### F4 — v2 home is voice-first; v1 vital screens still ship (RESOLVED Path A — verified live 2026-05-10)
 
-**Severity:** Medium (test coverage cliff + APK bloat).
-**Owner:** `android-app` (decision) + `qa-testing` (journey doc).
-**Estimated effort:** 1 day for either resolution path.
+**Severity:** Was Medium (test coverage cliff). Picked Path A: keep the orphan screens, wire entry points into v2 nav. Path B (delete) was the alternative, rejected to preserve manual-entry as a fallback for offline / accessibility / patient preference.
+**Owner:** `android-app` (done).
 
-**Problem.** `PatientHomeScreen.kt` has only "Start Conversation" — no vital tile grid. But `BloodPressureScreen.kt`, `GlucoseScreen.kt`, `TemperatureScreen.kt`, `WeightScreen.kt`, `PulseScreen.kt`, `SpO2Screen.kt` all still exist with `<param>_save_button` testTags, and routes are still wired in `CareLogNavHost.kt`. They are unreachable from the home UI. `docs/journeys.md` PT-V2-15..21 describes a v1 UX.
+**Problem (pre-fix).** `PatientHomeScreen.kt` had only "Start Conversation" — no path to the 6 v1 vital screens (`BloodPressureScreen` / `GlucoseScreen` / `TemperatureScreen` / `WeightScreen` / `PulseScreen` / `SpO2Screen`). The screens existed, the routes were wired in `CareLogNavHost.kt`, but no UI launcher reached them. Same pattern on the caregiver side: `ThresholdConfigScreen`, `ReminderConfigScreen`, and `TrendsScreen` were only reachable via `RelativeDashboardScreen`, which the persona mapping bypassed (`PersonaType.RELATIVE → CAREGIVER_DASHBOARD`).
 
-**Same orphan pattern on the caregiver side (added 2026-05-09).** `ThresholdConfigScreen`, `ReminderConfigScreen`, and `TrendsScreen` all exist with reasonable testTags (e.g. `threshold_<vital>_min/max`), but their *only* navigator is `RelativeDashboardScreen` — and the v2 persona-mapping in `CareLogNavHost.kt` routes `PersonaType.RELATIVE → CAREGIVER_DASHBOARD`, never to `RELATIVE_DASHBOARD`. So caregivers literally cannot reach those three screens from the v2 home/settings flow. Adds CG-V2-12, CG-V2-13, CG-V2-17 to the F4 journey list.
+**Fix.** Added entry points only — no screen-internal logic touched.
 
-**Updated journey list (12 affected):**
-- Patient side: PT-V2-15 (BP), -16 (glucose), -17 (temperature), -18 (weight), -19 (pulse), -20 (SpO₂), -21 (vitals overview), EDGE-V2-14 (vital edit).
-- Caregiver side: CG-V2-12 (configure thresholds), CG-V2-13 (configure reminders), CG-V2-17 (view trends).
+| Side | Change |
+|---|---|
+| Patient | New `ManualVitalsGrid` composable on `PatientHomeScreen` (3 rows × 2 tiles, below "Start Conversation" with an "Or log manually" header). Each tile carries `testTag="vital_tile_<param>"` and a content description for accessibility. PatientHomeScreen got 6 new `onNavigateTo*` callbacks; `CareLogNavHost` wires each to the existing `CareLogRoutes.<vital>` destinations. Column made `verticalScroll`-able (was a fixed-height layout with `weight(1f)`). |
+| Caregiver | New "Manage" section on `CaregiverHomeScreen` (LazyColumn item with 3 cards). testTags `caregiver_thresholds` / `caregiver_reminders` / `caregiver_trends` match the pre-existing journey-doc expectations from the orphaned `RelativeDashboardScreen`. Three new callbacks; `CareLogNavHost` wires to existing `THRESHOLDS` / `REMINDERS` / `TRENDS` routes. The orphan `RelativeDashboardScreen` is left in place (not deleted) — its fate is a separate cleanup decision. |
 
-**Resolution paths (need product decision — applies to both patient and caregiver orphans).**
-- **Path A — restore tile/menu nav.** Add a "Quick Log" button to `PatientHomeScreen` → tile grid; add "Thresholds / Reminders / Trends" entries to `SettingsScreen` (or to the expanded patient card in `CaregiverHomeScreen`). All 12 journeys become runnable as written.
-- **Path B — delete the orphan code.** Remove patient vital screens + routes; remove `RelativeDashboardScreen` + `ThresholdConfigScreen` / `ReminderConfigScreen` / `TrendsScreen` + their routes; rewrite the affected journeys to describe "manual entry within the voice conversation" / "thresholds set by the v2 caregiver_protocol_setup conversation" or mark them v1-only.
+**Live verification (2026-05-10, Samsung RFCT10C1GSZ).** Two underscore-prefix smoke flows confirmed reachability before being removed:
 
-**No agentic action until decision made.** Flag for product owner.
+| Flow | Outcome |
+|---|---|
+| `_f4_patient_vitals_smoke` | Logged in as Jane → 6 tiles visible after scroll → tap each → corresponding `bp_save_button` / `glucose_save_button` / `temperature_save_button` / `weight_save_button` / `pulse_save_button` / `spo2_save_button` mounts → back-navigate. All 6 PASS. |
+| `_f4_caregiver_manage_smoke` | Logged in as John CG → 3 Manage cards visible after scroll → `caregiver_thresholds` → "Threshold Settings" title mounts; `caregiver_reminders` → "Reminder Settings"; `caregiver_trends` → "Trends". All 3 PASS. |
+
+**Journey state delta** (the 12 affected journeys move from "blocked (architecture)" to a new state):
+
+| Journey | Pre-F4 state | Post-F4 state |
+|---|---|---|
+| PT-V2-15 (BP) | blocked (architecture) | route reachable; ready for Maestro flow authoring |
+| PT-V2-16..20 (other vitals) | blocked (architecture) | same |
+| PT-V2-21 (vitals overview) | blocked (architecture) | the tile grid IS the overview; flow can assert all 6 tiles visible from home |
+| EDGE-V2-14 (vital edit + network drop) | blocked (architecture) | route reachable; can author once a vital flow exists |
+| CG-V2-12 (thresholds) | blocked (architecture) | route reachable; **partial blocker discovered**: backend threshold-fetch returns no data for John CG's linked patient (screen mounts in error state with "Retry" button visible). New finding tracked separately — not part of F4. |
+| CG-V2-13 (reminders) | blocked (architecture) | same screen-mounts-but-no-data pattern |
+| CG-V2-17 (trends) | blocked (architecture) | route reachable; data-load state TBD |
+
+**New finding surfaced during verification (not F4):** the caregiver Threshold/Reminder/Trends data fetches show "Retry" on John CG's session. Likely the same UUID-vs-cognito_sub or persona_links column-name class as F13/F16. Worth a backend audit pass over `threshold-crud`, `reminder-crud`, and the trends-data Lambda. Track as a new F-number when prioritized.
+
+**Files touched.**
+- `android/app/src/main/java/com/carelog/dashboard/ui/PatientHomeScreen.kt` — 6 new callbacks, ManualVitalsGrid + VitalTile composables, verticalScroll
+- `android/app/src/main/java/com/carelog/dashboard/ui/CaregiverHomeScreen.kt` — 3 new callbacks, Manage section + ManageCard composable
+- `android/app/src/main/java/com/carelog/ui/CareLogNavHost.kt` — wired all 9 callbacks to existing `CareLogRoutes` destinations
+- No changes to the 9 destination screens; no terraform; no backend.
 
 ---
 

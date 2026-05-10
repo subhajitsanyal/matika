@@ -28,13 +28,13 @@ For voice journeys that genuinely require Mac-speaker injection, see `docs/journ
 | **PT-V2-12** | Photo extraction failure (422) | manual | Needs blank surface photo. |
 | **PT-V2-13** | Connectivity loss mid-session | **PASS (2026-05-09)** | Three-flow orchestration via `scripts/matika-connectivity-test.sh`: setup → wifi disable → submit-turn-asserts-Snackbar-error → wifi enable → retry-asserts-response-card. App has no "Reconnecting…" indicator (ConnectivityState lives in VM but isn't rendered) — the `Turn failed` Snackbar is the actual product behavior; flow asserts that. |
 | **PT-V2-14** | Per-patient hard rate limit (429) | blocked | Needs ~500-call loop driver. Cost-conscious; defer. |
-| **PT-V2-15** | Manual log — Blood Pressure | **blocked (architecture)** | F4: v2 `PatientHomeScreen` is voice-first; no UI nav to `BloodPressureScreen` (orphan route). |
-| **PT-V2-16** | Manual log — Glucose | **blocked (architecture)** | Same — F4. |
-| **PT-V2-17** | Manual log — Temperature | **blocked (architecture)** | Same. |
-| **PT-V2-18** | Manual log — Weight | **blocked (architecture)** | Same. |
-| **PT-V2-19** | Manual log — Pulse | **blocked (architecture)** | Same. |
-| **PT-V2-20** | Manual log — SpO₂ | **blocked (architecture)** | Same. |
-| **PT-V2-21** | View vital history | **blocked** | History route exists but no UI nav from voice-first home. F4-coupled. |
+| **PT-V2-15** | Manual log — Blood Pressure | **route-reachable (2026-05-10)** | F4 Path A wired `vital_tile_blood_pressure` on PatientHomeScreen → BloodPressureScreen (`bp_save_button`). Smoke-verified live. Maestro flow needs authoring: tap tile, enter systolic/diastolic, tap save, assert RDS write. |
+| **PT-V2-16** | Manual log — Glucose | **route-reachable (2026-05-10)** | F4 Path A wired `vital_tile_glucose` → GlucoseScreen (`glucose_save_button`). Maestro flow needs authoring. |
+| **PT-V2-17** | Manual log — Temperature | **route-reachable (2026-05-10)** | F4 Path A wired `vital_tile_temperature` → TemperatureScreen (`temperature_save_button`). Maestro flow needs authoring. |
+| **PT-V2-18** | Manual log — Weight | **route-reachable (2026-05-10)** | F4 Path A wired `vital_tile_weight` → WeightScreen (`weight_save_button`). Maestro flow needs authoring. |
+| **PT-V2-19** | Manual log — Pulse | **route-reachable (2026-05-10)** | F4 Path A wired `vital_tile_pulse` → PulseScreen (`pulse_save_button`). Maestro flow needs authoring. |
+| **PT-V2-20** | Manual log — SpO₂ | **route-reachable (2026-05-10)** | F4 Path A wired `vital_tile_spo2` → SpO2Screen (`spo2_save_button`). Maestro flow needs authoring. |
+| **PT-V2-21** | View vital history | **route-reachable (2026-05-10)** | The 6-tile grid on PatientHomeScreen IS the vitals overview. A flow asserting all 6 tiles visible from home (`vital_tile_blood_pressure`..`vital_tile_spo2`) covers this journey. |
 | **PT-V2-22** | Settings — view care team (read-only) | **design-blocked (2026-05-09)** | `SettingsScreen` only renders the "Manage Care Team" entry for `CAREGIVER` / `RELATIVE` personas — patients have no Care Team view today. Either add a read-only patient variant or fold a patient-side care-team section into Settings. |
 | **PT-V2-23** | Cross-region inference disclosure (consent) | blocked | Jane is past consent; needs fresh signup. Caregiver self-reg requires email-verification (out of agentic scope). |
 | **PT-V2-24** | Reminder push → opens conversation | manual | Needs `aws lambda invoke check-daily-deadline` + push-receipt verification on second device. |
@@ -52,12 +52,12 @@ For voice journeys that genuinely require Mac-speaker injection, see `docs/journ
 | **CG-V2-09** | Receive emergency push | RDS half **PASS**; lambda **PASS post-F15**; push delivery **blocked on F17** | bedrock-router's emergency alert SQS path delivers; notification-sender consumes cleanly; same F17 transport gap. |
 | **CG-V2-10** | Invite doctor | blocked | No Maestro flow; SES sender email not verified in dev. Backend (`invite-doctor` log + RDS `doctor_invites` row) can be tested via direct API call. |
 | **CG-V2-11** | Manage care team — remove member | blocked | No Maestro flow; depends on CG-V2-10 having added a doctor first. |
-| **CG-V2-12** | Configure thresholds manually | **architecture-blocked (F4-class)** | `ThresholdConfigScreen` exists with `threshold_<vital>_min/max` testTags, but the only navigator is `RelativeDashboardScreen` — and the v2 persona mapping routes `RELATIVE → CaregiverHomeScreen`, never to `RelativeDashboard`. Screen is orphaned. Same product call as F4: wire from caregiver settings or delete. |
-| **CG-V2-13** | Configure reminders manually | **architecture-blocked (F4-class)** | `ReminderConfigScreen` exists but is reachable only from the same orphan `RelativeDashboardScreen`. Same product call as CG-V2-12. |
+| **CG-V2-12** | Configure thresholds manually | **functional end-to-end (2026-05-10)** | F26 wired ThresholdConfigScreen to v2 `parameter_configs` (the table that actually drives `evaluate-thresholds-batch` alerts). Smoke-verified: John CG → Manage → Thresholds renders Jane's BP rows (systolic 90/160, diastolic 50/95) from seeded data; edit + Save round-trip updates RDS. testTags `threshold_<vital_type>_min/max` (using schema enum names like `blood_pressure_systolic`). Maestro flow needs authoring for regression coverage. |
+| **CG-V2-13** | Configure reminders manually | **deferred — v2 redesign pending (2026-05-10)** | F4 Path A wired `caregiver_reminders` → ReminderConfigScreen (title mounts). F26 deferred the data wiring: the v1 UX shape (windowHours+gracePeriodMinutes) doesn't map to v2's reminder semantics (frequency_days+daily_deadline on parameter_configs, set by caregiver_onboarding voice protocol). Needs product call on whether manual reminder editing remains in v2 or becomes voice-only. |
 | **CG-V2-14** | Accept doctor recommendation | blocked → **partially runnable via text** | Depends on DR-V2-05 (web blocked on data-testid). If a recommendation is seeded directly via DB, the caregiver-side accept can be exercised via text fallback in a config session. |
 | **CG-V2-15** | Reject doctor recommendation | same as CG-V2-14 | |
 | **CG-V2-16** | Delete patient (cascade) | blocked | `delete-patient` route Lambda not wired into API Gateway. Backend backlog. |
-| **CG-V2-17** | View trends | **architecture-blocked (F4-class)** | `TrendsScreen` exists but is reachable only from the orphan `RelativeDashboardScreen`. Same product call as CG-V2-12/13. |
+| **CG-V2-17** | View trends | **route-reachable; threshold-band wired via F26 (2026-05-10)** | F4 Path A wired `caregiver_trends` → TrendsScreen (title "Trends" mounts). F26 repointed the chart's threshold-band fetch at v2 `parameter_configs` (BP→systolic by convention). Observation chart data + breach band should both render once a Maestro flow exercises the full path against seeded observations. |
 | **CG-V2-18** | Sign out | **PASS (2026-05-09)** | `caregiver_sign_out.yaml` — opens settings (TopAppBar IconButton, contentDescription "Open settings"), scrolls to `settings_sign_out`, asserts return to login. |
 
 ### Doctor (Web portal) — 8 journeys
@@ -101,20 +101,20 @@ All 8 are gated on `web-portal` agent shipping `data-testid` attributes + `web-j
 | **EDGE-V2-11** | Pause and resume | **PASS (2026-05-09)** | `patient_pause_resume_text.yaml` — submit a turn → tap "Pause" (label flips to "Resume") → tap "Resume" (label flips back to "Pause"). The button has no testTag today; targets by accessibility text via `.*…*` substring. |
 | **EDGE-V2-12** | Pause timeout (5 min) | manual | Wall-clock 5 min. Borderline; could run as a long-duration flow. |
 | **EDGE-V2-13** | Implausible plausibility ranges per parameter | **PASS (2026-05-09)** | `patient_implausible_glucose_text.yaml` — types "fifteen hundred mg/dL" via fallback; response card mounts post-F10. Same FSM transition as PT-V2-08; covers a non-BP parameter. |
-| **EDGE-V2-14** | Network drop during sync of manual log | blocked (depends on PT-V2-15..20 routes being reachable) | Tied to F4 architecture decision. |
+| **EDGE-V2-14** | Network drop during sync of manual log | **route-reachable (2026-05-10)** | F4 Path A unblocked: vital screens are now reachable. Maestro flow can author the network-cycle harness pattern (see PT-V2-13's `matika-connectivity-test.sh`) against `BloodPressureScreen` save action. |
 | **EDGE-V2-15** | Microphone permission denied | blocked | Needs revoke-then-launch flow. Tests text-fallback substitution. |
 | **EDGE-V2-16** | Cross-region disclosure absent (regression) | flow authored, **regression confirmed (F18)** | `cross_region_disclosure_scan.yaml` asserts the substring `(?i).*AWS regions outside India.*` on the register screen. Substring is missing today — a real DPDP/HIPAA compliance gap. Journey moves to PASS once F18 (UI copy + product/legal sign-off) ships. |
 
 ---
 
-## Quick stats (last refreshed 2026-05-09 end of session)
+## Quick stats (last refreshed 2026-05-10 after F4 Path A)
 
 | Bucket | Count | IDs |
 |---|---|---|
 | **Full PASS** (UI + backend) | 13 | PT-V2-01, PT-V2-02, PT-V2-07, PT-V2-08, PT-V2-09, PT-V2-13, CG-V2-02, CG-V2-05, CG-V2-06, CG-V2-18, EDGE-V2-01, EDGE-V2-02, EDGE-V2-07, EDGE-V2-11, EDGE-V2-13 |
-| **Backend half PASS, push delivery blocked on F17** | 5 | CG-V2-07, CG-V2-08, CG-V2-09, E2E-V2-02, E2E-V2-03, E2E-V2-06 |
+| **Backend half PASS, push delivery blocked on F17 SNS provisioning** | 5 | CG-V2-07, CG-V2-08, CG-V2-09, E2E-V2-02, E2E-V2-03, E2E-V2-06 |
+| **Route-reachable; awaits Maestro flow authoring** (F4 Path A unblocked) | 11 | PT-V2-15, PT-V2-16, PT-V2-17, PT-V2-18, PT-V2-19, PT-V2-20, PT-V2-21, EDGE-V2-14, CG-V2-12 (data-blocked), CG-V2-13 (data-blocked), CG-V2-17 |
 | **Flow authored, regression confirmed** | 2 | EDGE-V2-03 (F19 — guardrail parser crash), EDGE-V2-16 (F18 — disclosure copy missing) |
-| **Architecture-blocked (F4)** | 12 | PT-V2-15..21, EDGE-V2-14, CG-V2-12, CG-V2-13, CG-V2-17 |
 | **Web-portal-blocked** (data-testid + Playwright) | 8 | DR-V2-01..08 |
 | **Backend backlog** | 4 | CG-V2-16, EDGE-V2-04, EDGE-V2-08, EDGE-V2-09 |
 | **Manual / out-of-agentic-scope** | 10 | PT-V2-10/11/12 (photos), PT-V2-24, EDGE-V2-05/06/10/12 (wall-clock timers), EDGE-V2-15 (mic perm revoke) |
