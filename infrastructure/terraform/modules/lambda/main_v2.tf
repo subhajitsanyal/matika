@@ -153,6 +153,16 @@ resource "aws_iam_role_policy" "bedrock_router_inline" {
         Action   = ["sqs:SendMessage", "sqs:GetQueueUrl", "sqs:GetQueueAttributes"]
         Resource = [var.alerts_queue_arn]
       },
+      {
+        # F23 — bedrock-router invokes create-patient-from-voice via
+        # SDK at the caregiver_onboarding mid-session pivot (spec §6.9).
+        # Direct-invoke (not API Gateway) so Android can't call this
+        # function without going through the conversation flow.
+        Sid      = "InvokeCreatePatientFromVoice"
+        Effect   = "Allow"
+        Action   = ["lambda:InvokeFunction"]
+        Resource = [aws_lambda_function.create_patient_from_voice.arn]
+      },
     ]
   })
 }
@@ -415,6 +425,10 @@ resource "aws_lambda_function" "bedrock_router" {
       # documents bucket sync-observation Lambda writes to.
       FHIR_OBSERVATIONS_BUCKET        = var.documents_bucket_name
       FHIR_OBSERVATIONS_KMS_KEY_ID    = var.s3_kms_key_arn
+      # F23 — caregiver_onboarding mid-session pivot target. The router
+      # invokes this function via SDK at the complete_session turn that
+      # closes the profile-extraction phase. See spec §6.9.
+      CREATE_PATIENT_FROM_VOICE_FN_NAME = aws_lambda_function.create_patient_from_voice.function_name
     })
   }
 }

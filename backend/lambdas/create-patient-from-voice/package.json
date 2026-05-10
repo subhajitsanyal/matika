@@ -1,0 +1,19 @@
+{
+  "name": "carelog-create-patient-from-voice",
+  "version": "1.0.0",
+  "description": "F23 — voice-extracted patient creation. Called by bedrock-router at the caregiver_onboarding mid-session pivot. See spec §4.5 / §6.9.",
+  "main": "index.js",
+  "scripts": {
+    "test": "jest",
+    "package": "zip -r function.zip index.js node_modules package.json"
+  },
+  "dependencies": {
+    "@aws-sdk/client-cognito-identity-provider": "^3.978.0",
+    "@aws-sdk/client-secrets-manager": "^3.978.0",
+    "@aws-sdk/client-ses": "^3.978.0",
+    "pg": "^8.11.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

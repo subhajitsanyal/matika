@@ -26,6 +26,16 @@ output "expire_stale_sessions_function_name" {
   value = aws_lambda_function.expire_stale_sessions.function_name
 }
 
+# F23 — voice-extracted patient creation
+output "create_patient_from_voice_arn" {
+  description = "ARN for create-patient-from-voice (invoked by bedrock-router via SDK)"
+  value       = aws_lambda_function.create_patient_from_voice.arn
+}
+
+output "create_patient_from_voice_function_name" {
+  value = aws_lambda_function.create_patient_from_voice.function_name
+}
+
 output "create_patient_invoke_arn" {
   value = aws_lambda_function.create_patient.invoke_arn
 }
@@ -191,6 +201,8 @@ output "all_function_names" {
     # F2 — session lifecycle
     aws_lambda_function.end_session.function_name,
     aws_lambda_function.expire_stale_sessions.function_name,
+    # F23 — voice patient onboarding
+    aws_lambda_function.create_patient_from_voice.function_name,
   ]
 }
 

@@ -99,6 +99,17 @@ resource "aws_iam_role_policy" "rds_cognito_inline" {
           "sns:DeleteEndpoint"
         ]
         Resource = ["*"]
+      },
+      {
+        # F23 — create-patient-from-voice (and the existing create-patient,
+        # which has been silently failing its welcome-email send path)
+        # both share this role and need SES SendEmail to deliver the
+        # patient invite email. Resource="*" matches the lambda_rds_ses
+        # role's pattern; SES sender is restricted by var.from_email at
+        # the env-var level instead.
+        Effect   = "Allow"
+        Action   = ["ses:SendEmail", "ses:SendRawEmail"]
+        Resource = ["*"]
       }
     ]
   })
@@ -369,6 +380,15 @@ data "archive_file" "expire_stale_sessions" {
   output_path = "${path.module}/archives/expire-stale-sessions.zip"
 }
 
+# F23 — voice-extracted patient creation. Direct-invoke only (no API
+# Gateway route); bedrock-router calls this at the caregiver_onboarding
+# mid-session pivot. See spec §4.5 / §6.9.
+data "archive_file" "create_patient_from_voice" {
+  type        = "zip"
+  source_dir  = "${var.lambdas_source_path}/create-patient-from-voice"
+  output_path = "${path.module}/archives/create-patient-from-voice.zip"
+}
+
 data "archive_file" "create_patient" {
   type        = "zip"
   source_dir  = "${var.lambdas_source_path}/create-patient"
@@ -595,6 +615,33 @@ resource "aws_lambda_function" "expire_stale_sessions" {
   environment {
     variables = merge(local.rds_env, {
       SESSION_IDLE_MINUTES = tostring(var.session_idle_minutes)
+    })
+  }
+}
+
+# F23 — voice-extracted patient creation. Direct-invoke only.
+# bedrock-router calls this via SDK Invoke at the caregiver_onboarding
+# pivot turn (when complete_session fires in the profile-extraction
+# phase). Atomically creates Cognito user + RDS rows + UPDATEs the
+# placeholder interaction_sessions.patient_id. See spec §4.5 / §6.9.
+resource "aws_lambda_function" "create_patient_from_voice" {
+  function_name    = "${local.function_prefix}-create-patient-from-voice"
+  role             = aws_iam_role.lambda_rds_cognito.arn
+  handler          = "index.handler"
+  runtime          = "nodejs20.x"
+  timeout          = 30
+  memory_size      = 256
+  filename         = data.archive_file.create_patient_from_voice.output_path
+  source_code_hash = data.archive_file.create_patient_from_voice.output_base64sha256
+
+  vpc_config {
+    subnet_ids         = var.private_subnet_ids
+    security_group_ids = [var.lambda_security_group_id]
+  }
+
+  environment {
+    variables = merge(local.rds_env, {
+      FROM_EMAIL = var.from_email
     })
   }
 }
