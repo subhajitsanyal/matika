@@ -18,7 +18,10 @@ import {
   PgSessionCreator,
   PgSessionPersister,
   PgModelCallRecorder,
+  PgPivotedPatientLookup,
 } from './db';
+import { LambdaClient } from '@aws-sdk/client-lambda';
+import { LambdaPatientFromVoiceCreator } from './patient_from_voice';
 import { SqsAlertEnqueuer } from './alert_queue';
 import { HaikuSummarizer } from './summarizer';
 import { PgRateLimiter } from './rate_limiter';
@@ -84,6 +87,17 @@ async function buildDeps(): Promise<HandlerDeps> {
   );
   const protocolPersister = new PgProtocolPersister(pool);
 
+  // F23 — voice patient onboarding plumbing. Wired only when the env
+  // var is set (terraform threads CREATE_PATIENT_FROM_VOICE_FN_NAME
+  // through). When missing, caregiver_onboarding placeholder turns
+  // get processed but the pivot turn errors out — acceptable for
+  // local dev / tests where the dependency isn't always available.
+  const lambdaClient = new LambdaClient({ region: awsRegion });
+  const createPatientFromVoiceFn = process.env.CREATE_PATIENT_FROM_VOICE_FN_NAME;
+  const patientFromVoiceCreator = createPatientFromVoiceFn
+    ? new LambdaPatientFromVoiceCreator(lambdaClient, createPatientFromVoiceFn)
+    : undefined;
+
   const deps: HandlerDeps = {
     bedrock,
     patientLoader: new PgPatientContextLoader(pool),
@@ -104,6 +118,8 @@ async function buildDeps(): Promise<HandlerDeps> {
           process.env.FHIR_OBSERVATIONS_KMS_KEY_ID,
         )
       : undefined,
+    patientFromVoiceCreator,
+    pivotedPatientLookup: new PgPivotedPatientLookup(pool),
     config: {
       haikuModelId,
       sonnetModelId,
@@ -116,6 +132,14 @@ async function buildDeps(): Promise<HandlerDeps> {
         LAMBDA_ROOT,
         'prompts',
         'system_v2_caregiver_onboarding.md',
+      ),
+      // F23 — profile-extraction phase prompt. Selected when the
+      // session's fsm_state is in EXTRACTING_PROFILE or
+      // AWAITING_PROFILE_CONFIRMATION (pre-pivot).
+      caregiverOnboardingProfilePromptPath: resolvePath(
+        LAMBDA_ROOT,
+        'prompts',
+        'system_v2_caregiver_onboarding_profile.md',
       ),
       escalationSubpromptDir: resolvePath(LAMBDA_ROOT, 'escalation_subprompts'),
       hardRateLimitPerPatient: hardLimit,

@@ -35,6 +35,8 @@ const ALLOWED_TRANSITIONS: Record<FsmState, ReadonlySet<FsmState>> = {
     'EMERGENCY',
     'PAUSED',
     'TERMINAL',
+    // F23 — caregiver_onboarding profile-extraction phase entry.
+    'EXTRACTING_PROFILE',
   ]),
   // Same rationale as CREATED: a patient can produce an implausible value or
   // an emergency cue on the turn immediately after a greeting, and we
@@ -81,14 +83,46 @@ const ALLOWED_TRANSITIONS: Record<FsmState, ReadonlySet<FsmState>> = {
     'AWAITING_PHOTO',
     'PLAUSIBILITY_CHALLENGE',
     'TERMINAL',
+    // F23 — pause/resume during profile extraction (e.g., LLM emits
+    // pause_session with reason='awaiting_patient_credentials' to
+    // trigger the email/phone form modal in the Android client).
+    'EXTRACTING_PROFILE',
+    'AWAITING_PROFILE_CONFIRMATION',
   ]),
   COMPLETE: new Set(['TERMINAL']),
   TERMINAL: new Set([]),
+  // F23 — caregiver_onboarding profile-extraction phase. Successors:
+  // AWAITING_PROFILE_CONFIRMATION (LLM ready to read back),
+  // PAUSED (form modal interrupt for email+phone), TERMINAL (abandon).
+  EXTRACTING_PROFILE: new Set([
+    'EXTRACTING_PROFILE',
+    'AWAITING_PROFILE_CONFIRMATION',
+    'PAUSED',
+    'TERMINAL',
+  ]),
+  // Final readback delivered. Successors: PROFILE_CONFIRMED (caregiver
+  // says yes), EXTRACTING_PROFILE (caregiver says "change <field>"
+  // → re-open extraction), PAUSED, TERMINAL.
+  AWAITING_PROFILE_CONFIRMATION: new Set([
+    'PROFILE_CONFIRMED',
+    'EXTRACTING_PROFILE',
+    'PAUSED',
+    'TERMINAL',
+  ]),
+  // Caregiver confirmed the profile readback. The handler invokes
+  // create-patient-from-voice; on success transitions into the
+  // existing protocol-extraction lifecycle (EXTRACTING). TERMINAL
+  // covers session abandonment after the patient was already created.
+  PROFILE_CONFIRMED: new Set([
+    'EXTRACTING',
+    'TERMINAL',
+  ]),
 };
 
 const STATE_NAMES = new Set<FsmState>([
   'CREATED', 'GREETING', 'EXTRACTING', 'PENDING_CONFIRMATION', 'AWAITING_PHOTO',
   'PLAUSIBILITY_CHALLENGE', 'EMERGENCY', 'PAUSED', 'COMPLETE', 'TERMINAL',
+  'EXTRACTING_PROFILE', 'AWAITING_PROFILE_CONFIRMATION', 'PROFILE_CONFIRMED',
 ]);
 
 const TRANSITION_REGEX = /^\s*([A-Z_]+)\s*->\s*([A-Z_]+)\s*$/;

@@ -81,7 +81,7 @@
     },
     "stateTransition": {
       "type": "string",
-      "pattern": "^(CREATED|GREETING|EXTRACTING|PENDING_CONFIRMATION|AWAITING_PHOTO|PLAUSIBILITY_CHALLENGE|EMERGENCY|PAUSED|COMPLETE|TERMINAL)\\s*->\\s*(CREATED|GREETING|EXTRACTING|PENDING_CONFIRMATION|AWAITING_PHOTO|PLAUSIBILITY_CHALLENGE|EMERGENCY|PAUSED|COMPLETE|TERMINAL)$"
+      "pattern": "^(CREATED|GREETING|EXTRACTING|PENDING_CONFIRMATION|AWAITING_PHOTO|PLAUSIBILITY_CHALLENGE|EMERGENCY|PAUSED|COMPLETE|TERMINAL|EXTRACTING_PROFILE|AWAITING_PROFILE_CONFIRMATION|PROFILE_CONFIRMED)\\s*->\\s*(CREATED|GREETING|EXTRACTING|PENDING_CONFIRMATION|AWAITING_PHOTO|PLAUSIBILITY_CHALLENGE|EMERGENCY|PAUSED|COMPLETE|TERMINAL|EXTRACTING_PROFILE|AWAITING_PROFILE_CONFIRMATION|PROFILE_CONFIRMED)$"
     },
     "escalationReason": {
       "type": ["string", "null"],
@@ -95,6 +95,26 @@
         "long_response_expected",
         null
       ]
+    },
+    "patientProfile": {
+      "description": "F23 — present only on caregiver_onboarding profile-extraction turns. Set when the LLM has captured fields that should be persisted at the mid-session pivot. See spec §6.9.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "nameConfidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "ageYears": { "type": ["number", "null"] },
+        "ageConfidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "dateOfBirth": { "type": ["string", "null"], "description": "ISO YYYY-MM-DD" },
+        "gender": { "type": ["string", "null"], "enum": ["male", "female", "other", null] },
+        "conditions": { "type": "array", "items": { "type": "string" } },
+        "medications": { "type": "array", "items": { "type": "string" } },
+        "allergies": { "type": "array", "items": { "type": "string" } },
+        "emergencyContactName": { "type": ["string", "null"] },
+        "primaryDoctor": { "type": ["string", "null"] },
+        "primaryLanguage": { "type": ["string", "null"], "enum": ["en-IN", "hi-IN", "bn-IN", null] }
+      }
     }
   }
 }

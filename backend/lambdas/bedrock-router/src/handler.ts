@@ -24,7 +24,13 @@ import type {
 } from './bedrock_client';
 import type { AlertEnqueuer, AlertTrigger } from './alert_queue';
 import { buildEmergencyAlert, buildRateLimitAlert } from './alert_queue';
-import type { ModelCallRecorder, SessionCreator, SessionPersister, SessionUpdate } from './db';
+import type {
+  ModelCallRecorder,
+  PivotedPatientLookup,
+  SessionCreator,
+  SessionPersister,
+  SessionUpdate,
+} from './db';
 import type { Summarizer } from './summarizer';
 import type { RateLimiter } from './rate_limiter';
 import type {
@@ -52,6 +58,11 @@ import { ProtocolExtractionError } from './protocol_extractor';
 import type { ProtocolPersister } from './protocol_persister';
 import type { UserResolver } from './user_resolver';
 import type { ObservationWriter } from './observation_writer';
+import type {
+  PatientFromVoiceCreator,
+  CreatePatientFromVoiceInput,
+} from './patient_from_voice';
+import { CreatePatientFromVoiceError } from './patient_from_voice';
 
 // ---------- Public types ----------
 
@@ -74,10 +85,35 @@ export interface TurnRequest {
   // extraction pass runs at session close (T-V2-303).
   // Optional for now — only populates threshold_set_by when present.
   actorCognitoSub?: string;
+  // F23 — caregiver-supplied patient credentials collected via the
+  // form modal that fires when the LLM emits pause_session with
+  // reason='awaiting_patient_credentials'. Client sends these on every
+  // turn after collection so the handler has them when the pivot turn
+  // (complete_session in PROFILE_CONFIRMED) fires create-patient-from-voice.
+  // Never persisted server-side — passed straight through to the
+  // create-patient-from-voice Lambda invocation.
+  patientCredentials?: {
+    email: string;
+    phone: string;
+  };
   clientHints?: {
     preferStreaming?: boolean;
     deviceLatencyEstimateMs?: number;
   };
+}
+
+// F23 — sentinel patientId prefix that marks "no patient row exists
+// yet, this is a caregiver_onboarding session in profile-extraction
+// phase." The bedrock-router resolves this against the placeholder
+// session row (NULL patient_id allowed by V008 migration). After the
+// mid-session pivot the caregiver_onboarding session's patient_id
+// column is UPDATEd to the real UUID, so the same pending-<sessionId>
+// patientId on subsequent turns transparently resolves to the real
+// patient context.
+export const PENDING_PATIENT_ID_PREFIX = 'pending-';
+
+export function isPendingPatientId(patientId: string): boolean {
+  return patientId.startsWith(PENDING_PATIENT_ID_PREFIX);
 }
 
 export interface TurnResponseBody {
@@ -139,7 +175,14 @@ export interface HandlerConfig {
   inferenceRegion: string;
   maxTokens: number;
   systemPromptPath: string; // resolved path to prompts/system_v2.md (default for patient_logging + caregiver_config)
-  caregiverOnboardingPromptPath?: string; // optional — resolved path to prompts/system_v2_caregiver_onboarding.md
+  caregiverOnboardingPromptPath?: string; // optional — resolved path to prompts/system_v2_caregiver_onboarding.md (post-pivot protocol-extraction phase)
+  // F23 — profile-extraction prompt for the pre-pivot phase of a
+  // caregiver_onboarding session. Selected when fsmState is one of
+  // {EXTRACTING_PROFILE, AWAITING_PROFILE_CONFIRMATION}. After the
+  // mid-session pivot (PROFILE_CONFIRMED → EXTRACTING transition),
+  // the existing caregiverOnboardingPromptPath takes over for the
+  // protocol-extraction half of the session.
+  caregiverOnboardingProfilePromptPath?: string;
   escalationSubpromptDir: string; // resolved path to escalation_subprompts/
   hardRateLimitPerPatient: number; // surfaced into RateLimitAlertMessage
 }
@@ -172,6 +215,19 @@ export interface HandlerDeps {
   // uses. Optional — when missing the writes are skipped and the
   // transcript remains the source of truth.
   observationWriter?: ObservationWriter;
+  // F23 — voice-extracted patient creation. Invoked when a
+  // caregiver_onboarding session emits complete_session in the
+  // profile-extraction phase. Optional — when missing, the handler
+  // surfaces an internal_error to the caller and the session stays
+  // in AWAITING_PROFILE_CONFIRMATION (caregiver can retry or bail).
+  patientFromVoiceCreator?: PatientFromVoiceCreator;
+  // F23 — post-pivot patient resolution. Lets the handler transparently
+  // switch from the placeholder PatientContext stub to the real one
+  // once `interaction_sessions.patient_id` has been UPDATEd by
+  // create-patient-from-voice. Optional — when missing, placeholder
+  // sessions stay in placeholder mode forever (acceptable for tests,
+  // not for prod).
+  pivotedPatientLookup?: PivotedPatientLookup;
   config: HandlerConfig;
   // Pluggable clock for tests; defaults to Date.now
   now?: () => number;
@@ -193,7 +249,15 @@ export async function handleTurn(event: TurnRequest, deps: HandlerDeps): Promise
   //    row and use empty defaults. Sequential rather than parallel so a
   //    rejecting turn-load promise can't escape unhandled while we await
   //    the patient load (Node treats those as fatal exits).
-  const patientCtx = await deps.patientLoader.load(event.patientId);
+  //
+  // F23 — placeholder bootstrap. caregiver_onboarding sessions whose
+  // patientId is the `pending-<sessionId>` sentinel get a synthetic
+  // PatientContext stub instead of a real DB lookup. The stub stays
+  // in effect until the mid-session pivot, after which subsequent
+  // turns resolve via the session row's now-non-NULL patient_id.
+  // `let` rather than `const` because the F23 mid-session pivot
+  // refreshes this in place when create-patient-from-voice succeeds.
+  let patientCtx = await loadPatientContextOrPlaceholder(event, deps);
   const turnCtx = await loadOrCreateTurnContext(event, patientCtx, deps);
 
   // 2. Pre-model regex pass for plausibility short-circuiting.
@@ -210,7 +274,7 @@ export async function handleTurn(event: TurnRequest, deps: HandlerDeps): Promise
   //    prepend it to the per-turn block so the model gets a focused directive
   //    (challenge implausibility, handle emergency safety-first, etc.).
   const systemPrompt = loadSystemPrompt(
-    selectSystemPromptPath(turnCtx.sessionState.sessionType, deps.config),
+    selectSystemPromptPath(turnCtx.sessionState.sessionType, turnCtx.sessionState.fsmState, deps.config),
   );
   const perPatientBlock = renderPatientContext(patientCtx);
   const baseTurnBlock = renderTurnContext(turnCtx);
@@ -285,6 +349,81 @@ export async function handleTurn(event: TurnRequest, deps: HandlerDeps): Promise
   // 7. Apply state transition (validates FROM matches current state).
   const newFsmState = applyTransition(turnCtx.sessionState.fsmState, parsed.stateTransition);
 
+  // 7a. F23 — caregiver_onboarding mid-session pivot. When the LLM
+  //     confirms the profile readback (newFsmState === PROFILE_CONFIRMED
+  //     + complete_session action), invoke create-patient-from-voice
+  //     and refresh patientCtx with the real post-pivot patient. The
+  //     remaining downstream logic (model_call record, session
+  //     persister, etc.) then runs against the real patient.
+  let pivotedThisTurn = false;
+  const isPivotTurn =
+    patientCtx.placeholder &&
+    newFsmState === 'PROFILE_CONFIRMED' &&
+    parsed.actions.some((a) => a.type === 'complete_session');
+  if (isPivotTurn) {
+    if (!parsed.patientProfile) {
+      throw new HandlerError(
+        500,
+        'profile_pivot_missing_patientProfile',
+        'caregiver_onboarding pivot turn produced no patientProfile in structured output',
+      );
+    }
+    if (!event.patientCredentials) {
+      throw new HandlerError(
+        400,
+        'profile_pivot_missing_credentials',
+        'patientCredentials (email + phone) required on the caregiver_onboarding pivot turn',
+      );
+    }
+    if (!event.actorCognitoSub) {
+      throw new HandlerError(
+        400,
+        'profile_pivot_missing_actor',
+        'actorCognitoSub required on caregiver_onboarding turns',
+      );
+    }
+    if (!deps.patientFromVoiceCreator) {
+      throw new HandlerError(
+        500,
+        'profile_pivot_creator_not_wired',
+        'patientFromVoiceCreator dependency not configured',
+      );
+    }
+    const pivotInput: CreatePatientFromVoiceInput = {
+      sessionId: event.sessionId,
+      caregiverCognitoSub: event.actorCognitoSub,
+      patientProfile: parsed.patientProfile,
+      patientCredentials: event.patientCredentials,
+    };
+    try {
+      const pivotResult = await deps.patientFromVoiceCreator.create(pivotInput);
+      console.log('caregiver_onboarding pivot ok', {
+        sessionId: event.sessionId,
+        patientCognitoSub: pivotResult.patientCognitoSub,
+        patientShortId: pivotResult.patientShortId,
+      });
+      // Refresh context with the real patient. Subsequent code paths
+      // get a real id + userId; placeholder=false naturally because
+      // patientLoader.load doesn't set the flag.
+      patientCtx = await deps.patientLoader.load(pivotResult.patientCognitoSub);
+      pivotedThisTurn = true;
+    } catch (err) {
+      // CreatePatientFromVoiceError carries a typed kind. The handler
+      // surfaces it as a HandlerError with the kind embedded in the
+      // code so the client can distinguish disambiguation flows
+      // (e.g., 409 patient_already_exists prompts re-asking the
+      // caregiver) from hard failures.
+      if (err instanceof CreatePatientFromVoiceError) {
+        throw new HandlerError(
+          err.statusCode,
+          `profile_pivot_${err.kind}`,
+          err.message,
+        );
+      }
+      throw err;
+    }
+  }
+
   // 8. Compute updated session state.
   const mergedCaptured = mergeCaptured(turnCtx.sessionState.capturedThisSession, parsed.extractedValues);
   const newPending = parsed.extractedValues.filter((v) => v.status === 'pending_confirmation');
@@ -310,14 +449,23 @@ export async function handleTurn(event: TurnRequest, deps: HandlerDeps): Promise
   //     caregiver_onboarding sessions when the model emits complete_session.
   //     Synchronous so failures and telemetry land in this turn's response;
   //     adds ~3-5s tail latency, which is acceptable for the close-out turn.
-  const protocolResult = await maybeExtractAndPersistProtocol({
-    sessionType: turnCtx.sessionState.sessionType,
-    actions: parsed.actions,
-    transcriptHistory: newHistory,
-    patientId: patientCtx.patient.id,
-    actorCognitoSub: event.actorCognitoSub,
-    deps,
-  });
+  //
+  //     F23 — skip on the pivot turn. The pivot turn ALSO emits
+  //     complete_session (closing the profile-extraction phase), but
+  //     protocol extraction belongs to the FINAL complete_session
+  //     that closes the protocol-extraction phase. Without this gate,
+  //     T-V2-302 would fire against an empty post-profile transcript
+  //     and persist a malformed (empty) protocol.
+  const protocolResult = pivotedThisTurn
+    ? null
+    : await maybeExtractAndPersistProtocol({
+        sessionType: turnCtx.sessionState.sessionType,
+        actions: parsed.actions,
+        transcriptHistory: newHistory,
+        patientId: patientCtx.patient.id,
+        actorCognitoSub: event.actorCognitoSub,
+        deps,
+      });
 
   // 8d. Confirmed values → FHIR Observations (S3). Per-value try/catch
   //     so a single bad write doesn't fail the whole turn — the
@@ -361,6 +509,13 @@ export async function handleTurn(event: TurnRequest, deps: HandlerDeps): Promise
     now: () => new Date(now()),
   });
 
+  // F23 — model_call.patient_id is NOT NULL FK; on placeholder turns
+  // (caregiver_onboarding profile-extraction, before pivot) we have
+  // no real patient row to reference. Skip the telemetry recording
+  // for those turns. The 5-10 turn telemetry gap during profile
+  // extraction is acceptable; full coverage resumes post-pivot.
+  const skipPatientBoundTelemetry = patientCtx.placeholder;
+
   await Promise.all([
     deps.sessionPersister.update(event.sessionId, {
       fsmState: newFsmState,
@@ -375,25 +530,27 @@ export async function handleTurn(event: TurnRequest, deps: HandlerDeps): Promise
       status: sessionTerminus.status,
       endedAt: sessionTerminus.endedAt,
     }),
-    deps.modelCallRecorder.record(
-      buildModelCallRecord({
-        sessionId: event.sessionId,
-        patientId: patientCtx.patient.id, // internal patients.id UUID (FK target)
-        tier,
-        model: modelId,
-        streamed: false,
-        guardrailBlocked: result.guardrailBlocked,
-        usage: {
-          inputTokens: result.inputTokens,
-          cachedInputTokens: result.cachedInputTokens,
-          outputTokens: result.outputTokens,
-        },
-        latencyMs,
-        inferenceRegion: result.inferenceRegion,
-        escalationReason: routing.reason,
-      }),
-    ),
-    summarizerTelemetry
+    skipPatientBoundTelemetry
+      ? Promise.resolve()
+      : deps.modelCallRecorder.record(
+          buildModelCallRecord({
+            sessionId: event.sessionId,
+            patientId: patientCtx.patient.id, // internal patients.id UUID (FK target)
+            tier,
+            model: modelId,
+            streamed: false,
+            guardrailBlocked: result.guardrailBlocked,
+            usage: {
+              inputTokens: result.inputTokens,
+              cachedInputTokens: result.cachedInputTokens,
+              outputTokens: result.outputTokens,
+            },
+            latencyMs,
+            inferenceRegion: result.inferenceRegion,
+            escalationReason: routing.reason,
+          }),
+        ),
+    summarizerTelemetry && !skipPatientBoundTelemetry
       ? deps.modelCallRecorder.record(
           buildModelCallRecord({
             sessionId: event.sessionId,
@@ -409,7 +566,7 @@ export async function handleTurn(event: TurnRequest, deps: HandlerDeps): Promise
           }),
         )
       : Promise.resolve(),
-    protocolResult?.telemetry
+    protocolResult?.telemetry && !skipPatientBoundTelemetry
       ? deps.modelCallRecorder.record(
           buildModelCallRecord({
             sessionId: event.sessionId,
@@ -595,9 +752,16 @@ async function loadOrCreateTurnContext(
     // Honor sessionType from the request (caregiver_onboarding,
     // caregiver_config) and default to patient_logging when unset.
     const sessionType: SessionType = event.sessionType ?? 'patient_logging';
+    // F23 — placeholder context bootstrap. patient_id is NULL until
+    // create-patient-from-voice fires the mid-session pivot. V008
+    // migration's CHECK constraint enforces that NULL is only valid
+    // for caregiver_onboarding session_type at the database layer.
+    const patientIdForInsert: string | null = patientCtx.placeholder
+      ? null
+      : patientCtx.patient.id;
     await deps.sessionCreator.create({
       sessionId: event.sessionId,
-      patientId: patientCtx.patient.id,
+      patientId: patientIdForInsert,
       userId: patientCtx.userId,
       sessionType,
       language: event.language,
@@ -607,7 +771,10 @@ async function loadOrCreateTurnContext(
         sessionId: event.sessionId,
         sessionType,
         language: event.language,
-        fsmState: 'CREATED',
+        // F23 — caregiver_onboarding placeholder sessions start in
+        // EXTRACTING_PROFILE so the first LLM turn picks the profile-
+        // extraction prompt. All other sessions start in CREATED.
+        fsmState: patientCtx.placeholder ? 'EXTRACTING_PROFILE' : 'CREATED',
         capturedThisSession: [],
         pendingConfirmation: [],
         stillNeeded: [],
@@ -617,6 +784,84 @@ async function loadOrCreateTurnContext(
       currentTranscript: event.transcript,
     };
   }
+}
+
+// F23 — picks between a real patientLoader.load() and a synthetic
+// placeholder PatientContext stub for caregiver_onboarding sessions
+// before create-patient-from-voice has fired the mid-session pivot.
+//
+// The placeholder fires when:
+//   - sessionType === 'caregiver_onboarding'
+//   - AND patientId starts with the `pending-` sentinel prefix
+//
+// On the FIRST turn, the session row doesn't exist yet, so the stub
+// is the only path. On SUBSEQUENT turns we re-check via the session
+// row's patient_id column — if it's been UPDATEd by the pivot, we
+// load the real patient now (transparent to the client, which keeps
+// sending pending-<sessionId>).
+async function loadPatientContextOrPlaceholder(
+  event: TurnRequest,
+  deps: HandlerDeps,
+): Promise<PatientContext> {
+  const isCaregiverOnboardingSession = event.sessionType === 'caregiver_onboarding';
+  const isPendingSentinel = isPendingPatientId(event.patientId);
+
+  if (!(isCaregiverOnboardingSession && isPendingSentinel)) {
+    return await deps.patientLoader.load(event.patientId);
+  }
+
+  // Pending sentinel on a caregiver_onboarding session. Try to load
+  // the session row first — if its patient_id has been pivoted to a
+  // real UUID, load that patient instead of returning the stub.
+  // Reuse the turn loader's session lookup for this; it returns a
+  // structured error when the session row is missing.
+  const realPatientCognitoSub = await tryReadPivotedPatientCognitoSub(event.sessionId, deps);
+  if (realPatientCognitoSub) {
+    return await deps.patientLoader.load(realPatientCognitoSub);
+  }
+
+  return buildPlaceholderPatientContext(event);
+}
+
+// Helper extracted so tests can stub the lookup. Returns null if the
+// session row doesn't exist OR its patient_id is still NULL (pre-pivot).
+// Returns the patient's cognito_sub when post-pivot.
+async function tryReadPivotedPatientCognitoSub(
+  sessionId: string,
+  deps: HandlerDeps,
+): Promise<string | null> {
+  if (!deps.pivotedPatientLookup) return null;
+  return await deps.pivotedPatientLookup.lookup(sessionId);
+}
+
+// F23 — synthetic PatientContext used while the placeholder
+// caregiver_onboarding session is in profile-extraction phase. Empty
+// patient.id + userId are sentinel values; PatientContext.placeholder
+// = true is the load-bearing flag downstream code keys off of.
+//
+// The patient's profile-fields-as-they're-being-captured live in the
+// LLM's structured-output `patientProfile` block on the WIRE, not in
+// this context. The handler doesn't accumulate them here — it only
+// reads patientProfile from the closing turn (PROFILE_CONFIRMED +
+// complete_session) and forwards to create-patient-from-voice.
+function buildPlaceholderPatientContext(event: TurnRequest): PatientContext {
+  return {
+    patient: {
+      id: '',
+      name: 'New patient',
+      age: 0,
+      gender: 'other',
+      primaryLanguage: event.language,
+      conditions: [],
+      medicalHistorySummary: null,
+    },
+    userId: '',
+    protocol: [],
+    topics: [],
+    recentSessions: [],
+    pendingRecommendations: [],
+    placeholder: true,
+  };
 }
 
 export class HandlerError extends Error {
@@ -833,10 +1078,25 @@ export function _resetSystemPromptCache(): void {
 // caregiver_config gets its own dedicated prompt in a future increment).
 function selectSystemPromptPath(
   sessionType: SessionType,
+  fsmState: SessionState['fsmState'],
   config: HandlerConfig,
 ): string {
-  if (sessionType === 'caregiver_onboarding' && config.caregiverOnboardingPromptPath) {
-    return config.caregiverOnboardingPromptPath;
+  if (sessionType === 'caregiver_onboarding') {
+    // F23 — pre-pivot profile-extraction phase uses a dedicated
+    // prompt that knows about the new FSM states + emits the
+    // patientProfile block. Post-pivot turns (CREATED on a session
+    // that already has a real patient_id, or fsm_state in EXTRACTING /
+    // PENDING_CONFIRMATION etc.) use the existing protocol-extraction
+    // prompt.
+    const isProfilePhase =
+      fsmState === 'EXTRACTING_PROFILE' ||
+      fsmState === 'AWAITING_PROFILE_CONFIRMATION';
+    if (isProfilePhase && config.caregiverOnboardingProfilePromptPath) {
+      return config.caregiverOnboardingProfilePromptPath;
+    }
+    if (config.caregiverOnboardingPromptPath) {
+      return config.caregiverOnboardingPromptPath;
+    }
   }
   return config.systemPromptPath;
 }
@@ -1235,6 +1495,16 @@ async function maybeWriteFhirObservations(args: {
 // notes). Real incremental sentence-by-sentence streaming requires a
 // prompt-format change (move responseText outside the JSON block) — flagged
 // as a follow-up.
+//
+// F23 follow-up: this streaming handler does NOT implement the
+// caregiver_onboarding mid-session pivot (PROFILE_CONFIRMED +
+// complete_session → invoke create-patient-from-voice + refresh
+// patientCtx). Android clients routing caregiver_onboarding turns
+// through this path will see HandlerError on the pivot turn. For now
+// the Android voice-onboarding flow uses the non-streaming
+// /conversation/turn endpoint exclusively. Mirror the pivot logic
+// from handleTurn here when streaming for caregiver_onboarding is
+// added.
 
 export async function handleTurnStream(
   event: TurnRequest,
@@ -1250,7 +1520,7 @@ export async function handleTurnStream(
     const softCapReached = await checkRateLimit(event.patientId, deps, now);
 
     // Same sequential get-or-create flow as handleTurn.
-    const patientCtx = await deps.patientLoader.load(event.patientId);
+    const patientCtx = await loadPatientContextOrPlaceholder(event, deps);
     const turnCtx = await loadOrCreateTurnContext(event, patientCtx, deps);
 
     const preModelHints = extractPreModelHints(event.transcript);
@@ -1271,7 +1541,7 @@ export async function handleTurnStream(
     });
 
     const systemPrompt = loadSystemPrompt(
-      selectSystemPromptPath(turnCtx.sessionState.sessionType, deps.config),
+      selectSystemPromptPath(turnCtx.sessionState.sessionType, turnCtx.sessionState.fsmState, deps.config),
     );
     const perPatientBlock = renderPatientContext(patientCtx);
     const baseTurnBlock = renderTurnContext(turnCtx);

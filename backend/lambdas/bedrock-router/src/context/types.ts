@@ -81,6 +81,13 @@ export interface PatientContext {
   topics: PatientTopic[];
   recentSessions: SessionSummary[]; // most recent first; up to 3 entries
   pendingRecommendations: Recommendation[];
+  // F23 — true when this context is the synthetic stub used during the
+  // pre-pivot profile-extraction phase of a caregiver_onboarding
+  // session. The patient row doesn't exist yet (and `patient.id` /
+  // `userId` are empty strings); downstream code paths that touch
+  // patient_id-bound tables (model_call, sessionPersister.update,
+  // observation writes) skip when this is true. Spec §6.9.
+  placeholder?: boolean;
 }
 
 // Loader contract — handler (increment 3) implements via pg; tests pass stubs.
@@ -100,7 +107,15 @@ export type FsmState =
   | 'EMERGENCY'
   | 'PAUSED'
   | 'COMPLETE'
-  | 'TERMINAL';
+  | 'TERMINAL'
+  // F23 — caregiver_onboarding two-pass states (spec §6.9). Valid only
+  // when sessionType === 'caregiver_onboarding'. The state machine
+  // accepts these transitions regardless of session_type — that
+  // session-type gating is enforced at the handler layer (rejects
+  // these states for patient_logging / caregiver_config sessions).
+  | 'EXTRACTING_PROFILE'
+  | 'AWAITING_PROFILE_CONFIRMATION'
+  | 'PROFILE_CONFIRMED';
 
 export interface SessionState {
   sessionId: string;

@@ -57,6 +57,26 @@ export interface TtsHints {
   rate?: number;
 }
 
+// F23 — voice-extracted patient profile, present only on caregiver_onboarding
+// profile-extraction turns. The LLM emits this when it has enough data to
+// either re-confirm or trigger create-patient-from-voice at session-end.
+// Confidence fields guide the LLM's own re-asks; the handler does not act
+// on them at the API layer. See spec §6.9.
+export interface PatientProfile {
+  name: string;
+  nameConfidence?: number;
+  ageYears?: number | null;
+  ageConfidence?: number;
+  dateOfBirth?: string | null;
+  gender?: 'male' | 'female' | 'other' | null;
+  conditions?: string[];
+  medications?: string[];
+  allergies?: string[];
+  emergencyContactName?: string | null;
+  primaryDoctor?: string | null;
+  primaryLanguage?: 'en-IN' | 'hi-IN' | 'bn-IN' | null;
+}
+
 export interface StructuredOutput {
   responseText: string;
   ttsHints: TtsHints;
@@ -64,6 +84,7 @@ export interface StructuredOutput {
   actions: Action[];
   stateTransition: string;
   escalationReason: EscalationReason | null;
+  patientProfile?: PatientProfile;
 }
 
 export type ParseFailureKind =

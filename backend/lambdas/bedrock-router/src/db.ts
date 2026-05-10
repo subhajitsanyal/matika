@@ -224,7 +224,13 @@ export interface SessionCreator {
 
 export interface SessionCreateParams {
   sessionId: string;
-  patientId: string; // internal patients.id UUID
+  // F23 — null is allowed ONLY for caregiver_onboarding sessions in
+  // their profile-extraction phase, before create-patient-from-voice
+  // fires the mid-session pivot. The V008 migration relaxed the
+  // interaction_sessions.patient_id NOT NULL constraint for exactly
+  // this case; the V008 CHECK constraint blocks the same NULL on
+  // patient_logging / caregiver_config sessions at the database layer.
+  patientId: string | null;
   userId: string; // internal users.id UUID
   sessionType: SessionType;
   language: SupportedLanguage;
@@ -240,6 +246,33 @@ export class PgSessionCreator implements SessionCreator {
        ON CONFLICT (id) DO NOTHING`,
       [params.sessionId, params.patientId, params.userId, params.sessionType, params.language],
     );
+  }
+}
+
+// F23 — given a session id, return the patient's cognito_sub IF the
+// session row exists AND its patient_id has been UPDATEd post-pivot
+// (i.e., it's no longer NULL). Used by the handler to decide between
+// returning a placeholder PatientContext stub and loading the real
+// post-pivot patient context. Returns null when the session is still
+// pre-pivot OR doesn't exist.
+
+export interface PivotedPatientLookup {
+  lookup(sessionId: string): Promise<string | null>;
+}
+
+export class PgPivotedPatientLookup implements PivotedPatientLookup {
+  constructor(private client: PgClient) {}
+
+  async lookup(sessionId: string): Promise<string | null> {
+    const result = await this.client.query<{ cognito_sub: string }>(
+      `SELECT u.cognito_sub
+       FROM interaction_sessions s
+       JOIN patients p ON p.id = s.patient_id
+       JOIN users u ON u.id = p.user_id
+       WHERE s.id = $1 AND s.patient_id IS NOT NULL`,
+      [sessionId],
+    );
+    return result.rows[0]?.cognito_sub ?? null;
   }
 }
 
