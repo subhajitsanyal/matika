@@ -12,6 +12,7 @@ import com.amplifyframework.auth.options.AuthSignUpOptions
 import com.amplifyframework.auth.result.AuthSignInResult
 import com.amplifyframework.auth.result.AuthSignUpResult
 import com.amplifyframework.core.Amplify
+import com.carelog.sync.NetworkMonitor
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -96,7 +97,8 @@ enum class PersonaType {
  */
 @Singleton
 class AuthRepository @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val networkMonitor: NetworkMonitor
 ) {
     private val _authState = MutableStateFlow<AuthState>(AuthState.Loading)
     val authState: StateFlow<AuthState> = _authState.asStateFlow()
@@ -134,7 +136,20 @@ class AuthRepository @Inject constructor(
             val session = fetchAuthSession()
             if (session.isSignedIn) {
                 flushPendingPersona()
-                val user = fetchCurrentUser()
+                val user = try {
+                    fetchCurrentUser().also { cacheUserForOffline(it) }
+                } catch (networkErr: Exception) {
+                    // Debug-only splash recovery: if Amplify's local token cache says
+                    // we're signed in but the remote attribute fetch failed and the
+                    // device is offline, trust the cached user blob so the app resumes
+                    // at the persona's home instead of routing to login. Strictly
+                    // gated on BuildConfig.DEBUG to keep prod off this path.
+                    val cached = readCachedUserForOffline()
+                    if (com.carelog.core.BuildConfig.DEBUG && !networkMonitor.isConnected() && cached != null) {
+                        Log.w(TAG, "Offline debug bypass: using cached user (${cached.email})")
+                        cached
+                    } else throw networkErr
+                }
                 _currentUser.value = user
                 _authState.value = AuthState.Authenticated(user)
             } else {
@@ -159,7 +174,7 @@ class AuthRepository @Inject constructor(
             if (result.isSignedIn) {
                 // If there's a pending persona from registration, write it now
                 flushPendingPersona()
-                val user = fetchCurrentUser()
+                val user = fetchCurrentUser().also { cacheUserForOffline(it) }
                 _currentUser.value = user
                 _authState.value = AuthState.Authenticated(user)
                 Result.success(user)
@@ -209,6 +224,31 @@ class AuthRepository @Inject constructor(
     /** Persona selected during registration, persisted to SharedPreferences
      *  so it survives process death between registration and first sign-in. */
     private val prefs = context.getSharedPreferences("carelog_auth", Context.MODE_PRIVATE)
+
+    private fun cacheUserForOffline(user: CareLogUser) {
+        prefs.edit()
+            .putString("cached_user_id", user.userId)
+            .putString("cached_email", user.email)
+            .putString("cached_name", user.name)
+            .putString("cached_persona", user.personaType.name)
+            .putString("cached_linked_patient_id", user.linkedPatientId.orEmpty())
+            .apply()
+    }
+
+    private fun readCachedUserForOffline(): CareLogUser? {
+        val userId = prefs.getString("cached_user_id", null) ?: return null
+        val email = prefs.getString("cached_email", null) ?: return null
+        val personaName = prefs.getString("cached_persona", null)
+        val persona = runCatching { personaName?.let { PersonaType.valueOf(it) } }.getOrNull()
+            ?: PersonaType.PATIENT
+        return CareLogUser(
+            userId = userId,
+            email = email,
+            name = prefs.getString("cached_name", "").orEmpty(),
+            personaType = persona,
+            linkedPatientId = prefs.getString("cached_linked_patient_id", null)?.takeIf { it.isNotEmpty() }
+        )
+    }
 
     private var _pendingPersona: PersonaType?
         get() = prefs.getString("pending_persona", null)?.let { PersonaType.fromString(it) }

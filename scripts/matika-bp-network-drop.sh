@@ -6,24 +6,13 @@
 # observation" log line. Proves the manual-log path survives a
 # network drop without data loss.
 #
-# KNOWN BLOCKER (2026-05-10): part 2 currently fails because
-# `launchApp: clearState: false` between Maestro sessions
-# (Maestro disconnects + reconnects across flow invocations) does
-# NOT preserve the Cognito auth state when network is offline —
-# the splash routes back to the login screen because the auth
-# token validation HTTP call fails offline. Two ways forward:
-#   1) Add a test-only "skip token validation if offline-and-
-#      tokens-present" branch in AuthRepository, gated on a debug
-#      build flag. Surgical product change.
-#   2) Use one continuous Maestro flow with `runScript` to toggle
-#      wifi — but Maestro's runScript can't shell out, so this
-#      requires either a host-side daemon (overkill) or a custom
-#      Maestro plugin.
-# Until then, the local-save-while-offline portion of EDGE-V2-14
-# is verifiable only via manual test; the post-recovery-sync
-# portion is implicitly verified by Phase-1 timing evidence (some
-# of the 6 Phase-1 vital saves had 4–5min sync lag, demonstrating
-# WorkManager backoff/retry resilience).
+# Unblocked 2026-05-11: AuthRepository now has a BuildConfig.DEBUG-
+# gated offline bypass — if Amplify's local token cache says the
+# user is signed in but the remote attribute fetch fails AND the
+# device is offline, the splash trusts a cached user blob and
+# routes to the persona's home instead of falling back to login.
+# That keeps Maestro on BloodPressureScreen across the wifi=OFF
+# launchApp boundary in part 2.
 #
 # Pre-conditions:
 #   - APK installed

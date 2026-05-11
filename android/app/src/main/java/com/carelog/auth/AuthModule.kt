@@ -1,6 +1,7 @@
 package com.carelog.auth
 
 import android.content.Context
+import com.carelog.sync.NetworkMonitor
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -18,8 +19,9 @@ object AuthModule {
     @Provides
     @Singleton
     fun provideAuthRepository(
-        @ApplicationContext context: Context
+        @ApplicationContext context: Context,
+        networkMonitor: NetworkMonitor
     ): AuthRepository {
-        return AuthRepository(context)
+        return AuthRepository(context, networkMonitor)
     }
 }
