@@ -172,11 +172,14 @@ fun computeDegradationState(status: ModelHealthStatus): DegradationState {
             )
         }
         OverallStatus.OFFLINE -> DegradationState(
-            canConverse = false,
+            // v2: Bedrock backs the conversation; the v1 Mac Mini LAN gate is
+            // misleading and was blocking the patient conversation Button after
+            // clearState. On-device TTS is independent of this poller.
+            canConverse = true,
             ttsAvailable = false,
             visionAvailable = false,
-            severity = DegradationSeverity.ERROR,
-            message = "CareLog device not found. Check that it's powered on and on the same WiFi."
+            severity = DegradationSeverity.NONE,
+            message = null
         )
     }
 }

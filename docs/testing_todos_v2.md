@@ -8,9 +8,20 @@
 
 ## Voice sweep (2026-05-10) — newly raised + resolved
 
-### F27 — Patient conversation entry gated on legacy v1 Mac Mini health check after `clearState` (NEW — surfaced 2026-05-10 post-F23)
+### F27 — Patient conversation entry gated on legacy v1 Mac Mini health check after `clearState` (RESOLVED — verified live 2026-05-10)
 
-**Severity:** Critical for patient-persona conversation journeys. Blocks PT-V2-07 (`patient_logging_happy_path` — the CI gate), PT-V2-05, PT-V2-06, PT-V2-08, PT-V2-09, EDGE-V2-03, EDGE-V2-11, EDGE-V2-13 — every flow that taps `patient_home_start_conversation`. Phase-1 manual-vital flows (PT-V2-15..21) are unaffected because they take the tile path. F23 voice patient onboarding works because it routes through `add_patient_voice_fab` on the caregiver dashboard, not the patient home button.
+**Severity:** Was Critical for patient-persona conversation journeys. Blocked PT-V2-07 (`patient_logging_happy_path` — the CI gate), PT-V2-05, PT-V2-06, PT-V2-08, PT-V2-09, EDGE-V2-03, EDGE-V2-11, EDGE-V2-13 — every flow that taps `patient_home_start_conversation`. Phase-1 manual-vital flows (PT-V2-15..21) are unaffected because they take the tile path. F23 voice patient onboarding works because it routes through `add_patient_voice_fab` on the caregiver dashboard, not the patient home button.
+
+**Status:** Path A shipped. `ModelStatusBanner.computeDegradationState` OFFLINE branch now returns `canConverse = true, severity = NONE, message = null`. Re-verified live 2026-05-10:
+- `patient_logging_happy_path` (CI gate) — PASS
+- `patient_guardrail_block_text` (EDGE-V2-03, also re-verifies F19) — PASS
+- `patient_implausible_text` (PT-V2-08) — PASS
+- `patient_emergency_text` (PT-V2-09) — PASS
+- `patient_pause_resume_text` (PT-V2-13) — PASS
+- `patient_implausible_glucose_text` (EDGE-V2-11) — PASS
+- `matika-connectivity-test.sh` (EDGE-V2-13, 3-part wifi cycle) — all parts PASS
+
+Each PASS culminates in `matika_response_card` (or the offline `Turn failed` toast for part 2 of the connectivity test) which requires a real device→Bedrock round-trip — UI mounts are the live evidence. In v2 the Android client invokes Bedrock directly via the AWS SDK; there is no backend `bedrock-router` lambda to grep CloudWatch for (`/aws/lambda/carelog-dev-bedrock-*` does not exist — orchestrator-doc reference was v1-era).
 
 **Owner:** `android-app`.
 
