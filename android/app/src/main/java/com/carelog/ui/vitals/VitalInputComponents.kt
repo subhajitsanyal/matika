@@ -8,6 +8,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -28,7 +29,8 @@ fun LargeNumericInput(
     maxDigits: Int = 3,
     isError: Boolean = false,
     errorMessage: String? = null,
-    accentColor: Color = CareLogColors.Primary
+    accentColor: Color = CareLogColors.Primary,
+    testTagId: String? = null
 ) {
     Column(
         modifier = modifier,
@@ -71,7 +73,9 @@ fun LargeNumericInput(
                         onValueChange(newValue)
                     }
                 },
-                modifier = Modifier.width(if (allowDecimal) 160.dp else 140.dp),
+                modifier = Modifier
+                    .width(if (allowDecimal) 160.dp else 140.dp)
+                    .then(if (testTagId != null) Modifier.testTag(testTagId) else Modifier),
                 textStyle = MaterialTheme.typography.displayMedium.copy(
                     textAlign = TextAlign.Center
                 ),

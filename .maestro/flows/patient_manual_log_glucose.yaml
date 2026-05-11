@@ -1,0 +1,59 @@
+# PT-V2-16: Manual log — Glucose
+#
+# Same pattern as patient_manual_log_blood_pressure.yaml — F4 Path A
+# wired vital_tile_glucose → GlucoseScreen with glucose_value_input
+# testTag and glucose_save_button.
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+- extendedWaitUntil:
+    visible:
+      id: login_email
+    timeout: 15000
+- tapOn:
+    id: login_email
+- inputText: ${MATIKA_PATIENT_EMAIL}
+- tapOn:
+    id: login_password
+- inputText: ${MATIKA_PATIENT_PASSWORD}
+- hideKeyboard
+- tapOn:
+    id: login_button
+
+- extendedWaitUntil:
+    visible:
+      id: patient_home_start_conversation
+    timeout: 15000
+- scrollUntilVisible:
+    element:
+      id: vital_tile_glucose
+    direction: DOWN
+    timeout: 10000
+- tapOn:
+    id: vital_tile_glucose
+
+- extendedWaitUntil:
+    visible:
+      id: glucose_save_button
+    timeout: 10000
+
+- tapOn:
+    id: glucose_value_input
+- inputText: "110"
+- hideKeyboard
+
+- tapOn:
+    id: glucose_save_button
+
+- extendedWaitUntil:
+    visible:
+      id: save_acknowledgement
+    timeout: 10000
+
+- extendedWaitUntil:
+    visible:
+      id: patient_home_start_conversation
+    timeout: 15000

@@ -81,7 +81,8 @@ fun TemperatureScreen(
                 maxDigits = 3,
                 isError = uiState.valueError != null,
                 errorMessage = uiState.valueError,
-                accentColor = CareLogColors.Temperature
+                accentColor = CareLogColors.Temperature,
+                testTagId = "temperature_value_input"
             )
 
             Spacer(modifier = Modifier.weight(1f))

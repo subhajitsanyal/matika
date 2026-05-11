@@ -1,0 +1,77 @@
+# PT-V2-15: Manual log — Blood Pressure
+#
+# F4 Path A wired vital_tile_blood_pressure on PatientHomeScreen.
+# Flow: login → scroll to BP tile → tap → enter systolic+diastolic
+#       → tap Save → assert save_acknowledgement overlay → return home.
+#
+# Backend evidence: sync-observation lambda writes to S3 at
+#   observations/{patientId}/{YYYY}/{MM}/{DD}/{id}.json
+# (Verified post-flow via CloudWatch "Stored observation ..." log line
+#  AND/OR `aws s3 ls`.)
+#
+# Run: scripts/maestro-run.sh patient_manual_log_blood_pressure
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+# ── Sign in as the patient ──────────────────────────────────
+- extendedWaitUntil:
+    visible:
+      id: login_email
+    timeout: 15000
+- tapOn:
+    id: login_email
+- inputText: ${MATIKA_PATIENT_EMAIL}
+- tapOn:
+    id: login_password
+- inputText: ${MATIKA_PATIENT_PASSWORD}
+- hideKeyboard
+- tapOn:
+    id: login_button
+
+# ── Patient home → scroll to BP tile ────────────────────────
+- extendedWaitUntil:
+    visible:
+      id: patient_home_start_conversation
+    timeout: 15000
+- scrollUntilVisible:
+    element:
+      id: vital_tile_blood_pressure
+    direction: DOWN
+    timeout: 10000
+- tapOn:
+    id: vital_tile_blood_pressure
+
+# ── BloodPressureScreen mounted ─────────────────────────────
+- extendedWaitUntil:
+    visible:
+      id: bp_save_button
+    timeout: 10000
+
+# ── Enter systolic + diastolic ──────────────────────────────
+- tapOn:
+    id: bp_systolic_input
+- inputText: "130"
+- hideKeyboard
+- tapOn:
+    id: bp_diastolic_input
+- inputText: "85"
+- hideKeyboard
+
+# ── Save ────────────────────────────────────────────────────
+- tapOn:
+    id: bp_save_button
+
+# ── Success overlay appears (auto-dismisses ~2.1s later) ────
+- extendedWaitUntil:
+    visible:
+      id: save_acknowledgement
+    timeout: 10000
+
+# ── Returns to patient home after auto-dismiss ──────────────
+- extendedWaitUntil:
+    visible:
+      id: patient_home_start_conversation
+    timeout: 15000

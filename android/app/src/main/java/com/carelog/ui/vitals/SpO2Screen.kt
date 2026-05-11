@@ -71,7 +71,8 @@ fun SpO2Screen(
                 maxDigits = 3,
                 isError = uiState.valueError != null,
                 errorMessage = uiState.valueError,
-                accentColor = CareLogColors.SpO2
+                accentColor = CareLogColors.SpO2,
+                testTagId = "spo2_value_input"
             )
 
             // Info text

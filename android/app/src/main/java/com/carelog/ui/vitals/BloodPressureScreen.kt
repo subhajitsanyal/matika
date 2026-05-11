@@ -72,7 +72,8 @@ fun BloodPressureScreen(
                 placeholder = "120",
                 unit = "mmHg",
                 isError = uiState.systolicError != null,
-                errorMessage = uiState.systolicError
+                errorMessage = uiState.systolicError,
+                testTagId = "bp_systolic_input"
             )
 
             // Divider with slash
@@ -90,7 +91,8 @@ fun BloodPressureScreen(
                 placeholder = "80",
                 unit = "mmHg",
                 isError = uiState.diastolicError != null,
-                errorMessage = uiState.diastolicError
+                errorMessage = uiState.diastolicError,
+                testTagId = "bp_diastolic_input"
             )
 
             Spacer(modifier = Modifier.weight(1f))
@@ -163,7 +165,8 @@ fun BloodPressureInput(
     placeholder: String,
     unit: String,
     isError: Boolean = false,
-    errorMessage: String? = null
+    errorMessage: String? = null,
+    testTagId: String? = null
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally
@@ -188,7 +191,9 @@ fun BloodPressureInput(
                         onValueChange(newValue)
                     }
                 },
-                modifier = Modifier.width(140.dp),
+                modifier = Modifier
+                    .width(140.dp)
+                    .then(if (testTagId != null) Modifier.testTag(testTagId) else Modifier),
                 textStyle = MaterialTheme.typography.displayMedium.copy(
                     textAlign = TextAlign.Center
                 ),

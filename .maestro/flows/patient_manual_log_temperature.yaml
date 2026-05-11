@@ -1,0 +1,63 @@
+# PT-V2-17: Manual log — Temperature
+#
+# Same pattern as patient_manual_log_blood_pressure.yaml — F4 Path A
+# wired vital_tile_temperature → TemperatureScreen with
+# temperature_value_input testTag.
+#
+# Default unit on TemperatureScreen drives the validation range; this
+# flow types 98.6 (valid °F) — if default flips to °C in a future
+# refactor, flip the value to 37.0.
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+- extendedWaitUntil:
+    visible:
+      id: login_email
+    timeout: 15000
+- tapOn:
+    id: login_email
+- inputText: ${MATIKA_PATIENT_EMAIL}
+- tapOn:
+    id: login_password
+- inputText: ${MATIKA_PATIENT_PASSWORD}
+- hideKeyboard
+- tapOn:
+    id: login_button
+
+- extendedWaitUntil:
+    visible:
+      id: patient_home_start_conversation
+    timeout: 15000
+- scrollUntilVisible:
+    element:
+      id: vital_tile_temperature
+    direction: DOWN
+    timeout: 10000
+- tapOn:
+    id: vital_tile_temperature
+
+- extendedWaitUntil:
+    visible:
+      id: temperature_save_button
+    timeout: 10000
+
+- tapOn:
+    id: temperature_value_input
+- inputText: "98.6"
+- hideKeyboard
+
+- tapOn:
+    id: temperature_save_button
+
+- extendedWaitUntil:
+    visible:
+      id: save_acknowledgement
+    timeout: 10000
+
+- extendedWaitUntil:
+    visible:
+      id: patient_home_start_conversation
+    timeout: 15000

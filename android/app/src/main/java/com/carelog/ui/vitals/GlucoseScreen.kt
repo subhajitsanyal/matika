@@ -81,7 +81,8 @@ fun GlucoseScreen(
                 maxDigits = if (uiState.unit == "mg/dL") 3 else 2,
                 isError = uiState.valueError != null,
                 errorMessage = uiState.valueError,
-                accentColor = CareLogColors.Glucose
+                accentColor = CareLogColors.Glucose,
+                testTagId = "glucose_value_input"
             )
 
             Spacer(modifier = Modifier.height(24.dp))

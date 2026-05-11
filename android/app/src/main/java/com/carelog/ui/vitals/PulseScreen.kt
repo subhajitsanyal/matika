@@ -71,7 +71,8 @@ fun PulseScreen(
                 maxDigits = 3,
                 isError = uiState.valueError != null,
                 errorMessage = uiState.valueError,
-                accentColor = CareLogColors.Pulse
+                accentColor = CareLogColors.Pulse,
+                testTagId = "pulse_value_input"
             )
 
             // Info text

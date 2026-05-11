@@ -1,0 +1,51 @@
+# PT-V2-21: View vital history
+#
+# The 6-tile manual-vitals grid on PatientHomeScreen IS the vitals
+# overview surface in v2 — assert that all 6 testTags render after
+# login, scrolling once to bring the grid into view.
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+- extendedWaitUntil:
+    visible:
+      id: login_email
+    timeout: 15000
+- tapOn:
+    id: login_email
+- inputText: ${MATIKA_PATIENT_EMAIL}
+- tapOn:
+    id: login_password
+- inputText: ${MATIKA_PATIENT_PASSWORD}
+- hideKeyboard
+- tapOn:
+    id: login_button
+
+- extendedWaitUntil:
+    visible:
+      id: patient_home_start_conversation
+    timeout: 15000
+
+# Scroll once to surface the manual-vitals grid below the
+# conversation-first CTA.
+- scrollUntilVisible:
+    element:
+      id: vital_tile_spo2
+    direction: DOWN
+    timeout: 10000
+
+# All 6 tiles must be present and visible.
+- assertVisible:
+    id: vital_tile_blood_pressure
+- assertVisible:
+    id: vital_tile_glucose
+- assertVisible:
+    id: vital_tile_temperature
+- assertVisible:
+    id: vital_tile_weight
+- assertVisible:
+    id: vital_tile_pulse
+- assertVisible:
+    id: vital_tile_spo2

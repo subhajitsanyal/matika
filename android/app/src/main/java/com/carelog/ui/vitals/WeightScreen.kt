@@ -81,7 +81,8 @@ fun WeightScreen(
                 maxDigits = 3,
                 isError = uiState.valueError != null,
                 errorMessage = uiState.valueError,
-                accentColor = CareLogColors.Weight
+                accentColor = CareLogColors.Weight,
+                testTagId = "weight_value_input"
             )
 
             Spacer(modifier = Modifier.weight(1f))
