@@ -48,6 +48,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.runtime.Composable
@@ -709,15 +714,28 @@ private fun TextFallback(
             onValueChange = { text = it },
             modifier = Modifier
                 .weight(1f)
-                .testTag("matika_text_fallback"),
+                .testTag("matika_text_fallback")
+                // F23 — handle the hardware-Enter path too. Maestro and
+                // adb dispatch `input keyevent KEYCODE_ENTER` rather than
+                // the IME's IME_ACTION_SEND, so `KeyboardActions.onSend`
+                // alone doesn't fire from automation. Catch the hardware
+                // Enter here and route to the same submit lambda so the
+                // smoke flow can submit turns without tapping the
+                // (keyboard-occluded) Send button.
+                .onPreviewKeyEvent { event ->
+                    if (event.type == KeyEventType.KeyUp && event.key == Key.Enter) {
+                        submit()
+                        true
+                    } else {
+                        false
+                    }
+                },
             label = { Text("Type instead (fallback)") },
             shape = RoundedCornerShape(12.dp),
             enabled = enabled,
             singleLine = true,
-            // F23 — IME action submits the turn directly. Maestro can
-            // dispatch ENTER via pressKey to fire this without tapping
-            // the explicit Send button, which is occluded by the
-            // keyboard at typical handset resolutions.
+            // IME action submits the turn from the soft keyboard's
+            // Send button (user-visible path).
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
             keyboardActions = KeyboardActions(onSend = { submit() }),
         )

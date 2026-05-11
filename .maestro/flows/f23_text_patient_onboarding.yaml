@@ -59,6 +59,9 @@ appId: com.carelog
 
 # === Turn 2 — caregiver confirms the name readback ===
 - extendedWaitUntil:
+    notVisible: { id: matika_thinking_indicator }
+    timeout: 120000
+- extendedWaitUntil:
     notVisible: { id: matika_speaking_indicator }
     timeout: 60000
 - extendedWaitUntil:
@@ -72,6 +75,9 @@ appId: com.carelog
     timeout: 90000
 
 # === Turn 3 — push the LLM to Stage 7 (credentials modal) ===
+- extendedWaitUntil:
+    notVisible: { id: matika_thinking_indicator }
+    timeout: 120000
 - extendedWaitUntil:
     notVisible: { id: matika_speaking_indicator }
     timeout: 60000
@@ -103,6 +109,9 @@ appId: com.carelog
 # confirmation. Saying "yes" closes the profile-extraction phase via
 # complete_session; the handler intercepts and fires the mid-session
 # pivot to create-patient-from-voice.
+- extendedWaitUntil:
+    notVisible: { id: matika_thinking_indicator }
+    timeout: 120000
 - extendedWaitUntil:
     notVisible: { id: matika_speaking_indicator }
     timeout: 60000

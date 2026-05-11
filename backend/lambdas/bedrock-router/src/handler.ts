@@ -274,7 +274,7 @@ export async function handleTurn(event: TurnRequest, deps: HandlerDeps): Promise
   //    prepend it to the per-turn block so the model gets a focused directive
   //    (challenge implausibility, handle emergency safety-first, etc.).
   const systemPrompt = loadSystemPrompt(
-    selectSystemPromptPath(turnCtx.sessionState.sessionType, turnCtx.sessionState.fsmState, deps.config),
+    selectSystemPromptPath(turnCtx.sessionState.sessionType, turnCtx.sessionState.fsmState, deps.config, patientCtx.placeholder ?? false),
   );
   const perPatientBlock = renderPatientContext(patientCtx);
   const baseTurnBlock = renderTurnContext(turnCtx);
@@ -350,18 +350,55 @@ export async function handleTurn(event: TurnRequest, deps: HandlerDeps): Promise
   const newFsmState = applyTransition(turnCtx.sessionState.fsmState, parsed.stateTransition);
 
   // 7a. F23 — caregiver_onboarding mid-session pivot. When the LLM
-  //     confirms the profile readback (newFsmState === PROFILE_CONFIRMED
-  //     + complete_session action), invoke create-patient-from-voice
-  //     and refresh patientCtx with the real post-pivot patient. The
-  //     remaining downstream logic (model_call record, session
-  //     persister, etc.) then runs against the real patient.
+  //     finishes the profile readback and emits complete_session,
+  //     invoke create-patient-from-voice and refresh patientCtx with
+  //     the real post-pivot patient. The downstream logic (model_call
+  //     record, session persister, protocol extraction) then runs
+  //     against the real patient.
+  //
+  //     We DELIBERATELY do NOT require newFsmState === PROFILE_CONFIRMED
+  //     here. Haiku's stateTransition declaration is unreliable on the
+  //     readback turn — empirically (2026-05-10 smoke run, session
+  //     ffb3d390) it emits complete_session while still declaring
+  //     EXTRACTING_PROFILE or AWAITING_PROFILE_CONFIRMATION, which
+  //     would skip the pivot and fall through to protocol-extraction
+  //     with patientId='' (placeholder), failing with
+  //     `invalid input syntax for type uuid: ""`. The action itself
+  //     (complete_session on a placeholder session) is the real signal
+  //     of intent to finalize — trust it. patientProfile + credentials
+  //     completeness is validated by the pivot input checks below;
+  //     create-patient-from-voice rejects empty name etc. on its end.
   let pivotedThisTurn = false;
+  // F23 — if the LLM emits complete_session on a placeholder session but
+  // forgets the patientProfile block (Haiku flake; the prompt requires
+  // patientProfile on every post-turn-1 response, but empirically it
+  // sometimes drops the block on the closing turn — session 4ef3f90b on
+  // 2026-05-10 was the live repro), don't throw. Strip complete_session
+  // from actions and overwrite responseText with a recovery prompt so the
+  // conversation continues. The caregiver re-confirms; the LLM gets a
+  // second chance to include patientProfile. Without this fix the session
+  // is permanently wedged (fsm_state advances post-PROFILE_CONFIRMED but
+  // patient_id stays NULL forever).
+  const wantsPivotButNoProfile =
+    patientCtx.placeholder &&
+    parsed.actions.some((a) => a.type === 'complete_session') &&
+    !parsed.patientProfile;
+  if (wantsPivotButNoProfile) {
+    console.warn('placeholder_complete_session_missing_patientProfile_recovery', {
+      sessionId: event.sessionId,
+      llmResponseText: parsed.responseText?.slice(0, 200),
+      llmActions: parsed.actions.map((a) => a.type),
+    });
+    parsed.actions = parsed.actions.filter((a) => a.type !== 'complete_session');
+    parsed.responseText =
+      "I'm sorry — I lost the profile details just then. Could you say her name and age one more time so I can confirm and save?";
+  }
   const isPivotTurn =
     patientCtx.placeholder &&
-    newFsmState === 'PROFILE_CONFIRMED' &&
     parsed.actions.some((a) => a.type === 'complete_session');
   if (isPivotTurn) {
     if (!parsed.patientProfile) {
+      // Defense in depth — the recovery above should have caught this.
       throw new HandlerError(
         500,
         'profile_pivot_missing_patientProfile',
@@ -1120,14 +1157,27 @@ function selectSystemPromptPath(
   sessionType: SessionType,
   fsmState: SessionState['fsmState'],
   config: HandlerConfig,
+  isPlaceholderCtx: boolean,
 ): string {
   if (sessionType === 'caregiver_onboarding') {
-    // F23 — pre-pivot profile-extraction phase uses a dedicated
-    // prompt that knows about the new FSM states + emits the
-    // patientProfile block. Post-pivot turns (CREATED on a session
-    // that already has a real patient_id, or fsm_state in EXTRACTING /
-    // PENDING_CONFIRMATION etc.) use the existing protocol-extraction
-    // prompt.
+    // F23 — the placeholder PatientContext is the load-bearing signal
+    // for "pre-pivot profile-extraction phase". Pin the profile prompt
+    // for every turn while placeholder is in effect, regardless of the
+    // fsmState the LLM happens to have declared. Empirically Haiku
+    // drifts the fsmState to PAUSED (after pause_session) or
+    // EXTRACTING (after a too-eager state transition) while we're
+    // still in the pre-pivot phase — that would have switched the
+    // prompt to the protocol-extraction one, the LLM would have
+    // followed THAT prompt's stages, and the pivot would never fire.
+    // Repro: 2026-05-10 session 72f34a82 — fsmState went PAUSED →
+    // EXTRACTING → PENDING_CONFIRMATION → COMPLETE while patient_id
+    // stayed NULL.
+    if (isPlaceholderCtx && config.caregiverOnboardingProfilePromptPath) {
+      return config.caregiverOnboardingProfilePromptPath;
+    }
+    // Fallback to fsmState-based selection (kept for the post-pivot
+    // turn that may still come through this function with a stale
+    // closure on the now-real patientCtx).
     const isProfilePhase =
       fsmState === 'EXTRACTING_PROFILE' ||
       fsmState === 'AWAITING_PROFILE_CONFIRMATION';
@@ -1581,7 +1631,7 @@ export async function handleTurnStream(
     });
 
     const systemPrompt = loadSystemPrompt(
-      selectSystemPromptPath(turnCtx.sessionState.sessionType, turnCtx.sessionState.fsmState, deps.config),
+      selectSystemPromptPath(turnCtx.sessionState.sessionType, turnCtx.sessionState.fsmState, deps.config, patientCtx.placeholder ?? false),
     );
     const perPatientBlock = renderPatientContext(patientCtx);
     const baseTurnBlock = renderTurnContext(turnCtx);
