@@ -1,8 +1,8 @@
 # Matika v2 — Testing Backlog (Path to Exhaustive Coverage)
 
-**Date:** 2026-05-08
-**Source:** Sweep `20260508_215314` (Standard, English voice). See report at `test-automation/results/journey-results/20260508_215314/report.md` (local-only; gitignored).
-**Status:** First-sweep findings recorded. Exhaustive coverage is **2–3 weeks of focused work** away, not "rerun with bigger sleeps."
+**Date:** 2026-05-10 (post-F23 sweep)
+**Source:** Sweep `20260508_215314` (Standard, English voice), augmented by 2026-05-09 backend-chain audit, 2026-05-10 F23 ship + voice cluster, and 2026-05-10 post-F23 manual-vital + caregiver-screen sweep. See report at `test-automation/results/journey-results/20260508_215314/report.md` (local-only; gitignored).
+**Status:** 32 of 64 non-voice journeys PASS as of 2026-05-10 end of day (was 23 yesterday). F27 surfaced as the biggest open unlock (regresses the CI gate + every patient-conversation flow). Exhaustive coverage is **1.5–2 weeks of focused work** away — F27 Path A fix + F17 push transport + DR-V2-* web-portal data-testid + Playwright runner are the four parallel streams.
 
 ---
 
