@@ -803,10 +803,15 @@ async function loadPatientContextOrPlaceholder(
   event: TurnRequest,
   deps: HandlerDeps,
 ): Promise<PatientContext> {
-  const isCaregiverOnboardingSession = event.sessionType === 'caregiver_onboarding';
+  // F23 — the `pending-<sessionId>` sentinel itself is the placeholder
+  // signal. It can never be a real cognito_sub, so its presence alone
+  // is unambiguous. Don't gate on sessionType — the Android state
+  // machine sends sessionType only on turn 1 (turns 2+ omit it so the
+  // server doesn't think the session-type is mutable), which would
+  // break the placeholder path for every turn after the first.
   const isPendingSentinel = isPendingPatientId(event.patientId);
 
-  if (!(isCaregiverOnboardingSession && isPendingSentinel)) {
+  if (!isPendingSentinel) {
     return await deps.patientLoader.load(event.patientId);
   }
 

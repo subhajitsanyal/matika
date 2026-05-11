@@ -1,0 +1,160 @@
+# F23 — voice patient onboarding (caregiver creates a patient from
+# scratch by speaking to Matika). End-to-end smoke for the F23 step 4
+# Android UI wiring + the step 3 backend placeholder bootstrap +
+# mid-session pivot.
+#
+# Run:
+#   source ~/.matika-test-creds.env
+#   scripts/matika-voice-run.sh f23_voice_patient_onboarding \
+#       --turn "en|170|I want to set up monitoring for my mother. Her name is Asha Devi. She is 68 years old, female. She has hypertension and is otherwise healthy. Her primary language is English.|800" \
+#       --turn "en|175|Yes, that is correct.|500" \
+#       --turn "en|175|I have no other information. Please proceed to set up her account.|500" \
+#       --turn "en|175|Yes, everything is correct, please confirm.|500"
+#
+# Conversational arc (best guess — the LLM has some latitude):
+#   Turn 1 — caregiver volunteers the full profile front-loaded so the
+#            LLM can skip individual stage probes per the prompt's
+#            "skip gracefully" rule.
+#   Turn 2 — caregiver confirms the name read-back (Stage 1's hard
+#            requirement: "Asha Devi — is that right?" → "Yes…").
+#   Turn 3 — caregiver pushes the LLM to Stage 7 (the credentials
+#            form modal). Then the AlertDialog appears and the
+#            Maestro flow takes over to type email + phone.
+#   Turn 4 — after the modal closes, the LLM does the final readback;
+#            caregiver confirms → complete_session fires → the
+#            bedrock-router's pivot to create-patient-from-voice runs.
+#
+# Pre-conditions:
+#   - APK built (debug). The wrapper installs it.
+#   - Bedrock-router live at CodeSha256 ebJ4Ruz… (c9fc7f4 fixups).
+#   - Bench preflight (per voice_harness_lessons memory):
+#       killall say 2>/dev/null
+#       adb logcat -c
+#       SwitchAudioSource -t output -s "External Headphones"
+#       osascript -e 'set volume output volume 90'
+#       adb shell settings put system volume_music 15
+#
+# Post-run verification (NOT done by this flow):
+#   - psql via SSM tunnel:
+#       SELECT id, name, dob FROM patients
+#       WHERE name ILIKE 'asha%' AND created_at > NOW() - INTERVAL '1 hour';
+#       SELECT s.id, s.patient_id, s.session_type
+#       FROM interaction_sessions s
+#       WHERE s.created_at > NOW() - INTERVAL '1 hour'
+#         AND s.session_type = 'caregiver_onboarding'
+#       ORDER BY s.created_at DESC LIMIT 5;
+#   - CloudWatch on bedrock-router for
+#       "caregiver_onboarding pivot ok" in the last hour.
+
+appId: com.carelog
+---
+# Pre-grant runtime permissions so clearState's revoke doesn't pop the
+# Android permission dialog mid-flow — that dialog ate the first-turn
+# response timeout on 2026-05-10 17:08.
+- launchApp:
+    clearState: true
+    permissions:
+      microphone: allow
+      notifications: allow
+
+# ── Caregiver login ────────────────────────────────────────
+- extendedWaitUntil:
+    visible: { id: login_email }
+    timeout: 15000
+- tapOn: { id: login_email }
+- inputText: ${MATIKA_CAREGIVER_EMAIL}
+- tapOn: { id: login_password }
+- inputText: ${MATIKA_CAREGIVER_PASSWORD}
+- hideKeyboard
+- tapOn: { id: login_button }
+
+# ── Caregiver dashboard → voice FAB ───────────────────────
+- extendedWaitUntil:
+    visible: { id: add_patient_voice_fab }
+    timeout: 60000
+- tapOn: { id: add_patient_voice_fab }
+
+# ── Voice conversation screen mounted ─────────────────────
+- extendedWaitUntil:
+    visible: { id: matika_text_fallback }
+    timeout: 30000
+- extendedWaitUntil:
+    visible: { id: matika_mic }
+    timeout: 15000
+
+# === Turn 1 — caregiver opens with rich profile info ===
+- tapOn: { id: matika_mic }
+# matika_response_card mounts only after a successful /conversation/turn
+# round-trip — non-vacuous proof the placeholder bootstrap path took
+# (this is the F23-specific assertion). 180s timeout because the first
+# Bedrock-router turn can suffer cold-start latency, and the placeholder
+# bootstrap path adds an extra users.id resolve.
+- extendedWaitUntil:
+    visible: { id: matika_response_card }
+    timeout: 180000
+
+# === Turn 2 — caregiver confirms the name readback ===
+- extendedWaitUntil:
+    notVisible: { id: matika_speaking_indicator }
+    timeout: 30000
+- extendedWaitUntil:
+    visible: { id: matika_mic }
+    timeout: 30000
+- tapOn: { id: matika_mic }
+- extendedWaitUntil:
+    visible: { id: matika_turn_counter, text: "turn 2" }
+    timeout: 90000
+
+# === Turn 3 — caregiver pushes to credentials stage ===
+- extendedWaitUntil:
+    notVisible: { id: matika_speaking_indicator }
+    timeout: 30000
+- extendedWaitUntil:
+    visible: { id: matika_mic }
+    timeout: 30000
+- tapOn: { id: matika_mic }
+
+# ── Credentials form modal ────────────────────────────────
+# The LLM should emit pause_session{reason: awaiting_patient_credentials}
+# after the third turn. Generous timeout — the modal may appear after
+# turn 3's response, or after a follow-up readback turn.
+- extendedWaitUntil:
+    visible: { id: patient_credentials_email }
+    timeout: 180000
+- tapOn: { id: patient_credentials_email }
+- inputText: "f23-smoke-2026-05-10@example.invalid"
+- tapOn: { id: patient_credentials_phone }
+- inputText: "+919999999999"
+- hideKeyboard
+- tapOn: { id: patient_credentials_submit }
+
+# Modal dismisses immediately on submit.
+- extendedWaitUntil:
+    notVisible: { id: patient_credentials_email }
+    timeout: 10000
+
+# === Turn 4 — caregiver confirms the final profile readback ===
+# After the modal, the LLM does the final readback and asks for
+# confirmation. Saying "yes" closes the profile-extraction phase via
+# complete_session; the handler intercepts and fires the mid-session
+# pivot to create-patient-from-voice.
+- extendedWaitUntil:
+    notVisible: { id: matika_speaking_indicator }
+    timeout: 60000
+- extendedWaitUntil:
+    visible: { id: matika_mic }
+    timeout: 30000
+- tapOn: { id: matika_mic }
+
+# Wait for either:
+#   - Turn counter advances past turn 3 (LLM acknowledged the confirm)
+#   - SessionCompleteCard appears (profile phase wrapped + protocol
+#     extractor kicked off, somewhat unlikely on this turn — would need
+#     a multi-message sequence)
+- extendedWaitUntil:
+    visible: { id: matika_turn_counter }
+    timeout: 120000
+
+# Sanity: still on the conversation screen (mic visible). The actual
+# pivot evidence is verified out-of-band via RDS rows + CloudWatch logs.
+- assertVisible: { id: matika_mic }

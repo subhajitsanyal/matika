@@ -1,0 +1,123 @@
+# F23 — voice patient onboarding (text-fallback variant). Same code
+# paths as f23_voice_patient_onboarding.yaml but drives turns via
+# matika_text_fallback instead of the mic, so it works without the
+# Mac speech-to-mic acoustic harness.
+#
+# Design notes:
+#   - No `hideKeyboard` between inputText and tap text_send. On Samsung
+#     One UI, Maestro's hideKeyboard intermittently sends KEYCODE_BACK
+#     instead of suppressing the IME, and on the conversation screen
+#     that pops back to the caregiver dashboard (seen on 2026-05-10
+#     run #3). Compose Material3 OutlinedTextField with singleLine
+#     auto-dismisses on submit anyway.
+#   - 3 unconditional text turns then wait for the credentials modal.
+#     The runFlow conditional pattern was racy — if the modal hadn't
+#     appeared after turn 2, the conditional fired turn 3 but the
+#     screen navigated away mid-block.
+#
+# Run:
+#   source ~/.matika-test-creds.env
+#   scripts/maestro-run.sh f23_text_patient_onboarding
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+    permissions:
+      microphone: allow
+      notifications: allow
+
+# ── Caregiver login ────────────────────────────────────────
+- extendedWaitUntil:
+    visible: { id: login_email }
+    timeout: 15000
+- tapOn: { id: login_email }
+- inputText: ${MATIKA_CAREGIVER_EMAIL}
+- tapOn: { id: login_password }
+- inputText: ${MATIKA_CAREGIVER_PASSWORD}
+- hideKeyboard
+- tapOn: { id: login_button }
+
+# ── Caregiver dashboard → voice FAB (the F23 entry point) ─
+- extendedWaitUntil:
+    visible: { id: add_patient_voice_fab }
+    timeout: 60000
+- tapOn: { id: add_patient_voice_fab }
+
+# ── Conversation screen mounted ───────────────────────────
+- extendedWaitUntil:
+    visible: { id: matika_text_fallback }
+    timeout: 30000
+
+# === Turn 1 — caregiver opens with rich profile info ===
+- tapOn: { id: matika_text_fallback }
+- inputText: "I want to set up monitoring for my mother. Her name is Asha Devi. She is 68 years old, female. She has hypertension and is otherwise healthy. Her primary language is English."
+- pressKey: Enter
+- extendedWaitUntil:
+    visible: { id: matika_response_card }
+    timeout: 120000
+
+# === Turn 2 — caregiver confirms the name readback ===
+- extendedWaitUntil:
+    notVisible: { id: matika_speaking_indicator }
+    timeout: 60000
+- extendedWaitUntil:
+    visible: { id: matika_text_fallback }
+    timeout: 30000
+- tapOn: { id: matika_text_fallback }
+- inputText: "Yes, that is all correct. Please proceed to create her account."
+- pressKey: Enter
+- extendedWaitUntil:
+    visible: { id: matika_turn_counter, text: "turn 2" }
+    timeout: 90000
+
+# === Turn 3 — push the LLM to Stage 7 (credentials modal) ===
+- extendedWaitUntil:
+    notVisible: { id: matika_speaking_indicator }
+    timeout: 60000
+- extendedWaitUntil:
+    visible: { id: matika_text_fallback }
+    timeout: 30000
+- tapOn: { id: matika_text_fallback }
+- inputText: "I have no other information to share. Please proceed to collect her contact details and finish."
+- pressKey: Enter
+
+# ── Credentials form modal ────────────────────────────────
+# Modal should appear after this turn per Stage 7 of the prompt.
+- extendedWaitUntil:
+    visible: { id: patient_credentials_email }
+    timeout: 180000
+- tapOn: { id: patient_credentials_email }
+- inputText: "f23-smoke-2026-05-10@example.invalid"
+- tapOn: { id: patient_credentials_phone }
+- inputText: "+919999999999"
+- tapOn: { id: patient_credentials_submit }
+
+# Modal dismisses immediately on submit.
+- extendedWaitUntil:
+    notVisible: { id: patient_credentials_email }
+    timeout: 10000
+
+# === Final turn — caregiver confirms the readback ===
+# After the modal, the LLM does the final readback and asks for
+# confirmation. Saying "yes" closes the profile-extraction phase via
+# complete_session; the handler intercepts and fires the mid-session
+# pivot to create-patient-from-voice.
+- extendedWaitUntil:
+    notVisible: { id: matika_speaking_indicator }
+    timeout: 60000
+- extendedWaitUntil:
+    visible: { id: matika_text_fallback }
+    timeout: 30000
+- tapOn: { id: matika_text_fallback }
+- inputText: "Yes, all the details are correct. Please confirm and create the account."
+- pressKey: Enter
+
+# Wait for any turn counter advance — the pivot is invisible to the UI
+# per se. Verifiable signal is in RDS + CloudWatch (via /tmp/f23_verify.sh).
+- extendedWaitUntil:
+    visible: { id: matika_turn_counter }
+    timeout: 180000
+
+# Sanity: we're still on the conversation screen (text fallback present).
+- assertVisible: { id: matika_text_fallback }

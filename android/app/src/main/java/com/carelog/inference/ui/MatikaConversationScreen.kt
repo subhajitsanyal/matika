@@ -23,6 +23,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
@@ -46,6 +47,8 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -57,6 +60,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -224,6 +229,7 @@ fun MatikaConversationScreen(
     }
 }
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun PatientCredentialsDialog(
     onSubmit: (email: String, phone: String) -> Unit,
@@ -234,6 +240,11 @@ private fun PatientCredentialsDialog(
     val submitEnabled = email.isNotBlank() && phone.isNotBlank()
 
     AlertDialog(
+        // AlertDialog renders in its own Compose Window (via Popup).
+        // The root MainActivity's `testTagsAsResourceId = true` semantics
+        // flag does NOT propagate across windows — without re-applying
+        // it here, Maestro can't see the testTags on the inner fields.
+        modifier = Modifier.semantics { testTagsAsResourceId = true },
         onDismissRequest = onDismiss,
         title = { Text("Patient contact details") },
         text = {
@@ -683,6 +694,12 @@ private fun TextFallback(
     onSubmit: (String) -> Unit,
 ) {
     var text by remember { mutableStateOf("") }
+    val submit: () -> Unit = {
+        if (text.isNotBlank()) {
+            onSubmit(text)
+            text = ""
+        }
+    }
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -697,15 +714,16 @@ private fun TextFallback(
             shape = RoundedCornerShape(12.dp),
             enabled = enabled,
             singleLine = true,
+            // F23 — IME action submits the turn directly. Maestro can
+            // dispatch ENTER via pressKey to fire this without tapping
+            // the explicit Send button, which is occluded by the
+            // keyboard at typical handset resolutions.
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+            keyboardActions = KeyboardActions(onSend = { submit() }),
         )
         Spacer(Modifier.size(8.dp))
         Button(
-            onClick = {
-                if (text.isNotBlank()) {
-                    onSubmit(text)
-                    text = ""
-                }
-            },
+            onClick = submit,
             enabled = enabled && text.isNotBlank(),
             modifier = Modifier.testTag("matika_text_send"),
         ) {
