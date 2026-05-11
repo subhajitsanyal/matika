@@ -1,0 +1,78 @@
+# CG-V2-12 — caregiver edits a vital threshold manually.
+#
+# F4 Path A wired `caregiver_thresholds` on CaregiverHomeScreen →
+# ThresholdConfigScreen. F26 repointed the screen at v2
+# `parameter_configs`. This flow exercises the edit-save round-trip
+# against Jane Doe's BP systolic config (seeded at min=[90] / max=[160]).
+#
+# What this exercises end-to-end:
+#   - Caregiver login + CaregiverHomeScreen load
+#   - getParameterThresholds (POST /v2/relative/thresholds, persona-gated)
+#   - ThresholdConfigScreen LazyColumn renders one ThresholdCard per
+#     parameter_configs row
+#   - User edits a min field → isEditing=true → Save Changes button
+#     mounts → tap fires updateThreshold → POST /v2/relative/thresholds
+#     → parameter_configs.threshold_min updated for that row
+#
+# The threshold_min / threshold_max columns are `numeric[]` arrays in
+# Postgres; the API extracts the [0] index for the UI scalar. After
+# Save, the array's first element should equal the new value.
+#
+# Backend verification (run after the flow):
+#   psql -c "SELECT parameter_name, threshold_min, threshold_max
+#            FROM parameter_configs
+#            WHERE patient_id = '8c5090c0-5439-42c9-a724-b3b24e0d7c55'
+#              AND parameter_name = 'blood_pressure_systolic';"
+#
+# Run:
+#   source ~/.matika-test-creds.env
+#   scripts/maestro-run.sh caregiver_threshold_edit
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+# ── Sign in as caregiver ───────────────────────────────────────
+- extendedWaitUntil:
+    visible: { id: login_email }
+    timeout: 15000
+- tapOn: { id: login_email }
+- inputText: ${MATIKA_CAREGIVER_EMAIL}
+- tapOn: { id: login_password }
+- inputText: ${MATIKA_CAREGIVER_PASSWORD}
+- hideKeyboard
+- tapOn: { id: login_button }
+
+# ── Reach Caregiver Home + scroll to Manage > Thresholds tile ─
+- extendedWaitUntil:
+    visible: { id: onboard_patient_fab }
+    timeout: 60000
+- scrollUntilVisible:
+    element: { id: caregiver_thresholds }
+    direction: DOWN
+    timeout: 10000
+- tapOn: { id: caregiver_thresholds }
+
+# ── ThresholdConfigScreen mounted (BP systolic row is the proof) ─
+- extendedWaitUntil:
+    visible: { id: threshold_blood_pressure_systolic_min }
+    timeout: 30000
+
+# ── Edit the min field: clear, type new value ──────────────────
+- tapOn: { id: threshold_blood_pressure_systolic_min }
+- eraseText: 10
+- inputText: "85"
+- hideKeyboard
+
+# isEditing flipped to true → the Save Changes button mounts in
+# this row only.
+- extendedWaitUntil:
+    visible: { id: threshold_blood_pressure_systolic_save }
+    timeout: 5000
+- tapOn: { id: threshold_blood_pressure_systolic_save }
+
+# ── Success snackbar appears ───────────────────────────────────
+- extendedWaitUntil:
+    visible: { id: threshold_save_success }
+    timeout: 15000

@@ -1,0 +1,47 @@
+# EDGE-V2-14 part 2 — navigate to BP, enter values + save, with wifi OFF.
+#
+# Pre-condition: part 1 left the patient signed in (Cognito tokens
+# persisted in DataStore). The orchestrator script disabled wifi
+# before this part runs.
+#
+# `launchApp: clearState: false` brings the app back to foreground
+# but Maestro may re-mount the root activity, returning us to the
+# patient home screen. The home screen renders offline (the vital
+# tiles do not depend on network — see Phase-1 verification). We
+# scroll to the BP tile and continue from there. If part 1 left us
+# on BP screen and the activity survived, `extendedWaitUntil` on
+# `bp_save_button` short-circuits and the navigation steps are
+# skipped via Maestro's element-already-visible semantics.
+#
+# Expectation: the LOCAL save path is unaffected by the offline
+# state. save_acknowledgement fires from
+# `localFhirRepository.saveObservation` returning successfully; the
+# S3 upload runs asynchronously after the overlay shows.
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: false
+
+# Re-navigate from home if launchApp brought us back there.
+- extendedWaitUntil:
+    visible: { id: vital_tile_blood_pressure }
+    timeout: 15000
+- tapOn: { id: vital_tile_blood_pressure }
+
+- extendedWaitUntil:
+    visible: { id: bp_save_button }
+    timeout: 15000
+
+- tapOn: { id: bp_systolic_input }
+- inputText: "132"
+- hideKeyboard
+- tapOn: { id: bp_diastolic_input }
+- inputText: "88"
+- hideKeyboard
+
+- tapOn: { id: bp_save_button }
+
+- extendedWaitUntil:
+    visible: { id: save_acknowledgement }
+    timeout: 15000

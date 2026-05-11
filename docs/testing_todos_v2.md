@@ -8,6 +8,36 @@
 
 ## Voice sweep (2026-05-10) — newly raised + resolved
 
+### F27 — Patient conversation entry gated on legacy v1 Mac Mini health check after `clearState` (NEW — surfaced 2026-05-10 post-F23)
+
+**Severity:** Critical for patient-persona conversation journeys. Blocks PT-V2-07 (`patient_logging_happy_path` — the CI gate), PT-V2-05, PT-V2-06, PT-V2-08, PT-V2-09, EDGE-V2-03, EDGE-V2-11, EDGE-V2-13 — every flow that taps `patient_home_start_conversation`. Phase-1 manual-vital flows (PT-V2-15..21) are unaffected because they take the tile path. F23 voice patient onboarding works because it routes through `add_patient_voice_fab` on the caregiver dashboard, not the patient home button.
+
+**Owner:** `android-app`.
+
+**Reproduction:**
+1. `adb shell am force-stop com.carelog && scripts/maestro-run.sh patient_logging_happy_path`.
+2. Flow advances past login → `patient_home_start_conversation` is assertVisible-OK → tap completes silently → `matika_text_fallback` never mounts → assert fails.
+3. `adb logcat -d -s MacMiniDiscovery` shows `mDNS discovery started for _carelog._tcp.` but no match — no Mac Mini advertises on the dev LAN.
+
+**Root cause:**
+- `dashboard/ui/PatientHomeScreen.kt:205` gates the conversation `Button` with `enabled = degradation.canConverse`.
+- `degradation = computeDegradationState(healthStatus)` (line 110).
+- `healthStatus` comes from `discovery/HealthCheckService` which polls a Mac Mini health aggregator at `:8000/health` after discovering the host via mDNS `_carelog._tcp.`.
+- v2.0 (May 2026) replaced the Mac Mini architecture with AWS Bedrock + Android on-device STT/TTS — no Mac Mini is on the dev LAN any more.
+- mDNS finds nothing, `appSettings.macMiniBaseUrl` is null (DataStore was wiped by `clearState: true`), so `_healthStatus` stays at `ModelHealthStatus.OFFLINE`.
+- `computeDegradationState` maps OFFLINE → `canConverse = false` → button disabled → taps are no-ops at the Compose layer.
+
+**Fix sketch (one of):**
+- A) Drop the v1 health gate on the patient home entry: in `ModelStatusBanner.computeDegradationState`, treat OFFLINE the same way as HEALTHY for the conversation button (the v2 Bedrock backend is the actual health surface; an unreachable Mac Mini should not block conversation). Keep the warning banner for transparency. Smallest blast radius, surgical.
+- B) Replace `HealthCheckService` entirely — point it at a v2 backend health endpoint (e.g. `bedrock-router` `/health`) and drive `canConverse` off that. Larger change, ties in with `health-check` lambda surface.
+- C) Quick test-bench band-aid (NOT a real fix): bring back a Mac-Mini health-aggregator stub on the LAN, OR pre-seed `mac_mini_base_url` via `adb shell run-as com.carelog` into DataStore before each flow.
+
+Recommend Path A for the v2.0 cleanup and Path B in v2.1 with the wider `carelog-*` → `matika-*` rename. Both unblock the patient conversation path.
+
+**Live evidence captured:**
+- Maestro debug screenshots at `~/.maestro/tests/2026-05-10_222645` (CI-gate run) and `~/.maestro/tests/2026-05-10_215143` (guardrail-flow run) — both show the home button rendering as "Conversation Unavailable" with contentDescription "Conversation unavailable. CareLog device services are not ready."
+- `adb shell uiautomator dump` confirmed the disabled-state copy was on screen at the moment of the failed assert.
+
 ### F20 — `matika-voice-run.sh` logcat trigger was Pixel-only (RESOLVED — verified live 2026-05-10)
 
 **Severity:** High for voice journeys. Was: every voice run on the Samsung S21+ test bench failed because `matika-voice-run.sh`'s `TRIGGER='Offline recognizer - start listening'` never matched any logcat line on this OEM (Soda's "Offline recognizer..." system log is Pixel/Google ROM only).

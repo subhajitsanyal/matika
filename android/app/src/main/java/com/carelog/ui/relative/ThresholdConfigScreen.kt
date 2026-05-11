@@ -119,7 +119,8 @@ fun ThresholdConfigScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(bottom = 32.dp),
+                .padding(bottom = 32.dp)
+                .testTag("threshold_save_success"),
             contentAlignment = Alignment.BottomCenter
         ) {
             Surface(
@@ -281,7 +282,9 @@ private fun ThresholdCard(
                         onUpdateThreshold(min, max)
                         isEditing = false
                     },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("threshold_${threshold.parameterName}_save"),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = CareLogColors.Primary
                     )

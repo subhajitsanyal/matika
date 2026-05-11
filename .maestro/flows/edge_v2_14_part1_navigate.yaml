@@ -1,0 +1,35 @@
+# EDGE-V2-14 part 1 — set up: login + navigate to BloodPressureScreen.
+#
+# This part uses clearState so we start from a known clean slate.
+# Parts 2 (offline save) and 3 (verify recovery) do NOT clearState —
+# they re-attach to the in-progress app session.
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+- extendedWaitUntil:
+    visible: { id: login_email }
+    timeout: 15000
+- tapOn: { id: login_email }
+- inputText: ${MATIKA_PATIENT_EMAIL}
+- tapOn: { id: login_password }
+- inputText: ${MATIKA_PATIENT_PASSWORD}
+- hideKeyboard
+- tapOn: { id: login_button }
+
+- extendedWaitUntil:
+    visible: { id: patient_home_start_conversation }
+    timeout: 15000
+- scrollUntilVisible:
+    element: { id: vital_tile_blood_pressure }
+    direction: DOWN
+    timeout: 10000
+- tapOn: { id: vital_tile_blood_pressure }
+
+# Confirm BloodPressureScreen mounted — the next part will tap save
+# while the device is offline.
+- extendedWaitUntil:
+    visible: { id: bp_save_button }
+    timeout: 10000

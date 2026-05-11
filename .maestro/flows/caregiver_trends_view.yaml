@@ -1,0 +1,65 @@
+# CG-V2-17 — caregiver views the Trends chart for their linked patient.
+#
+# F4 Path A wired `caregiver_trends` on CaregiverHomeScreen →
+# TrendsScreen. F26 repointed the threshold-band fetch at
+# `parameter_configs` (BP→systolic by convention). The chart should
+# render against Jane's observations (S3-stored; the
+# `get-observations` lambda fetches them for the caregiver).
+#
+# What this exercises:
+#   - getObservations() (POST /v2/relative/observations)
+#   - TrendsScreen ScrollableTabRow + DateRangeSelector mount
+#   - "Recent Readings" header (proves observations.isNotEmpty path)
+#     OR "No data for this period" empty state (a route-reachable PASS
+#     even with no data — proves the screen + backend chain works).
+#
+# Either outcome counts as PASS for CG-V2-17: the journey is
+# "route-reachable, chart should render". The chart's presence is
+# proved by the LazyColumn (testTag `trends_chart_list`) — that
+# composable only mounts when observations is non-empty. If empty,
+# the empty-state text is shown instead. We accept either; the
+# screen-level testTag `trends_screen` proves navigation succeeded.
+#
+# Run:
+#   source ~/.matika-test-creds.env
+#   scripts/maestro-run.sh caregiver_trends_view
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+# ── Sign in as caregiver ─────────────────────────────────────
+- extendedWaitUntil:
+    visible: { id: login_email }
+    timeout: 15000
+- tapOn: { id: login_email }
+- inputText: ${MATIKA_CAREGIVER_EMAIL}
+- tapOn: { id: login_password }
+- inputText: ${MATIKA_CAREGIVER_PASSWORD}
+- hideKeyboard
+- tapOn: { id: login_button }
+
+# ── Reach Caregiver Home + scroll to Manage > Trends ───────
+- extendedWaitUntil:
+    visible: { id: onboard_patient_fab }
+    timeout: 60000
+- scrollUntilVisible:
+    element: { id: caregiver_trends }
+    direction: DOWN
+    timeout: 10000
+- tapOn: { id: caregiver_trends }
+
+# ── TrendsScreen mounted ─────────────────────────────────────
+- extendedWaitUntil:
+    visible: { id: trends_screen }
+    timeout: 30000
+
+# ── Either the chart-list (data present) or the empty state ─
+# Use Maestro `runFlow` with alternatives via two extendedWaitUntils
+# with shorter timeouts — the first that matches wins. Simpler: use
+# a single text-or-id substring match against the page after the
+# spinner clears (~5s).
+- extendedWaitUntil:
+    visible: ".*(Recent Readings|No data for this period).*"
+    timeout: 30000

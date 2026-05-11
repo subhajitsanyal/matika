@@ -38,6 +38,7 @@ fun TrendsScreen(
     val uiState by viewModel.uiState.collectAsState()
 
     Scaffold(
+        modifier = Modifier.testTag("trends_screen"),
         topBar = {
             TopAppBar(
                 title = { Text("Trends") },
@@ -91,7 +92,9 @@ fun TrendsScreen(
                 }
             } else {
                 LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .testTag("trends_chart_list"),
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
