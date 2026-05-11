@@ -49,15 +49,24 @@
 
 **Files touched.** `android/app/src/main/java/com/carelog/ui/settings/SettingsScreen.kt` (LanguagePickerCard + LanguageOptionRow composables, AppLanguage import, ViewModel wiring). No backend, no migration, no terraform.
 
-### F23 — No "Add Patient via Conversation" entry (NEW — open)
+### F23 — No "Add Patient via Conversation" entry (RESOLVED 2026-05-10)
 
-**Severity:** Medium. Blocks CG-V2-04 as written. The journey expects an alternative onboarding path where the caregiver speaks the patient profile and Sonnet extracts it.
-**Owner:** `android-app` + product (decide whether to ship voice profile extraction).
-**Estimated effort:** ~1 day if voice profile extraction is in scope; ~30 min if just reclassifying the journey.
+**Severity:** Was Medium. Blocked CG-V2-04 as originally written.
+**Owner:** `android-app` (done) + `backend` (done) + `inference-platform` (prompt + Haiku two-pass FSM + create-patient-from-voice lambda — done).
+**Status:** Shipped end-to-end (PRD §6.3.1 / §8.1 / §6.5, spec §4.5 / §6.9). Verified live on dev 2026-05-10: a real conversation through the placeholder bootstrap path fired `caregiver_onboarding pivot ok` (session `fb2f7e87-4252-412b-a198-852732e03e5e`) which invoked `create-patient-from-voice` (`patientShortId: CL-LW0LEH`, Asha Devi, 68, hypertension), produced a new Cognito user, inserted the matching `users`/`patients`/`persona_links` rows, and UPDATEd `interaction_sessions.patient_id` from NULL → the new UUID — all four RDS evidence rows visible.
 
-**Reproduction.** `CaregiverHomeScreen.kt:124` exposes `onboard_patient_fab` → `onNavigateToOnboarding` → form-based `PatientOnboardingScreen`. `PatientOnboardingConversationScreen` exists at `CareLogNavHost.kt:482` but has no caregiver-side nav arrow. The post-form `MatikaConversationScreen` (caregiver_onboarding session_type) is the same screen exercised by CG-V2-03 — it expects a protocol utterance, not a patient-profile utterance.
+**What shipped.**
+- Schema: V008 (interaction_sessions.patient_id nullable for caregiver_onboarding) + V009 (FSM check constraint adds EXTRACTING_PROFILE, AWAITING_PROFILE_CONFIRMATION, PROFILE_CONFIRMED).
+- Backend: `backend/lambdas/create-patient-from-voice/` lambda (Cognito + RDS + persona_links + SES welcome email) + `bedrock-router` two-pass FSM (profile-extraction prompt + protocol-extraction prompt) + mid-session pivot via direct Invoke + post-pivot patientCtx refresh.
+- Android: secondary FAB `add_patient_voice_fab` on `CaregiverHomeScreen` → new `MATIKA_PATIENT_VOICE_ONBOARDING` route (carries `sessionId` + `pending-<sessionId>` placeholder patientCognitoSub as path args, minted at the FAB) → `MatikaConversationScreen` with `isVoicePatientOnboarding=true` + `PatientCredentialsDialog` (email/phone, fired by LLM's `pause_session{reason:awaiting_patient_credentials}`) + "Use form instead" escape button.
+- Tests: 393 backend tests passing; Android Debug APK builds clean.
 
-**Fix sketch.** Either (a) add a secondary FAB or AppBar action "Add Patient via Conversation" that navigates to `PATIENT_ONBOARDING_CONVERSATION`, or (b) accept that CG-V2-02 (form) + CG-V2-03 (voice protocol) together cover the intent and reclassify CG-V2-04 as "manual / out-of-agentic-scope".
+**Commits.** `37d18cc` (V008+V009+create-patient-from-voice), `f6caff5` (bedrock-router two-pass FSM), `c9fc7f4` (3 step-3 fixups — rate-limiter sentinel bypass, placeholder user_id resolution, patientProfile.name minLength drop), `206913a` (Android Step 4), `0e55fb7` (sessionType→sentinel gating, AlertDialog testTagsAsResourceId, IME-Send action), `78d975d` (selectSystemPromptPath pinned by `patientCtx.placeholder`, isPivotTurn drop newFsmState gating, wantsPivotButNoProfile recovery, Compose onPreviewKeyEvent hardware-Enter, Maestro thinking+speaking double-gate).
+
+**Known follow-ups (non-blocking).**
+- Streaming `/conversation/turn` handler does NOT implement F23 pivot logic. Android client forces `preferStreaming=false` while the `pending-<sessionId>` sentinel is in use; see `handler.ts` line ~1614 for the TODO marker. Mirror the pivot logic when streaming is added for caregiver_onboarding.
+- patientProfile persistence across turns. The current pivot path requires `parsed.patientProfile` on the closing turn; if Haiku drops it (live repro: dev session `4ef3f90b` on 2026-05-10), the handler's `wantsPivotButNoProfile` recovery sends a friendly retry prompt rather than wedging the session. A more robust fix is to persist `patientProfile` JSON in `interaction_sessions` per-turn and use the persisted value on pivot.
+- iOS-side voice patient onboarding is out of scope for v2.0 per Android-focus directive.
 
 ### F24 — Soda `bn-IN` offline pack absent on test device (RESOLVED — subsumed by F25 fix, 2026-05-10)
 
