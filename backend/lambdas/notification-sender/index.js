@@ -150,7 +150,7 @@ async function handleThresholdBreachNotification(client, message) {
         parameter,
         value: String(value),
         threshold: String(threshold),
-      });
+      }, endpoint.endpoint_arn);
 
       if (delivered) {
         anyDelivered = true;
@@ -199,7 +199,7 @@ async function handleMissedMeasurementNotification(client, message) {
         parameter,
         days_overdue: String(daysOverdue),
         configured_frequency_days: String(frequencyDays),
-      });
+      }, endpoint.endpoint_arn);
 
       if (delivered) {
         anyDelivered = true;
@@ -242,7 +242,7 @@ async function handleReminderNotification(client, message) {
         alert_type: P2_ALERT_TYPES.REMINDER,
         patient_id: patientId,
         action: action || 'open_conversation',
-      });
+      }, endpoint.endpoint_arn);
 
       if (delivered) {
         anyDelivered = true;
@@ -264,9 +264,10 @@ async function handleReminderNotification(client, message) {
  *   versions of this lambda joined `dt.user_id = u.cognito_sub` which always
  *   returned 0 rows due to the UUID-vs-text type mismatch.
  *
- *   The platform-specific transport credential is `device_tokens.device_token`
- *   (raw FCM/APNs token). The SNS-Platform-Endpoint-ARN column referenced by
- *   the older code (`endpoint_arn`) does not exist in the live schema.
+ *   `endpoint_arn` is the persisted SNS Platform Endpoint ARN, populated by
+ *   the device-token lambda at registration time (V006). NULL on legacy rows
+ *   pre-dating that work; sendPushNotification handles that case by minting
+ *   the endpoint on the fly.
  */
 async function getCaregiverDeviceEndpoints(client, patientId, caregiverId) {
   let query;
@@ -276,7 +277,7 @@ async function getCaregiverDeviceEndpoints(client, patientId, caregiverId) {
     // Direct lookup by caregiver ID (the caregiver_id we ship in the SQS
     // payload is the resolved users.id UUID — see evaluate-thresholds-batch).
     query = `
-      SELECT dt.device_token, dt.platform, u.name AS user_name, u.id AS user_id
+      SELECT dt.device_token, dt.platform, dt.endpoint_arn, u.name AS user_name, u.id AS user_id
       FROM device_tokens dt
       JOIN users u ON dt.user_id = u.id
       WHERE u.id = $1 AND dt.is_active = true`;
@@ -284,7 +285,7 @@ async function getCaregiverDeviceEndpoints(client, patientId, caregiverId) {
   } else {
     // Find all caregivers linked to the patient.
     query = `
-      SELECT dt.device_token, dt.platform, u.name AS user_name, pl.linked_user_id AS user_id
+      SELECT dt.device_token, dt.platform, dt.endpoint_arn, u.name AS user_name, pl.linked_user_id AS user_id
       FROM persona_links pl
       JOIN users u ON pl.linked_user_id = u.id
       JOIN device_tokens dt ON dt.user_id = u.id
@@ -303,7 +304,7 @@ async function getCaregiverDeviceEndpoints(client, patientId, caregiverId) {
  */
 async function getPatientDeviceEndpoints(client, patientId) {
   const result = await client.query(
-    `SELECT dt.device_token, dt.platform, u.id AS user_id
+    `SELECT dt.device_token, dt.platform, dt.endpoint_arn, u.id AS user_id
      FROM patients p
      JOIN users u ON p.user_id = u.id
      JOIN device_tokens dt ON dt.user_id = u.id
@@ -316,21 +317,20 @@ async function getPatientDeviceEndpoints(client, patientId) {
 /**
  * Send push notification.
  *
- * Today the dev environment has no SNS Platform Application configured
- * (`IOS_PLATFORM_ARN` / `ANDROID_PLATFORM_ARN` env vars unset) and the live
- * device_tokens schema stores the raw FCM/APNs token, not an SNS endpoint
- * ARN. Until the platform-application infra is provisioned (or this lambda
- * is rewired to talk directly to FCM HTTP v1 / APNs), there is no transport
- * to call.
+ * Endpoint resolution:
+ *   - Prefer the persisted endpoint_arn from device_tokens (populated by
+ *     the device-token lambda at registration time, V006).
+ *   - Fall back to a per-call CreatePlatformEndpoint for legacy rows where
+ *     endpoint_arn is NULL. The call is idempotent for *fresh* tokens but
+ *     SNS rejects with `InvalidParameter: already exists with the same
+ *     Token, but different attributes` when an endpoint exists for this
+ *     token — handled by re-extracting the existing ARN from the error.
  *
- * Behavior:
- *   - When no transport is wired (env vars unset): log once per call and
- *     return false. Backend chain still completes (alerts row + sent_at
- *     bookkeeping); the push side is a no-op.
- *   - When transport IS wired: build the platform-specific payload and
- *     hand to SNS. Returns true on success.
+ * Behavior when push transport is not wired (env var unset): log warning
+ * and return false. Backend chain still completes (alerts row +
+ * markAlertSent); the push side is a no-op so retries don't pile up.
  */
-async function sendPushNotification(deviceToken, platform, title, body, data) {
+async function sendPushNotification(deviceToken, platform, title, body, data, persistedEndpointArn) {
   const platformArn =
     platform === 'ios' ? process.env.IOS_PLATFORM_ARN : process.env.ANDROID_PLATFORM_ARN;
 
@@ -347,19 +347,32 @@ async function sendPushNotification(deviceToken, platform, title, body, data) {
     return false;
   }
 
-  // Per-call ad-hoc endpoint: register the token with SNS (idempotent —
-  // re-using an existing endpoint is allowed). We don't persist the
-  // returned ARN today because device_tokens has no endpoint_arn column;
-  // see F15 follow-up to add it + persist.
-  const { CreatePlatformEndpointCommand } = require('@aws-sdk/client-sns');
-  const endpointResp = await snsClient.send(
-    new CreatePlatformEndpointCommand({
-      PlatformApplicationArn: platformArn,
-      Token: deviceToken,
-      Attributes: { Enabled: 'true' },
-    })
-  );
-  const endpointArn = endpointResp.EndpointArn;
+  let endpointArn = persistedEndpointArn;
+
+  if (!endpointArn) {
+    // Legacy row with NULL endpoint_arn — mint one on the fly. Extract the
+    // existing-endpoint ARN from the InvalidParameter error if SNS says the
+    // token is already registered (the well-known SNS gotcha — see
+    // https://docs.aws.amazon.com/sns/latest/dg/mobile-platform-endpoint.html).
+    const { CreatePlatformEndpointCommand } = require('@aws-sdk/client-sns');
+    try {
+      const endpointResp = await snsClient.send(
+        new CreatePlatformEndpointCommand({
+          PlatformApplicationArn: platformArn,
+          Token: deviceToken,
+        })
+      );
+      endpointArn = endpointResp.EndpointArn;
+    } catch (err) {
+      const msg = err && err.message ? err.message : '';
+      const match = msg.match(/Endpoint (arn:aws:sns:[^\s]+) already exists/);
+      if (err && err.Code === 'InvalidParameter' && match) {
+        endpointArn = match[1];
+      } else {
+        throw err;
+      }
+    }
+  }
 
   const message =
     platform === 'ios'

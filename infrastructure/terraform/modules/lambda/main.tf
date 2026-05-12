@@ -300,12 +300,16 @@ resource "aws_iam_role_policy" "rds_sqs_inline" {
       },
       {
         # F17 — sns:Publish for notification-sender against the per-device
-        # SNS Platform Endpoints minted by device-token. Endpoint ARNs
-        # aren't predictable at terraform-plan time so Resource = "*";
-        # the role only carries Publish (no endpoint-mutation actions),
-        # which scopes the blast radius enough for v2 dev.
+        # SNS Platform Endpoints minted by device-token, plus
+        # sns:CreatePlatformEndpoint because notification-sender does its
+        # own per-call CreatePlatformEndpoint with the FCM token (the
+        # call is idempotent — re-using an existing endpoint is fine).
+        # Endpoint ARNs aren't predictable at terraform-plan time so
+        # Resource = "*"; the role only carries
+        # publish + endpoint-mint (no endpoint-delete / attribute
+        # mutation), which scopes the blast radius enough for v2 dev.
         Effect   = "Allow"
-        Action   = ["sns:Publish"]
+        Action   = ["sns:Publish", "sns:CreatePlatformEndpoint"]
         Resource = ["*"]
       }
     ]

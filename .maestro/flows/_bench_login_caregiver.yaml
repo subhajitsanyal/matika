@@ -1,0 +1,22 @@
+# Bench helper — sign in as the caregiver (John CG / MATIKA_CAREGIVER_*).
+# Used to prime DeviceTokenManager so the caregiver row in `device_tokens`
+# gets a fresh FCM token + populated `endpoint_arn`, which the F17 push
+# flow needs (notification-sender publishes to caregiver endpoints).
+#
+# Underscore-prefix marks this as orchestration-only, not coverage.
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+- tapOn: { id: login_email }
+- inputText: ${MATIKA_CAREGIVER_EMAIL}
+- tapOn: { id: login_password }
+- inputText: ${MATIKA_CAREGIVER_PASSWORD}
+- hideKeyboard
+- tapOn: { id: login_button }
+
+# Caregiver home screen — assert we landed.
+- extendedWaitUntil:
+    visible: { id: onboard_patient_fab }
+    timeout: 30000

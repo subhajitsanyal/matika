@@ -153,3 +153,20 @@ variable "hard_rate_limit_per_patient" {
   type        = number
   default     = 500
 }
+
+# F17 — push transport. Empty string means "transport not configured"; the
+# notification-sender + device-token lambdas log a warning and skip SNS
+# publish on send / SNS endpoint registration on token-write. Provisioned
+# in dev 2026-05-11 via `aws sns create-platform-application` (see
+# carelog-dev/fcm-service-account in Secrets Manager for the credential).
+variable "android_platform_arn" {
+  description = "SNS Platform Application ARN for Android FCM token-based credentials. Empty string disables Android push."
+  type        = string
+  default     = ""
+}
+
+variable "ios_platform_arn" {
+  description = "SNS Platform Application ARN for iOS APNs. Empty string disables iOS push (current default — APNs work is out of scope for v2.0 Android-focus)."
+  type        = string
+  default     = ""
+}

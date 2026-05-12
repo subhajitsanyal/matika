@@ -217,6 +217,15 @@ module "lambda" {
   bedrock_router_provisioned_concurrency = var.bedrock_router_provisioned_concurrency
   soft_rate_limit_per_patient            = var.soft_rate_limit_per_patient
   hard_rate_limit_per_patient            = var.hard_rate_limit_per_patient
+
+  # F17 — push transport. Empty string means "no push transport configured";
+  # the lambdas log a warning and short-circuit (no SNS publish, alerts.send_error
+  # = 'no_transport_or_no_device_token'). Set ANDROID_PLATFORM_ARN to the
+  # `aws sns create-platform-application` ARN once the Platform App is
+  # provisioned (dev: arn:aws:sns:ap-south-1:316643066568:app/GCM/carelog-android-fcm-dev).
+  # ios_platform_arn left empty pending APNs work (see iOS scope hold).
+  android_platform_arn = var.android_platform_arn
+  ios_platform_arn     = var.ios_platform_arn
 }
 
 # EventBridge Module (scheduled rules for proactive monitoring)

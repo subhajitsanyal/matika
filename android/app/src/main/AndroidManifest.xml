@@ -88,6 +88,22 @@
                 tools:node="remove" />
         </provider>
 
+        <!--
+            FCM dispatch target. Without this, Firebase has nowhere to deliver
+            inbound `onMessageReceived` callbacks for data payloads (and
+            foreground notification payloads), so push messages land in the
+            SDK and silently drop. Token acquisition still works without this
+            (DeviceTokenManager calls FirebaseMessaging.getInstance().token
+            directly) — this is purely the inbound side. F17.
+        -->
+        <service
+            android:name=".notifications.CareLogFirebaseMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
     </application>
 
 </manifest>

@@ -1,8 +1,8 @@
 # Matika v2 — Testing Backlog (Path to Exhaustive Coverage)
 
-**Date:** 2026-05-11 (post-F23 fix sweep)
-**Source:** Sweep `20260508_215314` (Standard, English voice), augmented by 2026-05-09 backend-chain audit, 2026-05-10 F23 ship + voice cluster, 2026-05-10 post-F23 manual-vital + caregiver-screen sweep, and 2026-05-11 post-F23 fix sweep (F27 + EDGE-V2-14 + F3-verified). See report at `test-automation/results/journey-results/20260508_215314/report.md` (local-only; gitignored).
-**Status:** 35 of 64 non-voice journeys PASS as of 2026-05-11 (was 32 yesterday). 2026-05-11 fix sweep restored the CI gate (`patient_logging_happy_path`), flipped EDGE-V2-03 from blocked → PASS, and flipped EDGE-V2-14 from PARTIAL → PASS. 6 legacy conversation-path journeys re-verified post-F27 with no regression (PT-V2-08/09/13, EDGE-V2-11/13). PT-V2-06 (Bengali voice) remains bench-blocked on the Core Audio wedge (lesson 6, reboot-only). Exhaustive coverage is **~1.5 weeks** away — F17 push transport + DR-V2-* web-portal data-testid + Playwright runner are the remaining parallel streams.
+**Date:** 2026-05-11 (post-F17 push-transport sweep)
+**Source:** Sweep `20260508_215314` (Standard, English voice), augmented by 2026-05-09 backend-chain audit, 2026-05-10 F23 ship + voice cluster, 2026-05-10 post-F23 manual-vital + caregiver-screen sweep, 2026-05-11 post-F23 fix sweep (F27 + EDGE-V2-14 + F3-verified), and 2026-05-11 F17 push-transport sweep (SNS Platform App provisioned, AndroidManifest service registered, end-to-end synthetic alert verified). See report at `test-automation/results/journey-results/20260508_215314/report.md` (local-only; gitignored).
+**Status:** 36 of 64 non-voice journeys PASS as of 2026-05-11 (was 35 earlier today). F17 RESOLVED end-to-end — Android caregiver receives FCM push for a threshold-breach alert; the four push-dependent rows (CG-V2-07 PASS synthetic; CG-V2-08/09 + E2E-V2-02/03/06 transport-unblocked pending one organic re-run each). PT-V2-06 (Bengali voice) remains bench-blocked on the Core Audio wedge (lesson 6, reboot-only). Exhaustive coverage is **~1 week** away — DR-V2-* web-portal data-testid + Playwright runner is the remaining parallel stream.
 
 ---
 
@@ -359,11 +359,15 @@ Lambda completed in 877 ms with zero errors. The CloudWatch entries from earlier
 
 ---
 
-### F17 — Push transport (PARTIALLY RESOLVED — Android client + backend wiring complete, verified live 2026-05-10; SNS Platform App provisioning blocked on FCM service-account JSON, deferred)
+### F17 — Push transport (RESOLVED — Android end-to-end push verified live 2026-05-11)
 
 **Severity:** Was Medium. Was blocking the FCM/APNs delivery half of every alert journey (CG-V2-07/08/09, E2E-V2-02/03/06 UI side).
-**Owner:** `android-app` (done) + `backend` (done) + `devops` (remaining: SNS Platform Application provisioning).
-**Status:** The 5-piece F17 plan now has 4 of 5 pieces resolved end-to-end. The remaining piece is purely environmental (FCM credentials), not engineering work.
+**Owner:** `android-app` (done) + `backend` (done) + `devops` (done).
+**Status:** All 5 pieces shipped + verified end-to-end on Samsung S21+ as John CG (caregiver). Synthetic threshold-breach alert routed through SQS → notification-sender lambda → SNS Platform Endpoint → FCM HTTP v1 → device, with the full evidence triad captured below. Three additional gaps surfaced + fixed in this verification pass:
+- **AndroidManifest gap** — `CareLogFirebaseMessagingService` had no `<service>` declaration, so inbound `onMessageReceived` was undeliverable. Token registration always worked (DeviceTokenManager calls `FirebaseMessaging.getInstance().token` directly) but pushes silently dropped.
+- **IAM gap** — `carelog-dev-lambda-rds-sqs` (notification-sender's role) had only `sns:Publish`; the lambda's per-call `CreatePlatformEndpoint` failed with `AuthorizationError`. Policy now also carries `sns:CreatePlatformEndpoint`.
+- **F15 follow-up shipped** — notification-sender now reads the persisted `device_tokens.endpoint_arn` populated by the device-token lambda at registration time, and only mints an endpoint on the fly for legacy NULL rows. The fallback path also recovers from SNS's `InvalidParameter: already exists with the same Token` by extracting the existing ARN from the error message (the well-known SNS gotcha).
+- **v2 alert_type / parameter mapping shipped on Android** — `CareLogFirebaseMessagingService.handleDataMessage` now switches on lowercase v2 strings (`threshold_breach`, `missed_measurement`, `reminder`) keyed on `alert_type` (was v1 uppercase keyed on `type`), and `getVitalDisplayName` maps v2 `parameter_configs.parameter_name` values (`blood_pressure_systolic` etc).
 
 **Pieces 1–5 status:**
 
@@ -390,13 +394,23 @@ Lambda completed in 877 ms with zero errors. The CloudWatch entries from earlier
 | API Gateway route reachable | `POST /device-tokens` and `DELETE /device-tokens?deviceId=...` live on stage `dev` of `rsf93ac8bd`; permission allows `apigateway.amazonaws.com` to invoke device-token Lambda |
 | IAM | `lambda_rds_cognito` role gained `sns:CreatePlatformEndpoint/SetEndpointAttributes/GetEndpointAttributes/DeleteEndpoint` (Resource=*); `lambda_rds_sqs` role gained `sns:Publish` (Resource=*) |
 
-**Remaining piece (out of scope this session):** provision SNS Platform Application for Android FCM. Requires Firebase service-account JSON from the Matika Firebase project (Firebase console → Project Settings → Service accounts → Generate new private key). Once available:
-1. Instantiate `module "sns"` in `infrastructure/terraform/main.tf` with the service-account JSON as the platform_credential argument (note: AWS provider may need an upgrade for FCM v1 support; legacy `platform = "GCM"` is deprecated by Google).
-2. Pass `module.sns.android_platform_application_arn` into `module.lambda` as `var.android_platform_arn` (replacing the current empty default).
-3. Apply via the same `-refresh=false -target` pattern targeting the two lambda functions.
-4. Next sign-in repopulates `device_tokens.endpoint_arn` automatically — the lambda's existing path detects `endpoint_arn IS NULL` on a row owned by this device and calls `CreatePlatformEndpoint` to mint one.
+**2026-05-11 close-out (end-to-end live verification on Samsung S21+):**
 
-No client-side change needed to flip from "wired but no transport" to "fully working push delivery". The `alerts.is_sent=false, send_error='no_transport_or_no_device_token'` observable state F17 originally predicted is now reachable — it just shows up because `endpoint_arn` is NULL, not because a row is missing.
+| Check | Evidence |
+|---|---|
+| SNS Platform Application provisioned (FCM HTTP v1, token-based) | `arn:aws:sns:ap-south-1:316643066568:app/GCM/carelog-android-fcm-dev` — `AuthenticationMethod=Token, Enabled=true`. Credential is the Firebase service-account JSON for project `carelog-7de0c` (`project_number: 191872106923`); a copy lives in Secrets Manager as `carelog-dev/fcm-service-account` for terraform import / re-creation. |
+| Lambda env vars | `aws lambda get-function-configuration --function-name carelog-dev-notification-sender --query Environment.Variables.ANDROID_PLATFORM_ARN` returns the ARN. Same for `carelog-dev-device-token`. |
+| Caregiver login → endpoint persisted | `_bench_login_caregiver.yaml` Maestro flow logged in as John CG; device-token lambda CloudWatch shows `Registered device token for user a2b0af09-..., endpoint=arn:aws:sns:...endpoint/GCM/carelog-android-fcm-dev/0541d5ca-a4ed-...`. Live RDS `device_tokens.endpoint_arn` populated on that row. |
+| End-to-end synthetic alert | Alert row `ca94cbb3-255c-4fbf-bef5-7fbb5f9cad1b` inserted (threshold_breach, Jane's patient_id, John's caregiver_id) → SQS send → notification-sender CloudWatch logs `Sent threshold breach notification to caregiver John CG` at 2026-05-12T02:31:48.944Z → alerts row flips to `is_sent=true, sent_at=2026-05-12 02:31:48.961389+00, send_error=NULL`. |
+| On-device receipt | Samsung S21+ logcat with John CG signed in: `CareLogFCM: Message received from: 191872106923` (Firebase sender ID) → `Message data payload: {patient_id=8c5090c0-..., threshold=160, value=185, alert_type=threshold_breach, parameter=blood_pressure_systolic}`. System tray notification rendered via the `notification` block of the GCM payload (title `Alert: High Systolic BP`, body containing the value/threshold/direction). |
+
+**SNS Platform App provisioning (CLI hybrid pattern, terraform-state safe):**
+1. `aws secretsmanager create-secret --name carelog-dev/fcm-service-account --secret-string file://<service-account>.json --region ap-south-1`.
+2. `aws sns create-platform-application --cli-input-json file://<payload>.json` where `Platform=GCM`, `Attributes.PlatformCredential=<json content>`. AWS still calls this "GCM" but the AuthenticationMethod=Token attribute means FCM HTTP v1 under the hood.
+3. `aws lambda update-function-configuration --function-name carelog-dev-{notification-sender,device-token} --environment 'Variables={..., ANDROID_PLATFORM_ARN=<arn>}'` for both lambdas. Avoids a full `terraform apply` and the cognito drift from `66ca57c`.
+4. `aws iam put-role-policy` to add `sns:CreatePlatformEndpoint` to the notification-sender role (was previously `sns:Publish`-only — the F17 plan missed that the lambda mints endpoints itself).
+
+The terraform side now captures everything (vars + main.tf wiring + IAM policy update) so the next non-drift `terraform apply` will see zero changes on these surfaces.
 
 ---
 

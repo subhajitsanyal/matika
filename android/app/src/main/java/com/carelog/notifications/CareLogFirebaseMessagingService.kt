@@ -66,25 +66,27 @@ class CareLogFirebaseMessagingService : FirebaseMessagingService() {
     }
 
     private fun handleDataMessage(data: Map<String, String>) {
-        val type = data["type"]
-        val patientId = data["patientId"]
-        val vitalType = data["vitalType"]
+        // Keys + values are v2-shape (lowercase) per backend/lambdas/notification-sender
+        // (sendPushNotification ships `alert_type: 'threshold_breach' | 'missed_measurement' | 'reminder'`
+        // plus `patient_id`, `parameter`, `value`, `threshold`).
+        val alertType = data["alert_type"]
+        val parameter = data["parameter"]
         val value = data["value"]
 
-        when (type) {
-            "THRESHOLD_BREACH" -> {
-                val title = "${getVitalDisplayName(vitalType)} Alert"
-                val body = "Patient's ${getVitalDisplayName(vitalType)?.lowercase()} reading of $value is outside the normal range."
+        when (alertType) {
+            "threshold_breach" -> {
+                val title = "${getVitalDisplayName(parameter)} Alert"
+                val body = "Patient's ${getVitalDisplayName(parameter)?.lowercase()} reading of $value is outside the normal range."
                 showNotification(title, body, data, isAlert = true)
             }
-            "REMINDER_LAPSE" -> {
+            "missed_measurement" -> {
                 val title = "Missed Reading"
-                val body = "Patient hasn't logged their ${getVitalDisplayName(vitalType)?.lowercase()} reading."
+                val body = "Patient hasn't logged their ${getVitalDisplayName(parameter)?.lowercase()} reading."
                 showNotification(title, body, data, isAlert = false)
             }
-            "PATIENT_REMINDER" -> {
+            "reminder" -> {
                 val title = "Reminder"
-                val body = "Time to log your ${getVitalDisplayName(vitalType)?.lowercase()} reading."
+                val body = "Time to log your ${getVitalDisplayName(parameter)?.lowercase()} reading."
                 showNotification(title, body, data, isAlert = false)
             }
         }
@@ -170,15 +172,18 @@ class CareLogFirebaseMessagingService : FirebaseMessagingService() {
         }
     }
 
-    private fun getVitalDisplayName(vitalType: String?): String? {
-        return when (vitalType) {
-            "BLOOD_PRESSURE" -> "Blood Pressure"
-            "GLUCOSE" -> "Glucose"
-            "TEMPERATURE" -> "Temperature"
-            "WEIGHT" -> "Weight"
-            "PULSE" -> "Pulse"
-            "SPO2" -> "SpO2"
-            else -> vitalType
+    private fun getVitalDisplayName(parameter: String?): String? {
+        // v2 lambda ships the database `parameter_name` value directly
+        // (matches the `parameter_configs.parameter_name` column).
+        return when (parameter) {
+            "blood_pressure_systolic" -> "Systolic BP"
+            "blood_pressure_diastolic" -> "Diastolic BP"
+            "blood_glucose" -> "Blood Glucose"
+            "body_temperature" -> "Body Temperature"
+            "body_weight" -> "Weight"
+            "heart_rate" -> "Heart Rate"
+            "oxygen_saturation" -> "SpO2"
+            else -> parameter
         }
     }
 }
