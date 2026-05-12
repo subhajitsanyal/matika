@@ -35,21 +35,9 @@ code to keep blast radius narrow per the cognito-drift note in F11,
 replay against live to confirm the previously-failing input now
 returns 200 with the configured blocked-message copy).
 
+Leverage the team of agents already available to you. 
 Confirm with me before each F-number transition — I want to review
 the live-verification evidence for one finding before you move to
 the next.
 ```
 
----
-
-## Variants
-
-**Tighter (no ceremony, just go)** — drop the final "Confirm with me before each F-number transition" paragraph. The agent will still verify each fix live (it's in the memory's `feedback_verify_live_pattern` entry) but won't pause for review.
-
-**Wider (autonomous through Phase 1)** — replace the final paragraph with:
-
-> Work through all of Phase 1 (F19 → F18 → F1 → F2 → F17). Surface only when blocked or when you have all five live-verifications ready for batch review.
-
-**Phase 2 entry** (after Phase 1 is done) — replace the "Begin Phase 1" paragraph with:
-
-> Phase 1 is complete and verified. Begin Phase 2: F4 needs a product decision (orphan-screen Path A vs Path B) before engineering — surface that question first. Then proceed F25 → F22 → F23 → F16.

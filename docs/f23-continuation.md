@@ -1,6 +1,5 @@
 # F23 voice patient onboarding — continuation kickoff prompt
 
-Paste the block below as the first message of a new Claude session to pick up F23 Path A from where the 2026-05-10 session left off. Steps 1–3 are landed and live; Steps 4–5 (Android UI + end-to-end smoke) remain.
 
 The prior session made all the load-bearing architecture decisions and verified the backend half end-to-end against synthetic input. Don't re-litigate those decisions; they're documented in the PRD / spec / testing_todos and summarized below.
 
