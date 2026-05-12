@@ -39,12 +39,7 @@ class RelativeDashboardViewModel @Inject constructor(
             _uiState.update { it.copy(isLoading = true, error = null) }
 
             try {
-                // Fetch linked patient ID directly from Cognito (not from cache)
                 val patientId = authRepository.fetchLinkedPatientId()
-                // Also check currentUser for comparison
-                val cachedUser = authRepository.currentUser.value
-                val debugInfo = "fetchLinkedPatientId=$patientId, cachedUser.linked=${cachedUser?.linkedPatientId}, cachedUser.email=${cachedUser?.email}"
-                Log.d("RelativeDashboard", debugInfo)
 
                 if (patientId == null) {
                     _uiState.update {

@@ -1,6 +1,6 @@
 package com.carelog.ui.invite
 
-import com.carelog.core.BuildConfig
+import com.carelog.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType

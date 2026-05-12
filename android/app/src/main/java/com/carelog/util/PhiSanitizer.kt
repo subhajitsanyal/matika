@@ -1,6 +1,7 @@
 package com.carelog.util
 
 import android.util.Log
+import com.carelog.BuildConfig
 import java.util.regex.Pattern
 
 /**

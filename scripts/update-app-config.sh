@@ -37,12 +37,16 @@ echo "S3 Bucket: $S3_BUCKET_NAME"
 
 # ─── Update Android config ──────────────────────────────────────
 
-ANDROID_BUILDCONFIG="$PROJECT_ROOT/android/app/src/main/java/com/carelog/core/BuildConfig.kt"
+ANDROID_GRADLE="$PROJECT_ROOT/android/app/build.gradle.kts"
 ANDROID_AMPLIFY="$PROJECT_ROOT/android/app/src/main/res/raw/amplifyconfiguration.json"
 
 echo ""
-echo "Updating Android BuildConfig.kt..."
-sed -i '' "s|const val API_BASE_URL = \".*\"|const val API_BASE_URL = \"${API_BASE_URL}\"|" "$ANDROID_BUILDCONFIG"
+echo "Updating Android build.gradle.kts debug API_BASE_URL..."
+# Rewrite the debug-variant buildConfigField line. The file holds two
+# API_BASE_URL lines (one per variant); only the debug one tracks dev,
+# so we anchor the substitution to the line that already contains
+# "execute-api" (the dev-API hostname pattern AWS uses).
+sed -i '' -E "s|(buildConfigField\\(\"String\", \"API_BASE_URL\", )\"\\\\\"https://[^\"]*execute-api[^\"]*\\\\\"\"\\)|\\1\"\\\\\"${API_BASE_URL}\\\\\"\")|" "$ANDROID_GRADLE"
 
 echo "Updating Android amplifyconfiguration.json..."
 python3 -c "
@@ -96,12 +100,6 @@ with open('$IOS_AMPLIFY', 'w') as f:
     json.dump(config, f, indent=2)
 "
 fi
-
-# ─── Update build.gradle.kts (debug URL) ────────────────────────
-
-GRADLE_FILE="$PROJECT_ROOT/android/app/build.gradle.kts"
-echo "Updating build.gradle.kts debug API_BASE_URL..."
-sed -i '' "s|buildConfigField(\"String\", \"API_BASE_URL\", \".*\")  *# debug|buildConfigField(\"String\", \"API_BASE_URL\", \"\\\\\"${API_BASE_URL}\\\\\"\") // debug|" "$GRADLE_FILE" 2>/dev/null || true
 
 echo ""
 echo "=== Done. Config updated for environment: $ENV ==="

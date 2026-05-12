@@ -65,9 +65,30 @@ Recommend Path A for the v2.0 cleanup and Path B in v2.1 with the wider `carelog
 - CloudWatch `/aws/lambda/carelog-dev-sync-observation` confirms the post-restoration sync hit the lambda at the right time with the right `patient_id`.
 - BuildConfig.DEBUG=false (release build) was sanity-checked by `./gradlew assembleRelease` + manual wifi cycle — the cached-user branch is unreachable; the app logs out on auth-session failure, matching production semantics.
 
-**Production strip required before GA:** the offline bypass is debug-only by construction (compile-time gated), so the release binary already drops it. The follow-up to track for GA hardening is whether we want the *cached user* to land in production too as a UX improvement (e.g. let the patient see the empty offline shell instead of the login screen). That's an explicit product call — not a fix. Reference for the launch readiness checklist.
+**Production-strip follow-up (RESOLVED 2026-05-11 launch-readiness sweep).** The original 2026-05-11 PARTIAL note flagged that the bypass was "debug-only by construction," but a release-build audit found that wasn't actually true — `AuthRepository.kt:148` was gated on `com.carelog.core.BuildConfig.DEBUG`, a **custom** constant hardcoded to `true`, NOT the Gradle-generated `com.carelog.BuildConfig.DEBUG`. So the bypass ran in release builds.
 
-**Files touched:**
+The launch-readiness sweep also found that all networking layers read the same custom `BuildConfig.API_BASE_URL`, hardcoded to the dev API Gateway. The Gradle release-variant URL (`https://api.carelog.com`) was dead code — no caller imported `com.carelog.BuildConfig`.
+
+Fix: deleted `com.carelog.core.BuildConfig.kt`, switched 7 imports + 4 fully-qualified references to `com.carelog.BuildConfig`, moved `USE_V2_INFERENCE` to a Gradle `buildConfigField` on both debug + release variants, added an explicit import in `CareLogApplication.kt` and `PhiSanitizer.kt` to disambiguate same-package resolution after the delete. Updated `scripts/update-app-config.sh` to update the Gradle debug-variant `buildConfigField` instead of the deleted file. Stripped 5 PHI-leaking `Log.d` calls the audit surfaced (`CareLogNavHost.kt`, `AuthRepository.kt` x2, `DeviceTokenManager.kt`, `RelativeDashboardViewModel.kt`). Added blanket `-dontwarn` rules to `proguard-rules.pro` for HAPI FHIR optional deps (Thymeleaf, Schematron, AWT, JAXB crypto, etc.) so R8 finishes minification. Bumped Gradle JVM heap 2 GiB → 6 GiB so the R8 step doesn't OOM.
+
+**Live release-build evidence (2026-05-11):**
+- `./gradlew assembleRelease` exits 0; produces `android/app/build/outputs/apk/release/app-release-unsigned.apk` (42.5 MB, 3 dex files).
+- `strings classes*.dex | grep rsf93ac8bd` → **0 hits**. The dev API Gateway hostname is no longer in the release binary.
+- `strings classes*.dex | grep "api\.carelog\.com"` → 2 hits (the placeholder prod URL embedded by the release variant's `buildConfigField`). To swap once the prod sender domain is decided (launch plan Stream D #5).
+- `strings classes*.dex | grep "Offline debug bypass"` → **0 hits** in release. The same string appears in the debug APK's classes13.dex, confirming R8 dead-code-eliminated the `if (BuildConfig.DEBUG && …)` branch in release while preserving it in debug.
+
+**Files touched in the 2026-05-11 follow-up:**
+- `android/app/build.gradle.kts` — added `buildConfigField("Boolean", "USE_V2_INFERENCE", "true")` on both variants; release-variant URL marked TODO for Stream D #5.
+- `android/gradle.properties` — `-Xmx2048m` → `-Xmx6144m` for R8 release minify.
+- `android/app/proguard-rules.pro` — blanket `-dontwarn` rules for HAPI optional deps.
+- `android/app/src/main/java/com/carelog/core/BuildConfig.kt` — **deleted**.
+- 7 import switches: `UploadService`, `DeviceTokenManager`, `RelativeApiService`, `FhirModule`, `PatientRepositoryImpl`, `ConsentRepositoryImpl`, `InviteRepositoryImpl`.
+- 4 fully-qualified `com.carelog.core.BuildConfig.*` → `com.carelog.BuildConfig.*` substitutions: `AuthRepository` (DEBUG), `CareLogNavHost` (USE_V2_INFERENCE x3), `NetworkModule` (API_BASE_URL).
+- Explicit `import com.carelog.BuildConfig` added to `CareLogApplication.kt` and `PhiSanitizer.kt` (otherwise unqualified `BuildConfig` would not resolve after delete).
+- 5 PHI-leaking `Log.d` calls stripped (no replacements added; the auth-session "Authenticated as $persona" line was preserved gated on `BuildConfig.DEBUG` since it doesn't carry PHI by itself).
+- `scripts/update-app-config.sh` — rewritten to update the Gradle debug-variant `buildConfigField` via sed instead of writing to the deleted file.
+
+**Files touched in the original 2026-05-11 fix (preserved):**
 - `android/app/src/main/java/com/carelog/auth/AuthRepository.kt` (cache + bypass)
 - `android/app/src/main/java/com/carelog/auth/AuthModule.kt` (Hilt wiring)
 - `scripts/matika-bp-network-drop.sh` (dropped the KNOWN BLOCKER comment)

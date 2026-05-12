@@ -21,6 +21,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.carelog.BuildConfig
 import com.carelog.auth.AuthState
 import com.carelog.auth.AuthRepository
 import com.carelog.auth.PersonaType
@@ -147,7 +148,7 @@ object CareLogRoutes {
     const val PROTOCOL_CONFIG_CONVERSATION = "protocol_config_conversation/{patientId}/{patientName}"
     /**
      * v2 caregiver onboarding (Phase C). Replaces PROTOCOL_CONFIG_CONVERSATION
-     * when [com.carelog.core.BuildConfig.USE_V2_INFERENCE] is true. Carries
+     * when [com.carelog.BuildConfig.USE_V2_INFERENCE] is true. Carries
      * the patient's Cognito sub instead of the internal `patient_id` UUID
      * because the v2 backend takes the sub on the wire and resolves the
      * internal id server-side.
@@ -295,7 +296,7 @@ fun CareLogNavHost() {
                     // Cognito sub. Otherwise fall back to the legacy
                     // SPLASH navigation for older deployments.
                     if (
-                        com.carelog.core.BuildConfig.USE_V2_INFERENCE &&
+                        com.carelog.BuildConfig.USE_V2_INFERENCE &&
                         !cognitoSub.isNullOrBlank()
                     ) {
                         navController.navigate(
@@ -534,7 +535,7 @@ fun CareLogNavHost() {
                     // Otherwise fall back to the v1 protocol-config flow so
                     // pre-Phase-C deployments keep working.
                     val v2Route = if (
-                        com.carelog.core.BuildConfig.USE_V2_INFERENCE &&
+                        com.carelog.BuildConfig.USE_V2_INFERENCE &&
                         !patientCognitoSub.isNullOrBlank()
                     ) {
                         CareLogRoutes.matikaProtocolConfig(patientCognitoSub, "Patient")
@@ -802,7 +803,7 @@ fun CareLogNavHost() {
             route = CareLogRoutes.CONVERSATION,
             arguments = listOf(navArgument("patientId") { type = NavType.StringType })
         ) {
-            if (com.carelog.core.BuildConfig.USE_V2_INFERENCE) {
+            if (com.carelog.BuildConfig.USE_V2_INFERENCE) {
                 MatikaConversationScreen(
                     onNavigateBack = { navController.popBackStack() },
                     // The v2 screen shows captured values inline via
@@ -887,7 +888,9 @@ class SplashViewModel @Inject constructor(
                 when (state) {
                     is AuthState.Authenticated -> {
                         val persona = state.user.personaType
-                        Log.d("SplashViewModel", "Authenticated as $persona, linkedPatientId=${state.user.linkedPatientId}")
+                        if (BuildConfig.DEBUG) {
+                            Log.d("SplashViewModel", "Authenticated as $persona")
+                        }
                         _navigateTo.value = dashboardRouteForPersona(persona)
                     }
                     else -> {

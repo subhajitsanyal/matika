@@ -8,6 +8,7 @@ import com.amplifyframework.AmplifyException
 import com.amplifyframework.auth.cognito.AWSCognitoAuthPlugin
 import com.amplifyframework.core.Amplify
 // import com.amplifyframework.storage.s3.AWSS3StoragePlugin
+import com.carelog.BuildConfig
 import com.carelog.discovery.HealthCheckService
 import com.carelog.discovery.MacMiniDiscovery
 import com.carelog.notifications.DeviceTokenManager

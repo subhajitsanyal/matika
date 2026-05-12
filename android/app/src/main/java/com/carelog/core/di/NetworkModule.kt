@@ -151,7 +151,7 @@ object DualNetworkModule {
         @CloudApi okHttpClient: OkHttpClient
     ): Retrofit {
         return Retrofit.Builder()
-            .baseUrl(com.carelog.core.BuildConfig.API_BASE_URL + "/")
+            .baseUrl(com.carelog.BuildConfig.API_BASE_URL + "/")
             .client(okHttpClient)
             .addConverterFactory(GsonConverterFactory.create())
             .build()

@@ -12,7 +12,7 @@ import org.json.JSONObject
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 import java.util.concurrent.TimeUnit
-import com.carelog.core.BuildConfig
+import com.carelog.BuildConfig
 import javax.inject.Inject
 import javax.inject.Singleton
 

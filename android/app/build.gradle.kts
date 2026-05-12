@@ -37,6 +37,7 @@ android {
         debug {
             isDebuggable = true
             buildConfigField("String", "API_BASE_URL", "\"https://rsf93ac8bd.execute-api.ap-south-1.amazonaws.com/dev\"")
+            buildConfigField("Boolean", "USE_V2_INFERENCE", "true")
         }
         release {
             isMinifyEnabled = true
@@ -45,7 +46,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // TODO(launch §Stream D #5): swap to the chosen prod domain once SES sender is decided.
             buildConfigField("String", "API_BASE_URL", "\"https://api.carelog.com\"")
+            buildConfigField("Boolean", "USE_V2_INFERENCE", "true")
         }
     }
 

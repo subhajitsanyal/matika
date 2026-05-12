@@ -21,7 +21,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
-import com.carelog.core.BuildConfig
+import com.carelog.BuildConfig
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -178,7 +178,6 @@ class DeviceTokenManager @Inject constructor(
                 .distinctUntilChanged()
                 .collect { userId ->
                     if (userId != null) {
-                        Log.d(TAG, "auth → Authenticated, registering FCM token for user=$userId")
                         initializeNotifications()
                     }
                 }

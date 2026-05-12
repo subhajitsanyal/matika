@@ -1,7 +1,7 @@
 package com.carelog.di
 
 import com.carelog.auth.AuthRepository
-import com.carelog.core.BuildConfig
+import com.carelog.BuildConfig
 import com.carelog.fhir.client.FhirClient
 import com.carelog.fhir.client.FhirClientConfig
 import com.carelog.fhir.client.HealthLakeFhirClient

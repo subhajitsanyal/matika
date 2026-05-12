@@ -1,7 +1,7 @@
 package com.carelog.ui.consent
 
 import com.carelog.auth.AuthRepository
-import com.carelog.core.BuildConfig
+import com.carelog.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType

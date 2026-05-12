@@ -3,7 +3,7 @@ package com.carelog.upload
 import android.content.Context
 import android.net.Uri
 import com.carelog.auth.AuthRepository
-import com.carelog.core.BuildConfig
+import com.carelog.BuildConfig
 import com.carelog.fhir.client.DocumentType
 import com.carelog.fhir.models.FhirDocumentReference
 import com.carelog.fhir.repository.LocalFhirRepository

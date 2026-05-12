@@ -145,7 +145,7 @@ class AuthRepository @Inject constructor(
                     // at the persona's home instead of routing to login. Strictly
                     // gated on BuildConfig.DEBUG to keep prod off this path.
                     val cached = readCachedUserForOffline()
-                    if (com.carelog.core.BuildConfig.DEBUG && !networkMonitor.isConnected() && cached != null) {
+                    if (com.carelog.BuildConfig.DEBUG && !networkMonitor.isConnected() && cached != null) {
                         Log.w(TAG, "Offline debug bypass: using cached user (${cached.email})")
                         cached
                     } else throw networkErr
@@ -396,8 +396,6 @@ class AuthRepository @Inject constructor(
                 it.key == AuthUserAttributeKey.custom("linked_patient_id") ||
                 it.key.keyString == "custom:linked_patient_id"
             }?.value?.takeIf { it.isNotEmpty() }
-            Log.d(TAG, "fetchLinkedPatientId: raw attributes=${attributes.map { "${it.key.keyString}=${it.value}" }}")
-            Log.d(TAG, "fetchLinkedPatientId: result=$patientId")
             patientId
         } catch (e: Exception) {
             Log.e(TAG, "Failed to fetch linked patient ID", e)
