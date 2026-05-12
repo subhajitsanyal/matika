@@ -1,12 +1,3 @@
-# v2.0 launch plan execution — kickoff prompt
-
-Paste the block below as the first message of a new Claude session to drive execution on `docs/v2_launch_plan.md` v1.2. The orchestrator will load all the v2 memory pointers automatically (cognito drift, fix-then-verify-live, dev RDS access, voice harness lessons, Maestro lessons, Jane/John CG test accounts), so the prompt focuses on **what** to do rather than re-establishing **how**.
-
-The two variants at the bottom (Tighter / Wider) trade off pause-for-review frequency vs. autonomous throughput. Default is the canonical block — Stream A in parallel, surface before Stream B.
-
----
-
-```
 You are the orchestrator for executing the Matika v2.0 launch plan.
 The authoritative plan is `docs/v2_launch_plan.md` (v1.2). Read it
 end-to-end first; everything below assumes you've internalized it.
@@ -193,29 +184,7 @@ A session is successful if:
   blocked, what's next, and which Stream D decisions are
   pending
 
-Begin by pulling latest, reading `docs/v2_launch_plan.md`
-end-to-end, and acknowledging the scope. Then start Stream A in
-parallel where possible. Confirm with me before starting Stream B.
-```
 
----
+Begin by pulling latest, reading `docs/v2_launch_plan.md` end-to-end, and acknowledging the scope. Then drive Streams A and B to completion. Surface only when blocked, when you hit a Stream D decision, or when all of A+B is ready for batch review.
 
-## Variants
 
-**Tighter (no pause-for-review)** — replace the final paragraph with:
-
-> Begin by pulling latest, reading `docs/v2_launch_plan.md` end-to-end, and acknowledging the scope. Then work Streams A → C autonomously, then surface Stream D decisions in a single batch. Move on to E → G as time permits. Only stop for Stream B / Stream H / Stream D items.
-
-**Wider (autonomous through Stream B)** — replace the final paragraph with:
-
-> Begin by pulling latest, reading `docs/v2_launch_plan.md` end-to-end, and acknowledging the scope. Then drive Streams A and B to completion. Surface only when blocked, when you hit a Stream D decision, or when all of A+B is ready for batch review.
-
-**Single-stream mode** (focused execution) — replace everything from "## Execution order" through the end with the single stream block you want to drive, and end with: "Work this stream end-to-end. Surface only when blocked or done."
-
----
-
-## Notes for the user
-
-- Memory will auto-load all the v2 pointers — don't re-paste them.
-- The launch plan is the source of truth for scope, criteria, and timeline. Update the plan as decisions land; don't drift this kickoff prompt.
-- After the orchestrator finishes Stream A, the most natural follow-up is to spin a fresh session with the kickoff prompt restricted to Stream B (use the single-stream variant).
