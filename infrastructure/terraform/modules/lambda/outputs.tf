@@ -26,6 +26,16 @@ output "expire_stale_sessions_function_name" {
   value = aws_lambda_function.expire_stale_sessions.function_name
 }
 
+# Phase 2 telemetry — vital coverage rollup
+output "vital_coverage_rollup_arn" {
+  description = "ARN for vital-coverage-rollup (EventBridge target for hourly Phase 2 telemetry rollup)"
+  value       = aws_lambda_function.vital_coverage_rollup.arn
+}
+
+output "vital_coverage_rollup_function_name" {
+  value = aws_lambda_function.vital_coverage_rollup.function_name
+}
+
 # F23 — voice-extracted patient creation
 output "create_patient_from_voice_arn" {
   description = "ARN for create-patient-from-voice (invoked by bedrock-router via SDK)"
@@ -201,6 +211,8 @@ output "all_function_names" {
     # F2 — session lifecycle
     aws_lambda_function.end_session.function_name,
     aws_lambda_function.expire_stale_sessions.function_name,
+    # Phase 2 telemetry rollups (§4.7)
+    aws_lambda_function.vital_coverage_rollup.function_name,
     # F23 — voice patient onboarding
     aws_lambda_function.create_patient_from_voice.function_name,
   ]

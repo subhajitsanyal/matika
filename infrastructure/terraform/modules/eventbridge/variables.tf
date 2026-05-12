@@ -52,3 +52,18 @@ variable "expire_stale_sessions_lambda_name" {
   description = "Function name of matika-<env>-expire-stale-sessions Lambda (for permission resource)"
   type        = string
 }
+
+# ============================================================
+# Phase 2 telemetry — vital coverage rollup (§4.7, first of the
+# rollup-lambda set; hourly cron, idempotent re-runs)
+# ============================================================
+
+variable "vital_coverage_rollup_lambda_arn" {
+  description = "ARN of carelog-<env>-vital-coverage-rollup Lambda (EventBridge target for hourly Phase 2 telemetry rollup)"
+  type        = string
+}
+
+variable "vital_coverage_rollup_lambda_name" {
+  description = "Function name of carelog-<env>-vital-coverage-rollup Lambda (for permission resource)"
+  type        = string
+}

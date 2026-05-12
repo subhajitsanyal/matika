@@ -304,6 +304,10 @@ module "eventbridge" {
   # F2 — hourly stale-session sweep
   expire_stale_sessions_lambda_arn  = module.lambda.expire_stale_sessions_arn
   expire_stale_sessions_lambda_name = module.lambda.expire_stale_sessions_function_name
+
+  # Phase 2 telemetry — vital coverage rollup (§4.7)
+  vital_coverage_rollup_lambda_arn  = module.lambda.vital_coverage_rollup_arn
+  vital_coverage_rollup_lambda_name = module.lambda.vital_coverage_rollup_function_name
 }
 
 # Monitoring Module (CloudWatch alarms, SNS, dashboard)

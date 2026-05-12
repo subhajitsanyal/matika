@@ -384,6 +384,16 @@ data "archive_file" "expire_stale_sessions" {
   output_path = "${path.module}/archives/expire-stale-sessions.zip"
 }
 
+# Phase 2 telemetry — first of the §4.7 rollup-lambda set. Hourly
+# cron via EventBridge; recomputes vital_coverage_daily for today +
+# yesterday in each patient's tz across all active parameter_configs.
+# See backend/lambdas/vital-coverage-rollup/index.js for the SQL.
+data "archive_file" "vital_coverage_rollup" {
+  type        = "zip"
+  source_dir  = "${var.lambdas_source_path}/vital-coverage-rollup"
+  output_path = "${path.module}/archives/vital-coverage-rollup.zip"
+}
+
 # F23 — voice-extracted patient creation. Direct-invoke only (no API
 # Gateway route); bedrock-router calls this at the caregiver_onboarding
 # mid-session pivot. See spec §4.5 / §6.9.
@@ -620,6 +630,32 @@ resource "aws_lambda_function" "expire_stale_sessions" {
     variables = merge(local.rds_env, {
       SESSION_IDLE_MINUTES = tostring(var.session_idle_minutes)
     })
+  }
+}
+
+# Phase 2 telemetry — vital coverage rollup. Hourly EventBridge cron;
+# the wiring lives in the eventbridge module. Reads parameter_configs +
+# observation_sync_log; upserts vital_coverage_daily.
+resource "aws_lambda_function" "vital_coverage_rollup" {
+  function_name    = "${local.function_prefix}-vital-coverage-rollup"
+  role             = aws_iam_role.lambda_rds_cognito.arn
+  handler          = "index.handler"
+  runtime          = "nodejs20.x"
+  # 60s rather than 30s — the rollup is a single CTE-heavy upsert
+  # and cold-start + CTE planning + window aggregation can spike on
+  # the first run after a deploy.
+  timeout          = 60
+  memory_size      = 256
+  filename         = data.archive_file.vital_coverage_rollup.output_path
+  source_code_hash = data.archive_file.vital_coverage_rollup.output_base64sha256
+
+  vpc_config {
+    subnet_ids         = var.private_subnet_ids
+    security_group_ids = [var.lambda_security_group_id]
+  }
+
+  environment {
+    variables = local.rds_env
   }
 }
 

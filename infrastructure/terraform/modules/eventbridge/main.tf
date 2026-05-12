@@ -79,3 +79,33 @@ resource "aws_lambda_permission" "expire_stale_sessions_eventbridge" {
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.expire_stale_sessions.arn
 }
+
+# ============================================================
+# Rule 4: vital-coverage-rollup (Phase 2 telemetry, §4.7)
+#
+# Hourly recomputation of vital_coverage_daily for today + yesterday
+# (in each patient's tz) across every active parameter_config.
+# Idempotent re-runs are by design — yesterday's actual_count can
+# change retroactively when observations sync late, and today's row
+# updates as the day progresses. See
+# backend/lambdas/vital-coverage-rollup/index.js.
+# ============================================================
+
+resource "aws_cloudwatch_event_rule" "vital_coverage_rollup" {
+  name                = "carelog-vital-coverage-rollup-${var.environment}"
+  description         = "Phase 2 telemetry — hourly upsert into vital_coverage_daily"
+  schedule_expression = "rate(1 hour)"
+}
+
+resource "aws_cloudwatch_event_target" "vital_coverage_rollup" {
+  rule = aws_cloudwatch_event_rule.vital_coverage_rollup.name
+  arn  = var.vital_coverage_rollup_lambda_arn
+}
+
+resource "aws_lambda_permission" "vital_coverage_rollup_eventbridge" {
+  statement_id  = "AllowEventBridgeInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = var.vital_coverage_rollup_lambda_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.vital_coverage_rollup.arn
+}
