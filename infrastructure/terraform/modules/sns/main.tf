@@ -1,148 +1,60 @@
 # SNS Push Notification Infrastructure
-# Configures SNS platform applications for iOS (APNs) and Android (FCM)
+# Configures SNS platform applications for iOS (APNs) and Android (FCM HTTP v1).
+#
+# Scope note: this module deliberately ships ONLY the platform
+# applications. The original module also bundled SNS topics
+# (endpoint_events, delivery_failures, threshold_alerts, reminder_alerts),
+# a CloudWatch log group + IAM role for delivery-status logging, and
+# the platform apps' event_*_topic_arn wiring. None of that is
+# subscribed-to anywhere in the codebase today, so it's dead
+# infrastructure. The platform apps work without those topics — SNS
+# just doesn't fire endpoint-lifecycle / delivery-failure events on
+# top of them. When a real subscriber lands (e.g. a delivery-failure
+# Lambda for retry queueing), re-add the relevant topic + wire the
+# `event_*_topic_arn` arg on the platform application.
 
 # iOS APNs Platform Application
+#
+# Gated behind `count` because iOS is parked for v2.0 (Android-only beta;
+# see docs/v2_launch_plan.md §1). When iOS unparks in v2.1, populate the
+# APNs cert + private key in env-scoped tfvars and the resource will be
+# created.
 resource "aws_sns_platform_application" "ios_apns" {
+  count = var.apns_certificate != "" && var.apns_private_key != "" ? 1 : 0
+
   name                = "${var.project_name}-ios-apns-${var.environment}"
   platform            = var.environment == "prod" ? "APNS" : "APNS_SANDBOX"
   platform_credential = var.apns_private_key
   platform_principal  = var.apns_certificate
 
-  # APNs authentication using token-based auth (recommended)
-  # Uncomment below if using token-based auth instead of certificate
-  # platform_credential = var.apns_signing_key
-  # platform_principal  = var.apns_key_id
-  # apple_platform_team_id = var.apple_team_id
-  # apple_platform_bundle_id = var.ios_bundle_id
-
-  event_endpoint_created_topic_arn = aws_sns_topic.endpoint_events.arn
-  event_endpoint_deleted_topic_arn = aws_sns_topic.endpoint_events.arn
-  event_endpoint_updated_topic_arn = aws_sns_topic.endpoint_events.arn
-  event_delivery_failure_topic_arn = aws_sns_topic.delivery_failures.arn
-
-  tags = {
-    Name        = "${var.project_name}-ios-apns"
-    Environment = var.environment
-    Project     = var.project_name
-  }
+  # NB: aws_sns_platform_application does not accept a `tags` argument
+  # (provider limitation as of AWS provider v5.100). SNS Platform Apps
+  # are untagged.
 }
 
-# Android FCM Platform Application
+# Android FCM Platform Application — FCM HTTP v1 (token-based auth).
+#
+# `platform_credential` is the entire FCM HTTP v1 service-account JSON
+# blob (downloaded from Firebase console: Project settings → Service
+# accounts → Generate new private key). AWS auto-detects the
+# token-based vs legacy server-key format from the credential string.
+#
+# `lifecycle.ignore_changes` on `platform_credential`: AWS does not
+# return the credential via `GetPlatformApplicationAttributes` (only
+# `Enabled` + `AuthenticationMethod`). Without `ignore_changes`,
+# terraform sees state.platform_credential as null after import and
+# tries to "update" it every plan, even though the live value matches.
+# Rotating the credential becomes a manual `terraform state rm` +
+# re-import, which is acceptable given the rare cadence (FCM service
+# account rotations are infrequent and operationally tracked separately
+# in the SNS+FCM provisioning runbook, setup-and-deployment-guide.md
+# §6.6).
 resource "aws_sns_platform_application" "android_fcm" {
   name                = "${var.project_name}-android-fcm-${var.environment}"
   platform            = "GCM"
   platform_credential = var.fcm_server_key
 
-  event_endpoint_created_topic_arn = aws_sns_topic.endpoint_events.arn
-  event_endpoint_deleted_topic_arn = aws_sns_topic.endpoint_events.arn
-  event_endpoint_updated_topic_arn = aws_sns_topic.endpoint_events.arn
-  event_delivery_failure_topic_arn = aws_sns_topic.delivery_failures.arn
-
-  tags = {
-    Name        = "${var.project_name}-android-fcm"
-    Environment = var.environment
-    Project     = var.project_name
+  lifecycle {
+    ignore_changes = [platform_credential]
   }
-}
-
-# SNS Topic for endpoint events (created, deleted, updated)
-resource "aws_sns_topic" "endpoint_events" {
-  name = "${var.project_name}-endpoint-events-${var.environment}"
-
-  tags = {
-    Name        = "${var.project_name}-endpoint-events"
-    Environment = var.environment
-    Project     = var.project_name
-  }
-}
-
-# SNS Topic for delivery failures
-resource "aws_sns_topic" "delivery_failures" {
-  name = "${var.project_name}-delivery-failures-${var.environment}"
-
-  tags = {
-    Name        = "${var.project_name}-delivery-failures"
-    Environment = var.environment
-    Project     = var.project_name
-  }
-}
-
-# SNS Topic for threshold breach alerts
-resource "aws_sns_topic" "threshold_alerts" {
-  name = "${var.project_name}-threshold-alerts-${var.environment}"
-
-  tags = {
-    Name        = "${var.project_name}-threshold-alerts"
-    Environment = var.environment
-    Project     = var.project_name
-  }
-}
-
-# SNS Topic for reminder lapse alerts
-resource "aws_sns_topic" "reminder_alerts" {
-  name = "${var.project_name}-reminder-alerts-${var.environment}"
-
-  tags = {
-    Name        = "${var.project_name}-reminder-alerts"
-    Environment = var.environment
-    Project     = var.project_name
-  }
-}
-
-# CloudWatch Log Group for delivery status logging
-resource "aws_cloudwatch_log_group" "sns_delivery_logs" {
-  name              = "/aws/sns/${var.project_name}-delivery-${var.environment}"
-  retention_in_days = 30
-
-  tags = {
-    Name        = "${var.project_name}-sns-delivery-logs"
-    Environment = var.environment
-    Project     = var.project_name
-  }
-}
-
-# IAM Role for SNS to write delivery logs
-resource "aws_iam_role" "sns_delivery_status_role" {
-  name = "${var.project_name}-sns-delivery-status-${var.environment}"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Action = "sts:AssumeRole"
-        Effect = "Allow"
-        Principal = {
-          Service = "sns.amazonaws.com"
-        }
-      }
-    ]
-  })
-
-  tags = {
-    Name        = "${var.project_name}-sns-delivery-status-role"
-    Environment = var.environment
-    Project     = var.project_name
-  }
-}
-
-resource "aws_iam_role_policy" "sns_delivery_status_policy" {
-  name = "${var.project_name}-sns-delivery-status-policy"
-  role = aws_iam_role.sns_delivery_status_role.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "logs:CreateLogGroup",
-          "logs:CreateLogStream",
-          "logs:PutLogEvents",
-          "logs:PutMetricFilter",
-          "logs:PutRetentionPolicy"
-        ]
-        Resource = "${aws_cloudwatch_log_group.sns_delivery_logs.arn}:*"
-      }
-    ]
-  })
 }

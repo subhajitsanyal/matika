@@ -235,12 +235,41 @@ module "lambda" {
 
   # F17 — push transport. Empty string means "no push transport configured";
   # the lambdas log a warning and short-circuit (no SNS publish, alerts.send_error
-  # = 'no_transport_or_no_device_token'). Set ANDROID_PLATFORM_ARN to the
-  # `aws sns create-platform-application` ARN once the Platform App is
-  # provisioned (dev: arn:aws:sns:ap-south-1:316643066568:app/GCM/carelog-android-fcm-dev).
-  # ios_platform_arn left empty pending APNs work (see iOS scope hold).
+  # = 'no_transport_or_no_device_token'). Stays sourced from
+  # `var.android_platform_arn` (terraform.tfvars) instead of
+  # `module.sns.android_platform_application_arn` because lambda function
+  # state has source-code-hash drift from the F11/F12/F13/F19 CLI deploys
+  # (cognito-drift class — see memory/terraform_lambda_drift_pattern.md).
+  # Switching the wiring would force every push-aware lambda into a
+  # full terraform-managed update, which would clobber the live code.
+  # Re-wire to `module.sns.…` after the lambda drift is reconciled.
   android_platform_arn = var.android_platform_arn
   ios_platform_arn     = var.ios_platform_arn
+}
+
+# SNS Module (push transport: FCM HTTP v1 platform app + bundled topics
+# + delivery-status logging role). Imported from the live AWS resource
+# created out-of-band in 2026-05-11 for F17 (`aws sns
+# create-platform-application` against the FCM service-account JSON
+# stored at `carelog-dev/fcm-service-account` in Secrets Manager). See
+# `setup-and-deployment-guide.md` §6.6 for the runbook used.
+data "aws_secretsmanager_secret_version" "fcm_credential" {
+  secret_id = "carelog-${var.environment}/fcm-service-account"
+}
+
+module "sns" {
+  source = "./modules/sns"
+
+  project_name = "carelog"
+  environment  = var.environment
+
+  # FCM HTTP v1 service-account JSON. The lifecycle-ignore on the
+  # platform application means this only matters at first apply / when
+  # rotating; subsequent plans skip the diff.
+  fcm_server_key = data.aws_secretsmanager_secret_version.fcm_credential.secret_string
+
+  # iOS APNs is gated by a non-empty cert + key in the module; leave both
+  # empty for v2.0 (Android-only).
 }
 
 # EventBridge Module (scheduled rules for proactive monitoring)

@@ -26,7 +26,7 @@ variable "apns_private_key" {
 }
 
 variable "fcm_server_key" {
-  description = "Firebase Cloud Messaging server key"
+  description = "Firebase Cloud Messaging credential. For FCM HTTP v1 (current default) this is the entire service-account JSON blob downloaded from Firebase console → Project settings → Service accounts → Generate new private key. The legacy FCM server key string is also accepted by SNS but should not be used for new deploys (Firebase deprecated it in 2024). Stored in Secrets Manager; loaded via data source."
   type        = string
   sensitive   = true
   default     = ""
