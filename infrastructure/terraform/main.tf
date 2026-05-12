@@ -53,6 +53,12 @@ data "aws_caller_identity" "current" {}
 locals {
   post_confirmation_lambda_arn   = "arn:aws:lambda:${var.aws_region}:${data.aws_caller_identity.current.account_id}:function:carelog-${var.environment}-post-confirmation"
   post_authentication_lambda_arn = "arn:aws:lambda:${var.aws_region}:${data.aws_caller_identity.current.account_id}:function:carelog-${var.environment}-post-authentication"
+
+  # delete-patient invoke ARN — constructed string for the same reason
+  # as the cognito triggers above. The lambda exists but is not yet in
+  # terraform state (lambda-drift class); rather than block the API
+  # Gateway wiring, pass the deterministic ARN through.
+  delete_patient_invoke_arn = "arn:aws:apigateway:${var.aws_region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${var.aws_region}:${data.aws_caller_identity.current.account_id}:function:carelog-${var.environment}-delete-patient/invocations"
 }
 
 # VPC Module
@@ -141,6 +147,15 @@ module "api_gateway" {
 
   # F17 — POST/DELETE /device-tokens
   device_token_invoke_arn = module.lambda.device_token_invoke_arn
+
+  # DPDP right-to-erasure — DELETE /patients/{patientId}.
+  # Constructed string instead of `module.lambda.…` because the lambda
+  # is not yet in terraform state (lambda-drift class). Live wiring
+  # was applied via aws apigateway CLI on 2026-05-12 alongside the
+  # MOCK→AWS_PROXY swap in api_gateway/main.tf. Switch to a module
+  # reference once delete-patient lambda is added to the lambda module
+  # and imported.
+  delete_patient_invoke_arn = local.delete_patient_invoke_arn
 }
 
 # HealthLake Module

@@ -8,6 +8,34 @@
 
 ## Voice sweep (2026-05-10) — newly raised + resolved
 
+### F29 — DELETE /patients/{patientId} was a MOCK integration; lambda existed but never called (RESOLVED — verified live 2026-05-12)
+
+**Severity:** Was **High — beta blocker for DPDP right-to-erasure compliance**. Caregivers calling DELETE on a patient got a hardcoded 200 from the API Gateway MOCK integration; the `delete-patient` Lambda (which has the soft-delete cascade for Cognito + persona_links + invites + patient row + audit log) was never invoked. Patients reported as "deleted" actually persisted in RDS.
+
+**Owner:** `backend` + `devops` (route wiring) + `qa-testing` (Maestro flow for CG-V2-16 follow-up).
+
+**Status:** Wired live. The lambda was deployed Apr 27 (`carelog-dev-delete-patient`, handler `index.handler`, runtime nodejs20.x, role `carelog-dev-lambda-rds-cognito`). Out-of-band: not in terraform (lambda-drift class), but functionally complete. The API Gateway invoke permission was already in place (`apigateway-delete-patient` statement on the function). Only the integration was wrong: `aws_api_gateway_integration.patient_delete` was `type = "MOCK"` with `request_templates = {"application/json" = "{\"statusCode\": 200}"}` and a paired `aws_api_gateway_integration_response`.
+
+Fix applied via the CLI hybrid pattern (memory `terraform_lambda_drift_pattern.md`):
+- `aws apigateway delete-integration-response` (the MOCK 200 stub)
+- `aws apigateway delete-integration` (the MOCK)
+- `aws apigateway put-integration --type AWS_PROXY --integration-http-method POST --uri arn:aws:apigateway:ap-south-1:lambda:path/2015-03-31/functions/arn:aws:lambda:ap-south-1:316643066568:function:carelog-dev-delete-patient/invocations`
+- `aws apigateway delete-method-response` + `put-method-response` to restore CORS header on the new shape
+- `aws apigateway create-deployment --stage-name dev` (deployment id `t6w0t4`)
+
+Terraform code reconciled: `infrastructure/terraform/modules/api_gateway/main.tf` `patient_delete` block now declares the AWS_PROXY integration, removed the integration_response (AWS_PROXY doesn't need an explicit one). New `var.delete_patient_invoke_arn` in the api_gateway module variables, fed from `local.delete_patient_invoke_arn` in root main.tf — constructed string for the same lambda-drift reason as the cognito triggers (lambda not in terraform state yet). `terraform apply -refresh-only` brought state in line with live; `terraform plan` confirms no further drift on this surface.
+
+**Live evidence (2026-05-12):**
+- `aws apigateway get-method --resource-id rejty6 --http-method DELETE` → `methodIntegration.type = AWS_PROXY`, `uri = arn:…/carelog-dev-delete-patient/invocations`
+- `curl -X DELETE -H "Authorization: <John CG IdToken>" https://rsf93ac8bd…/dev/patients/00000000-0000-0000-0000-000000000000` → HTTP 403 with body `{"error":"You do not have permission to delete this patient. Only the primary caregiver can do this."}` — the lambda's own response shape, not a MOCK 200.
+- CloudWatch `/aws/lambda/carelog-dev-delete-patient` logs the same RequestId during the call: `INFO Delete patient request received` (cold start, Init Duration 477.70 ms) — confirms the new wiring routes to the lambda.
+
+**Follow-ups (non-blocking for the wiring fix; track separately):**
+- Author the **CG-V2-16 Maestro flow** (Android UI: Settings → Manage Care → Delete Patient → confirm dialog → assert patient is gone from caregiver dashboard). Will need a synthetic test patient (NOT Jane), since the cascade is destructive.
+- **End-to-end cascade test** with a freshly-created patient: verify Cognito user is disabled, all `persona_links` are flipped `is_active=false`, all `invites` are soft-deleted, the `patients` row is soft-deleted, and an `audit_log` entry exists.
+- **Bring delete-patient lambda into terraform state** (lambda-drift class follow-up). Same shape as the other ~6 lambdas with source-code-hash drift from CLI deploys.
+- The same MOCK pattern lives at `DELETE /patients/{patientId}/team/{memberId}` (`team_member_delete` block in api_gateway/main.tf:381). That's CG-V2-11 (remove team member), which is **deferred to Phase 2** with the rest of the doctor-related work — leave as MOCK for v2.0.
+
 ### F27 — Patient conversation entry gated on legacy v1 Mac Mini health check after `clearState` (RESOLVED — verified live 2026-05-10)
 
 **Severity:** Was Critical for patient-persona conversation journeys. Blocked PT-V2-07 (`patient_logging_happy_path` — the CI gate), PT-V2-05, PT-V2-06, PT-V2-08, PT-V2-09, EDGE-V2-03, EDGE-V2-11, EDGE-V2-13 — every flow that taps `patient_home_start_conversation`. Phase-1 manual-vital flows (PT-V2-15..21) are unaffected because they take the tile path. F23 voice patient onboarding works because it routes through `add_patient_voice_fab` on the caregiver dashboard, not the patient home button.

@@ -334,7 +334,18 @@ resource "aws_api_gateway_integration" "patients_post" {
   uri                     = var.create_patient_invoke_arn
 }
 
-# DELETE /patients/{patientId} — delete-patient (kept as MOCK until Lambda exists)
+# DELETE /patients/{patientId} — wired to delete-patient Lambda
+# (was MOCK until 2026-05-12). The lambda performs the soft-delete
+# cascade (Cognito disable + persona_links + invites + patient row +
+# audit log). Required for DPDP right-to-erasure compliance.
+#
+# Live state was set via the CLI-hybrid pattern (see memory's
+# terraform_lambda_drift_pattern.md): the integration + integration
+# response replacement was applied via `aws apigateway`, deployment
+# stamped to dev stage. This block is the code reflection — the next
+# clean `terraform apply` (after the lambda source-code-hash drift is
+# reconciled) will see no logical diff. Method response stays at 200
+# for CORS; AWS_PROXY passes the lambda's own status codes through.
 resource "aws_api_gateway_method" "patient_delete" {
   rest_api_id   = aws_api_gateway_rest_api.main.id
   resource_id   = aws_api_gateway_resource.patient.id
@@ -344,14 +355,12 @@ resource "aws_api_gateway_method" "patient_delete" {
 }
 
 resource "aws_api_gateway_integration" "patient_delete" {
-  rest_api_id = aws_api_gateway_rest_api.main.id
-  resource_id = aws_api_gateway_resource.patient.id
-  http_method = aws_api_gateway_method.patient_delete.http_method
-  type        = "MOCK"
-
-  request_templates = {
-    "application/json" = "{\"statusCode\": 200}"
-  }
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.patient.id
+  http_method             = aws_api_gateway_method.patient_delete.http_method
+  type                    = "AWS_PROXY"
+  integration_http_method = "POST"
+  uri                     = var.delete_patient_invoke_arn
 }
 
 resource "aws_api_gateway_method_response" "patient_delete_200" {
@@ -363,19 +372,6 @@ resource "aws_api_gateway_method_response" "patient_delete_200" {
   response_parameters = {
     "method.response.header.Access-Control-Allow-Origin" = true
   }
-}
-
-resource "aws_api_gateway_integration_response" "patient_delete_200" {
-  rest_api_id = aws_api_gateway_rest_api.main.id
-  resource_id = aws_api_gateway_resource.patient.id
-  http_method = aws_api_gateway_method.patient_delete.http_method
-  status_code = aws_api_gateway_method_response.patient_delete_200.status_code
-
-  response_parameters = {
-    "method.response.header.Access-Control-Allow-Origin" = "'${var.cors_origin}'"
-  }
-
-  depends_on = [aws_api_gateway_integration.patient_delete]
 }
 
 # DELETE /patients/{patientId}/team/{memberId} — remove-team-member (kept as MOCK)

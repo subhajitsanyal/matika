@@ -161,3 +161,10 @@ variable "device_token_invoke_arn" {
   type        = string
   default     = ""
 }
+
+# DPDP right-to-erasure — delete-patient cascade.
+variable "delete_patient_invoke_arn" {
+  description = "Invoke ARN for carelog-<env>-delete-patient (DELETE /patients/{patientId}). Wired live since 2026-05-12; lambda function not yet in terraform state (cognito-drift class — pending reconciliation)."
+  type        = string
+  default     = ""
+}
