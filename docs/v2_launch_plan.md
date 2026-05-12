@@ -1,6 +1,6 @@
 # Matika v2.0 Launch Plan
 
-**Version:** 1.1
+**Version:** 1.2
 **Author:** Engineering
 **Last Updated:** 2026-05-11
 **Status:** Draft for review
@@ -137,7 +137,7 @@ Plus **organic-run E2E pushes** (CG-V2-08/09 + E2E-V2-02/03/06): transport unblo
 - [ ] Disaster recovery runbook: regional failover plan; even if v2.0 ships single-region, document the RTO/RPO expectations.
 - [ ] Cost dashboard live and tied to monthly budget alarms.
 - [ ] Customer support workflow documented; ticket-to-engineer escalation path.
-- [ ] **Data review** — at least 4 weeks of GA usage data reviewed before kicking off Phase 2 discovery. Confirms enough signal exists to make doctor-portal product calls evidence-based rather than speculative.
+- [ ] **Data review** — at least **8 weeks** of GA usage data reviewed before kicking off Phase 2 discovery. Confirms enough signal exists to make doctor-portal product calls evidence-based rather than speculative.
 
 ---
 
@@ -432,7 +432,7 @@ These need product/leadership decisions before plan execution:
 5. **Crash reporting tool:** Sentry or Firebase Crashlytics?
 6. **Final sender domain for SES:** `no-reply@matika.health`? `support@matika.in`?
 7. **iOS in v2.1:** firm commit, or revisit based on beta signal?
-8. **Phase 2 trigger:** what specific data signals open the doctor-portal discovery window? Baseline retention number? Number of vitals per patient per week? Caregiver request volume?
+8. ~~**Phase 2 trigger:** what specific data signals open the doctor-portal discovery window?~~ **RESOLVED 2026-05-11: GA + 8 weeks.** See §13 entry criterion.
 
 ---
 
@@ -454,7 +454,7 @@ These need product/leadership decisions before plan execution:
 
 **Why this is a phase, not a feature.** Putting a doctor portal in front of physicians without a clear answer to *what to show them and why* is a fast path to a half-loved product. The Phase 2 effort therefore has two halves: **(13.1) discovery** that depends on having real beta + GA data, and **(13.2) engineering** that follows from discovery.
 
-**Entry criterion.** GA + 4 weeks minimum. Adjustable based on data signal: if the beta cohort generates enough longitudinal data sooner (~50+ patient-weeks of vitals across diverse parameters), Phase 2 discovery can start earlier.
+**Entry criterion.** **GA + 8 weeks.** This is the locked trigger as of 2026-05-11 — 8 weeks of GA usage produces enough longitudinal signal across the cohort to make doctor-portal product calls evidence-based rather than speculative. Earlier discovery would be premature; later only delays the doctor-facing roadmap without proportional gain in signal quality.
 
 ### 13.1 Discovery work
 
@@ -508,5 +508,6 @@ Once the product spec is firm, the engineering work is largely the items deferre
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-05-11 (1.2) | Engineering | Phase 2 entry criterion locked: **GA + 8 weeks**. Open question 8 resolved. |
 | 2026-05-11 (1.1) | Engineering | **Rescoped to caregiver+patient for v2.0.** Doctor portal, doctor onboarding, and doctor-facing analytics deferred to Phase 2 (new §13). Recomputed in-scope journey count (52, was 64). Web portal stream removed from v2.0 critical path. Added §4.7 Phase 2 telemetry stream — wires data collection from day 1 of beta. Tightened T-N timeline. Updated risks (doctor stakeholder comms; data sufficiency for Phase 2). |
 | 2026-05-11 (1.0) | Engineering | Initial draft. State snapshot, beta+GA criteria, work streams, T-N sequence, risks. |
