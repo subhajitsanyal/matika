@@ -15,3 +15,18 @@ variable "alert_email" {
   type        = string
   default     = ""
 }
+
+# F17 — push transport (SNS Platform App for Android FCM HTTP v1).
+# Set in terraform.tfvars to the platform app ARN. Empty disables
+# Android push (lambdas log a no-transport warning + short-circuit).
+variable "android_platform_arn" {
+  description = "SNS Platform Application ARN for Android FCM. Forwards to module.carelog.android_platform_arn → lambda env vars."
+  type        = string
+  default     = ""
+}
+
+variable "ios_platform_arn" {
+  description = "SNS Platform Application ARN for iOS APNs. Empty for v2.0 (iOS parked)."
+  type        = string
+  default     = ""
+}

@@ -47,6 +47,14 @@ module "carelog" {
   # CloudWatch alarms — set in terraform.tfvars (gitignored). Empty disables.
   alert_email = var.alert_email
 
+  # F17 — push transport. Forward both APNs and FCM ARNs from
+  # terraform.tfvars to the carelog module. Without this passthrough,
+  # the lambdas (notification-sender, device-token, evaluate-thresholds-batch)
+  # would receive an empty ANDROID_PLATFORM_ARN env var and short-circuit
+  # all push delivery — even though the value is set in terraform.tfvars.
+  android_platform_arn = var.android_platform_arn
+  ios_platform_arn     = var.ios_platform_arn
+
   # Feature flags
   enable_healthlake = false # Disable for dev to save costs
   enable_bastion    = true  # Enable bastion for RDS access via SSM
