@@ -53,12 +53,6 @@ data "aws_caller_identity" "current" {}
 locals {
   post_confirmation_lambda_arn   = "arn:aws:lambda:${var.aws_region}:${data.aws_caller_identity.current.account_id}:function:carelog-${var.environment}-post-confirmation"
   post_authentication_lambda_arn = "arn:aws:lambda:${var.aws_region}:${data.aws_caller_identity.current.account_id}:function:carelog-${var.environment}-post-authentication"
-
-  # delete-patient invoke ARN — constructed string for the same reason
-  # as the cognito triggers above. The lambda exists but is not yet in
-  # terraform state (lambda-drift class); rather than block the API
-  # Gateway wiring, pass the deterministic ARN through.
-  delete_patient_invoke_arn = "arn:aws:apigateway:${var.aws_region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${var.aws_region}:${data.aws_caller_identity.current.account_id}:function:carelog-${var.environment}-delete-patient/invocations"
 }
 
 # VPC Module
@@ -148,14 +142,8 @@ module "api_gateway" {
   # F17 — POST/DELETE /device-tokens
   device_token_invoke_arn = module.lambda.device_token_invoke_arn
 
-  # DPDP right-to-erasure — DELETE /patients/{patientId}.
-  # Constructed string instead of `module.lambda.…` because the lambda
-  # is not yet in terraform state (lambda-drift class). Live wiring
-  # was applied via aws apigateway CLI on 2026-05-12 alongside the
-  # MOCK→AWS_PROXY swap in api_gateway/main.tf. Switch to a module
-  # reference once delete-patient lambda is added to the lambda module
-  # and imported.
-  delete_patient_invoke_arn = local.delete_patient_invoke_arn
+  # F29 / CG-V2-16 — DPDP right-to-erasure (DELETE /patients/{patientId})
+  delete_patient_invoke_arn = module.lambda.delete_patient_invoke_arn
 }
 
 # HealthLake Module
@@ -248,18 +236,15 @@ module "lambda" {
   soft_rate_limit_per_patient            = var.soft_rate_limit_per_patient
   hard_rate_limit_per_patient            = var.hard_rate_limit_per_patient
 
-  # F17 — push transport. Empty string means "no push transport configured";
-  # the lambdas log a warning and short-circuit (no SNS publish, alerts.send_error
-  # = 'no_transport_or_no_device_token'). Stays sourced from
-  # `var.android_platform_arn` (terraform.tfvars) instead of
-  # `module.sns.android_platform_application_arn` because lambda function
-  # state has source-code-hash drift from the F11/F12/F13/F19 CLI deploys
-  # (cognito-drift class — see memory/terraform_lambda_drift_pattern.md).
-  # Switching the wiring would force every push-aware lambda into a
-  # full terraform-managed update, which would clobber the live code.
-  # Re-wire to `module.sns.…` after the lambda drift is reconciled.
-  android_platform_arn = var.android_platform_arn
-  ios_platform_arn     = var.ios_platform_arn
+  # F17 — push transport. Sourced from the SNS module so the platform-app
+  # lifecycle (create/replace) propagates to the consuming lambda env vars
+  # automatically. Was previously sourced from var.android_platform_arn
+  # while lambda source-code-hash drift was being reconciled; that drift
+  # class is now resolved (commit f284a06), so the module reference is safe.
+  # iOS APNs is parked behind module.sns count=0 — empty string output
+  # falls through to the lambdas' graceful-degradation path.
+  android_platform_arn = module.sns.android_platform_application_arn
+  ios_platform_arn     = module.sns.ios_platform_application_arn
 }
 
 # SNS Module (push transport: FCM HTTP v1 platform app + bundled topics

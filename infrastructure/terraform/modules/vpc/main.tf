@@ -243,6 +243,17 @@ resource "aws_security_group" "rds" {
   tags = {
     Name = "carelog-${var.environment}-rds-sg"
   }
+
+  # The bastion module manages its own ingress to RDS:5432 via a
+  # separate aws_security_group_rule.bastion_to_rds resource. Without
+  # this ignore_changes, terraform would remove the bastion's rule on
+  # every apply (inline ingress vs. external-rule conflict), which
+  # would break the SSM tunnel that dev_rds_ssm_tunnel.md depends on.
+  # The bastion rule reappears on the next plan but the break window
+  # is not acceptable.
+  lifecycle {
+    ignore_changes = [ingress]
+  }
 }
 
 # Lambda Security Group

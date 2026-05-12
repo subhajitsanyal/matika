@@ -127,4 +127,15 @@ resource "aws_instance" "bastion" {
     Name        = "carelog-${var.environment}-bastion"
     Environment = var.environment
   }
+
+  # The aws_ami data source returns whatever AL2023 ARM64 AMI is most-recent
+  # at plan time. Letting that float would replace the bastion instance every
+  # few weeks — and replacing it changes the instance ID that the
+  # dev_rds_ssm_tunnel runbook references. Pin to the AMI baked into state
+  # and roll forward only deliberately (taint + apply when we actually want
+  # the new AMI). Per terraform_lambda_drift_pattern memory: replacing the
+  # bastion mid-verification breaks the SSM tunnel pattern.
+  lifecycle {
+    ignore_changes = [ami]
+  }
 }

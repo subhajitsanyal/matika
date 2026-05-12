@@ -171,6 +171,16 @@ output "remove_team_member_invoke_arn" {
   value = aws_lambda_function.remove_team_member.invoke_arn
 }
 
+# F29 / CG-V2-16 — DPDP right-to-erasure
+output "delete_patient_invoke_arn" {
+  description = "Invoke ARN for delete-patient (DELETE /patients/{patientId})"
+  value       = aws_lambda_function.delete_patient.invoke_arn
+}
+
+output "delete_patient_function_name" {
+  value = aws_lambda_function.delete_patient.function_name
+}
+
 output "all_function_names" {
   description = "List of all Lambda function names for monitoring"
   value = [
@@ -215,6 +225,9 @@ output "all_function_names" {
     aws_lambda_function.vital_coverage_rollup.function_name,
     # F23 — voice patient onboarding
     aws_lambda_function.create_patient_from_voice.function_name,
+    # F29 / CG-V2-16 — DPDP right-to-erasure (appended to preserve
+    # the count-indexed alarm mapping for the lambdas above).
+    aws_lambda_function.delete_patient.function_name,
   ]
 }
 

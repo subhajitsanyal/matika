@@ -409,6 +409,16 @@ data "archive_file" "create_patient" {
   output_path = "${path.module}/archives/create-patient.zip"
 }
 
+# F29 / CG-V2-16 — DPDP right-to-erasure. Soft-delete cascade on patients
+# (observations, alerts, persona_links, parameter_configs, reminders, etc.).
+# Was CLI-deployed Apr 27 and never declared in terraform; brought into
+# state during launch-execution-2 (commit reconciles config to live).
+data "archive_file" "delete_patient" {
+  type        = "zip"
+  source_dir  = "${var.lambdas_source_path}/delete-patient"
+  output_path = "${path.module}/archives/delete-patient.zip"
+}
+
 data "archive_file" "accept_invite" {
   type        = "zip"
   source_dir  = "${var.lambdas_source_path}/accept-invite"
@@ -1208,6 +1218,27 @@ resource "aws_lambda_function" "alert_crud" {
   }
 }
 
+# F29 / CG-V2-16 — DPDP right-to-erasure
+resource "aws_lambda_function" "delete_patient" {
+  function_name    = "${local.function_prefix}-delete-patient"
+  role             = aws_iam_role.lambda_rds_cognito.arn
+  handler          = "index.handler"
+  runtime          = "nodejs20.x"
+  timeout          = 30
+  memory_size      = 256
+  filename         = data.archive_file.delete_patient.output_path
+  source_code_hash = data.archive_file.delete_patient.output_base64sha256
+
+  vpc_config {
+    subnet_ids         = var.private_subnet_ids
+    security_group_ids = [var.lambda_security_group_id]
+  }
+
+  environment {
+    variables = local.rds_env
+  }
+}
+
 resource "aws_lambda_function" "threshold_crud" {
   function_name    = "${local.function_prefix}-threshold-crud"
   role             = aws_iam_role.lambda_rds_cognito.arn
@@ -1443,6 +1474,11 @@ resource "aws_cloudwatch_log_group" "alert_crud" {
   retention_in_days = 365
 }
 
+resource "aws_cloudwatch_log_group" "delete_patient" {
+  name              = "/aws/lambda/${aws_lambda_function.delete_patient.function_name}"
+  retention_in_days = 365
+}
+
 resource "aws_cloudwatch_log_group" "threshold_crud" {
   name              = "/aws/lambda/${aws_lambda_function.threshold_crud.function_name}"
   retention_in_days = 365
@@ -1473,6 +1509,18 @@ resource "aws_lambda_permission" "create_patient" {
   function_name = aws_lambda_function.create_patient.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${var.api_execution_arn}/*"
+}
+
+# F29 — narrow source_arn matches the live permission created by the
+# Apr-27 CLI deployment (statement_id "apigateway-delete-patient"). Kept
+# narrow rather than rewriting to the project's default broad source_arn
+# so the import lands as a no-op against live state.
+resource "aws_lambda_permission" "delete_patient" {
+  statement_id  = "apigateway-delete-patient"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.delete_patient.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${var.api_execution_arn}/*/DELETE/patients/*"
 }
 
 # F2 — POST /sessions/{sessionId}/end
