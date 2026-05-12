@@ -38,6 +38,23 @@ provider "aws" {
 # All environments deploy to ap-south-1 (Mumbai) for DPDP Act data residency.
 # A secondary provider alias can be added later if multi-region is needed.
 
+data "aws_caller_identity" "current" {}
+
+# Lambda function ARNs for Cognito triggers — built as deterministic
+# strings to break the cycle between the lambda module (needs
+# user_pool_arn for env vars + IAM resource constraints) and the cognito
+# module (needs lambda ARNs for `lambda_config`). Using
+# `module.lambda.post_*_arn` directly here would form a graph cycle even
+# though the resource-level dependency order is well-defined.
+# `depends_on = [module.lambda]` re-introduces the cycle; we don't use
+# it. Cognito accepts the ARN as a well-formed string at create time
+# (no existence check), and on a fresh stand-up the runtime invocation
+# isn't attempted until the lambda is in place.
+locals {
+  post_confirmation_lambda_arn   = "arn:aws:lambda:${var.aws_region}:${data.aws_caller_identity.current.account_id}:function:carelog-${var.environment}-post-confirmation"
+  post_authentication_lambda_arn = "arn:aws:lambda:${var.aws_region}:${data.aws_caller_identity.current.account_id}:function:carelog-${var.environment}-post-authentication"
+}
+
 # VPC Module
 module "vpc" {
   source = "./modules/vpc"
@@ -50,39 +67,37 @@ module "vpc" {
 }
 
 # Cognito Module
+#
+# `lambda_config` (PostConfirmation + PostAuthentication triggers) is
+# declared inline by this module, fed the lambda ARNs below. The previous
+# null_resource workaround called `aws cognito-idp update-user-pool
+# --lambda-config …` which replaces — not merges — the full user-pool
+# config and clobbered email_configuration / device_configuration /
+# user_pool_add_ons / verification_message_template every apply.
+# Resource-level deps: lambda functions → cognito user pool → lambda
+# permissions. No cycle.
 module "cognito" {
   source = "./modules/cognito"
 
-  environment          = var.environment
-  mobile_callback_urls = ["carelog://callback", "carelog://signin"]
-  mobile_logout_urls   = ["carelog://signout"]
-  web_callback_urls    = var.environment == "prod" ? ["https://portal.${var.domain_name}/callback"] : ["https://portal.${var.environment}.${var.domain_name}/callback"]
-  web_logout_urls      = var.environment == "prod" ? ["https://portal.${var.domain_name}/logout"] : ["https://portal.${var.environment}.${var.domain_name}/logout"]
-  ses_email_arn        = var.ses_email_arn
-  ses_from_email       = var.ses_from_email
-  domain_name          = var.domain_name
-}
+  environment             = var.environment
+  mobile_callback_urls    = ["carelog://callback", "carelog://signin"]
+  mobile_logout_urls      = ["carelog://signout"]
+  web_callback_urls       = var.environment == "prod" ? ["https://portal.${var.domain_name}/callback"] : ["https://portal.${var.environment}.${var.domain_name}/callback"]
+  web_logout_urls         = var.environment == "prod" ? ["https://portal.${var.domain_name}/logout"] : ["https://portal.${var.environment}.${var.domain_name}/logout"]
+  ses_email_arn           = var.ses_email_arn
+  ses_from_email          = var.ses_from_email
+  domain_name             = var.domain_name
+  post_confirmation_arn   = local.post_confirmation_lambda_arn
+  post_authentication_arn = local.post_authentication_lambda_arn
 
-# Attach post-confirmation + post-authentication Lambda triggers to
-# Cognito (breaks circular dependency). Uses null_resource because
-# Cognito → Lambda → Cognito would create a cycle. "always run" trigger
-# ensures it re-attaches on every apply (idempotent).
-#
-# Both triggers must be set in a single update-user-pool call —
-# AWS replaces the whole lambda-config object, not merges individual
-# keys. The post-authentication addition is for testing_todos_v2.md F1
-# (users.last_login_at stamping).
-resource "null_resource" "cognito_post_confirmation_trigger" {
-  triggers = {
-    pc_lambda_arn = module.lambda.post_confirmation_arn
-    pa_lambda_arn = module.lambda.post_authentication_arn
-    user_pool_id  = module.cognito.user_pool_id
-    always_run    = timestamp()
-  }
-
-  provisioner "local-exec" {
-    command = "aws cognito-idp update-user-pool --user-pool-id ${module.cognito.user_pool_id} --lambda-config '{\"PostConfirmation\":\"${module.lambda.post_confirmation_arn}\",\"PostAuthentication\":\"${module.lambda.post_authentication_arn}\"}' --auto-verified-attributes email --region ${var.aws_region}"
-  }
+  # No `depends_on = [module.lambda]` — lambda module depends back on
+  # cognito.user_pool_arn for env vars + IAM policies, so a depends_on
+  # here would re-form the cycle. Cognito accepts the lambda ARN as a
+  # well-formed string without validating function existence at
+  # create-time; on a fresh stand-up the apply orders cognito before
+  # lambda, but the trigger only fires at runtime by which point the
+  # lambda exists. The associated `aws_lambda_permission.post_*_cognito`
+  # resources (in the lambda module) authorize the invocation.
 }
 
 # API Gateway Module

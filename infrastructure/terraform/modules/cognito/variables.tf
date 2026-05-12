@@ -45,3 +45,15 @@ variable "domain_name" {
   default     = "carelog.com"
 }
 
+variable "post_confirmation_arn" {
+  description = "ARN of the Lambda invoked by Cognito's PostConfirmation trigger. Empty = no trigger wired (early bring-up only)."
+  type        = string
+  default     = ""
+}
+
+variable "post_authentication_arn" {
+  description = "ARN of the Lambda invoked by Cognito's PostAuthentication trigger. Empty = no trigger wired."
+  type        = string
+  default     = ""
+}
+

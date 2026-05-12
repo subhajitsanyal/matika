@@ -57,6 +57,18 @@ resource "aws_cognito_user_pool" "main" {
     reply_to_email_address = var.ses_from_email != "" ? regex("<([^>]+)>", var.ses_from_email)[0] : null
   }
 
+  # Lambda triggers — declared inline so this module owns the full
+  # user-pool config. The previous null_resource workaround called
+  # `aws cognito-idp update-user-pool --lambda-config …` which clobbers
+  # every unmentioned field (AWS replaces, doesn't merge). Resource-level
+  # dependency: lambda functions → user pool (this block) → lambda
+  # permissions (`source_arn = user_pool_arn`, in the lambda module). No
+  # cycle.
+  lambda_config {
+    post_confirmation   = var.post_confirmation_arn != "" ? var.post_confirmation_arn : null
+    post_authentication = var.post_authentication_arn != "" ? var.post_authentication_arn : null
+  }
+
   # User Pool Add-ons
   user_pool_add_ons {
     advanced_security_mode = "ENFORCED"
