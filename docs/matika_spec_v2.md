@@ -491,11 +491,42 @@ CREATE INDEX idx_cost_telemetry_day ON cost_telemetry (day);
 ### 5.2 Modified Tables
 
 ```sql
+-- V005 (Bedrock telemetry, shipped with v2.0 base)
 ALTER TABLE interaction_session
     ADD COLUMN streaming_used BOOLEAN NOT NULL DEFAULT FALSE,
     ADD COLUMN escalations_triggered JSONB,  -- e.g. ["implausible_value","emergency"]
     ADD COLUMN inference_region VARCHAR(32);
+
+-- V006 (F17 push transport — endpoint persistence)
+ALTER TABLE device_tokens
+    ADD COLUMN endpoint_arn VARCHAR(256);   -- SNS Platform Endpoint ARN
+CREATE INDEX idx_device_tokens_endpoint_arn
+    ON device_tokens (endpoint_arn) WHERE endpoint_arn IS NOT NULL;
+
+-- V007 (device_tokens dedup — no duplicate (user, device) rows)
+CREATE UNIQUE INDEX uq_device_tokens_user_device
+    ON device_tokens (user_id, device_id);
+
+-- V008 (F23 voice patient onboarding — caregiver-driven session has no
+-- patient_id yet at session creation; resolves at session-end when the
+-- patient row is committed)
+ALTER TABLE interaction_session
+    ALTER COLUMN patient_id DROP NOT NULL;
+
+-- V009 (F23 step 5 — caregiver-onboarding two-pass FSM states)
+ALTER TYPE interaction_session_state
+    ADD VALUE 'CG_ONBOARD_GREETING';
+ALTER TYPE interaction_session_state
+    ADD VALUE 'CG_ONBOARD_PROFILE_EXTRACT';
+ALTER TYPE interaction_session_state
+    ADD VALUE 'CG_ONBOARD_PROTOCOL_EXTRACT';
+ALTER TYPE interaction_session_state
+    ADD VALUE 'CG_ONBOARD_CONFIRM';
 ```
+
+> **Migration ordering:** V001–V004 came from v1; V005–V009 ship with v2.0. Run `flyway info` after a clean migrate — all nine should be `Success`. See `docs/setup-and-deployment-guide.md` §3.3.
+>
+> **Schema rename deferred to v2.1:** the `alerts` table still uses v1 column names (`value`, `user_id`) and the older `alert_reads` table is absent; doctor-side queries (`doctor-patients`, `alert-crud`) carry forward the v1 shape. The v2.0 fix sweep covers the live join paths but does not rename columns — see `docs/matika_v2_migration.md` for the v2.1 rename plan.
 
 ### 5.3 S3 Key Conventions
 
@@ -897,7 +928,18 @@ Restricted to a new `admins` Cognito group (1-2 internal users at pilot scale).
 
 ## 10. Notification & Alert Engine
 
-Unchanged from v1. See `docs/carelog_spec.md` §10.
+Threshold evaluation + missed-measurement detection logic is unchanged from v1 (see `docs/carelog_spec.md` §10). The transport changed for v2.0:
+
+**Push transport (v2.0, F17):**
+
+- **SNS Platform Application** fronts FCM HTTP v1. Created once per environment via `aws sns create-platform-application --platform GCM ... --attributes PlatformCredential=<service-account-json>,AuthenticationMethod=Token`. ARN form: `arn:aws:sns:ap-south-1:<account>:app/GCM/carelog-<env>-android-fcm`.
+- **FCM credential** is a Firebase service-account JSON (GCM legacy server keys deprecated 2024-06-20). Stored at `carelog-<env>/fcm-service-account` in Secrets Manager; copied immutably into the SNS Platform App at create time.
+- **Device registration**: `device-token` Lambda calls `sns:CreatePlatformEndpoint` once at device registration, persists the resulting ARN to `device_tokens.endpoint_arn` (V006 column). Token refresh on the client side flows through the same lambda with the existing UUID-keyed row updated in place.
+- **Alert delivery**: `notification-sender` (SQS-driven) reads `endpoint_arn` from the device_tokens join, calls `sns:Publish` directly. Fallback path: if the persisted ARN is NULL (legacy row) or the endpoint was disabled, the lambda re-creates the platform endpoint, recovering from the well-known SNS `InvalidParameter: already exists with the same Token` by extracting the existing ARN from the error message.
+- **IAM**: the `notification-sender` role requires both `sns:Publish` and `sns:CreatePlatformEndpoint`. Both are in the Terraform module.
+- **Android client**: `CareLogFirebaseMessagingService` must be registered in `AndroidManifest.xml` with the `com.google.firebase.MESSAGING_EVENT` intent filter (token retrieval bypasses the service, so a missing manifest entry produces silent push failures). Data-message keys are v2 lowercase: `alert_type ∈ {threshold_breach, missed_measurement, reminder}`, `parameter` follows `parameter_configs.parameter_name`, plus `value`, `threshold`, `patient_id`.
+
+See `docs/setup-and-deployment-guide.md` §6.6 for the deployment runbook.
 
 ---
 

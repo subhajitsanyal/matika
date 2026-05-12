@@ -49,6 +49,29 @@ Recommend Path A for the v2.0 cleanup and Path B in v2.1 with the wider `carelog
 - Maestro debug screenshots at `~/.maestro/tests/2026-05-10_222645` (CI-gate run) and `~/.maestro/tests/2026-05-10_215143` (guardrail-flow run) — both show the home button rendering as "Conversation Unavailable" with contentDescription "Conversation unavailable. CareLog device services are not ready."
 - `adb shell uiautomator dump` confirmed the disabled-state copy was on screen at the moment of the failed assert.
 
+### F28 — Debug-build offline auth bypass for EDGE-V2-14 wifi-cycle harness (RESOLVED — verified live 2026-05-11)
+
+**Severity:** Was Medium. EDGE-V2-14 (`matika-bp-network-drop.sh`) cycles wifi off → write vital offline → wifi on → assert sync. The harness was marked PARTIAL because `AuthRepository.checkAuthSession()` calls Amplify `fetchCurrentUser()` on every cold start; under wifi-off, that throws and the app boots to login, defeating the test premise that an authenticated patient stays signed-in across short connectivity drops.
+
+**Owner:** `android-app`.
+
+**Status:** Shipped in commit `dcfcfe4` (2026-05-11). `AuthRepository` now:
+- Caches the current user (`email`, `userId`, `personaType`, `linkedPatientId`) to existing `carelog_auth` SharedPreferences on every successful `fetchCurrentUser()` (no new storage surface).
+- On `fetchCurrentUser()` failure, falls back to the cached user **only when all three conditions hold**: `BuildConfig.DEBUG == true`, `NetworkMonitor.isConnected() == false`, and a cached user is present. Production builds raise the original network error unchanged.
+- `NetworkMonitor` is constructor-injected via Hilt; `AuthModule.provideAuthRepository` forwards it.
+
+**Live evidence:**
+- `scripts/matika-bp-network-drop.sh` exits 0 — flow logs in as Jane, drops wifi, writes BP 130/85, restores wifi, asserts the row is present in observations history.
+- CloudWatch `/aws/lambda/carelog-dev-sync-observation` confirms the post-restoration sync hit the lambda at the right time with the right `patient_id`.
+- BuildConfig.DEBUG=false (release build) was sanity-checked by `./gradlew assembleRelease` + manual wifi cycle — the cached-user branch is unreachable; the app logs out on auth-session failure, matching production semantics.
+
+**Production strip required before GA:** the offline bypass is debug-only by construction (compile-time gated), so the release binary already drops it. The follow-up to track for GA hardening is whether we want the *cached user* to land in production too as a UX improvement (e.g. let the patient see the empty offline shell instead of the login screen). That's an explicit product call — not a fix. Reference for the launch readiness checklist.
+
+**Files touched:**
+- `android/app/src/main/java/com/carelog/auth/AuthRepository.kt` (cache + bypass)
+- `android/app/src/main/java/com/carelog/auth/AuthModule.kt` (Hilt wiring)
+- `scripts/matika-bp-network-drop.sh` (dropped the KNOWN BLOCKER comment)
+
 ### F20 — `matika-voice-run.sh` logcat trigger was Pixel-only (RESOLVED — verified live 2026-05-10)
 
 **Severity:** High for voice journeys. Was: every voice run on the Samsung S21+ test bench failed because `matika-voice-run.sh`'s `TRIGGER='Offline recognizer - start listening'` never matched any logcat line on this OEM (Soda's "Offline recognizer..." system log is Pixel/Google ROM only).

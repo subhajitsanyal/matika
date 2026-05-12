@@ -1,6 +1,6 @@
 # Matika Setup and Deployment Guide
 
-**Version:** 3.2
+**Version:** 3.3
 **Last Updated:** May 2026
 
 > **v2.0 note:** v1's Mac Mini per-household inference setup is removed. Inference now runs on AWS Bedrock (cross-region). Section 6 documents the Bedrock provisioning steps that replace the v1 Mac Mini setup. Existing AWS resource names (`carelog-*`) and Android packages (`com.carelog.*`) are deliberately retained until the v2.1 rename pass — see `docs/matika_v2_migration.md`.
@@ -152,6 +152,22 @@ flyway migrate
 ```
 
 > **Do not commit `flyway.conf`** — it contains the database password. It's already gitignored.
+
+The current migration set is **V001–V009**:
+
+| Migration | Adds |
+|-----------|------|
+| V001 | Initial schema (users, patients, persona_links, observations, alerts, …) |
+| V002 | Attendant invite flow |
+| V003 | Additional tables (devices, sessions) |
+| V004 | Conversational system (interaction_sessions, model_call) |
+| V005 | Bedrock telemetry (cost_telemetry, streaming_used, inference_region) |
+| V006 | `device_tokens.endpoint_arn` + partial index — see §6.6 (push transport) |
+| V007 | `device_tokens` UNIQUE (user_id, device_id) constraint |
+| V008 | `interaction_sessions.patient_id` nullable (F23 voice patient onboarding) |
+| V009 | Caregiver-onboarding FSM states (F23 step 5) |
+
+`flyway info` after a clean migrate should show all nine as **Success**.
 
 ---
 
@@ -305,6 +321,62 @@ curl -H "Authorization: Bearer $TOKEN" \
 
 The `/health` response should show `bedrock: "up"` and a populated `bedrock_inference_region`.
 
+### 6.6 Push Transport: SNS Platform Application + FCM HTTP v1 (F17)
+
+Threshold-breach and reminder pushes flow from the `notification-sender` Lambda through an AWS SNS Platform Application that fronts FCM. The legacy GCM server-key path was deprecated by Google on 2024-06-20, so v2 uses **FCM HTTP v1 token credentials** (a Firebase service-account JSON).
+
+**Order of operations:**
+
+1. **Create the FCM service-account credential** in Firebase Console → Project settings → Service accounts → "Generate new private key". Download the JSON.
+
+2. **Stash the credential in Secrets Manager** so future operators don't need the file:
+   ```bash
+   aws secretsmanager create-secret \
+     --name carelog-dev/fcm-service-account \
+     --description "Firebase service account for SNS Platform App (FCM HTTP v1)" \
+     --secret-string file:///path/to/firebase-adminsdk.json \
+     --region ap-south-1
+   ```
+
+3. **Create the SNS Platform Application** with the service-account JSON as the `PlatformPrincipal` and `AuthenticationMethod=Token`:
+   ```bash
+   aws sns create-platform-application \
+     --name carelog-android-fcm-dev \
+     --platform GCM \
+     --attributes "PlatformCredential=$(cat /path/to/firebase-adminsdk.json | jq -c .),AuthenticationMethod=Token" \
+     --region ap-south-1
+   ```
+   Capture the returned ARN (form: `arn:aws:sns:ap-south-1:ACCOUNT_ID:app/GCM/carelog-android-fcm-dev`).
+
+4. **Wire the ARN into Terraform** by setting `android_platform_arn` in `environments/dev/terraform.tfvars`. The root `main.tf` passes it through to the `lambda` module, which sets `ANDROID_PLATFORM_ARN` on `notification-sender` and `device-token`. `ios_platform_arn` is a sibling variable kept empty until iOS rejoins the release train.
+
+5. **Confirm IAM** on the `notification-sender` role (`carelog-dev-lambda-rds-sqs` in dev) covers both `sns:Publish` **and** `sns:CreatePlatformEndpoint`. The Terraform module bundles both — verify after apply with:
+   ```bash
+   aws iam get-role-policy --role-name carelog-dev-lambda-rds-sqs \
+     --policy-name sns-publish --region ap-south-1 | jq '.PolicyDocument.Statement[].Action'
+   ```
+
+**Android client requirements (already in code):**
+
+- `AndroidManifest.xml` must declare `CareLogFirebaseMessagingService` with the `com.google.firebase.MESSAGING_EVENT` intent filter — without this, `onMessageReceived` never fires even though token registration works (FCM token retrieval bypasses the service).
+- `device-token` Lambda persists the SNS endpoint ARN to `device_tokens.endpoint_arn` at registration. `notification-sender` reads this column instead of minting a fresh endpoint on every alert; the fallback path tolerates SNS `InvalidParameter: already exists with the same Token` by extracting the existing ARN from the error message.
+
+**Verify push end-to-end** (synthetic threshold breach):
+
+```bash
+# With caregiver app installed and signed in, force an alert
+# via the alert-crud lambda. CloudWatch should log:
+#   "Sent threshold breach notification to caregiver <name>"
+# and the alerts row should flip is_sent=true with sent_at populated.
+
+aws logs tail /aws/lambda/carelog-dev-notification-sender --since 5m \
+  --region ap-south-1 | grep "Sent threshold"
+```
+
+The on-device check is `adb logcat -s CareLogFCM` — it should print `Message received from: 191872106923` (the Firebase project_number) plus the data payload.
+
+**Production note:** the FCM credential is immutable per SNS Platform App — rotating the service-account JSON requires creating a new SNS Platform App and rolling devices through token re-registration. Plan rotations against caregiver-side downtime windows.
+
 ---
 
 ## 7. Verify Everything Works
@@ -326,14 +398,14 @@ curl -s -o /dev/null -w "%{http_code}" "https://$API_URL.execute-api.ap-south-1.
 ```bash
 aws lambda list-functions --region ap-south-1 \
     --query 'Functions[?starts_with(FunctionName, `carelog-dev`)].FunctionName' --output text | tr '\t' '\n' | wc -l
-# Should show: 28
+# Should show: 45
 ```
 
 ### 7.3 Database
 
 ```bash
 # With port-forward active (see 3.3):
-flyway info    # Should show V001-V004 as "Success"
+flyway info    # Should show V001-V009 as "Success"
 ```
 
 ### 7.4 Android App
@@ -458,24 +530,25 @@ gem install bundler && cd android && bundle install
 
 ## Reference
 
-### Architecture
+### Architecture (v2.0)
 
 ```
-Mac Mini M4 (LAN)          AWS Cloud (HTTPS)
-├── STT   :8001            ├── API Gateway -> 28 Lambda Functions
-├── LLM   :8002            ├── RDS PostgreSQL 15
-├── TTS   :8003            ├── S3 (FHIR + Raw + Documents)
-├── Vision :8004           ├── SQS (Alerts + Document Processing)
-└── Health :8000           ├── Cognito (5 groups)
-                           ├── EventBridge (3 scheduled rules)
-Android App                └── CloudWatch (6 alarms + dashboard)
-├── Dual networking (LAN + Cloud)
-├── mDNS discovery
-└── Offline-first (Room DB + sync)
-
-Web Portal (Doctor)
-└── React/TypeScript/Vite
+Android App (patient + caregiver)        AWS Cloud (HTTPS)
+├── On-device STT (Android SpeechRec.)   ├── API Gateway -> 45 Lambda Functions
+├── On-device TTS (Android TTS)          ├── Bedrock cross-region inference
+├── Bedrock cross-region inference       │     ├── Haiku 4.5 (apac.* profile)
+│     (Haiku 4.5 + Sonnet 4.x)           │     └── Sonnet 4.x (apac.* profile)
+├── Foreground service + WorkManager     ├── RDS PostgreSQL 15
+├── Room DB (offline-first)              ├── S3 (FHIR + Raw + Documents, KMS)
+└── FCM push (data + notification)       ├── SQS (Alerts + Document Processing)
+                                         ├── SNS Platform App (GCM/FCM HTTP v1)
+Web Portal (Doctor — React/Vite)         ├── Cognito (4 user groups)
+└── Amplify auth + REST                  ├── EventBridge (scheduled rules)
+                                         ├── Secrets Manager (DB + FCM creds)
+iOS App (parked v2.0 — see launch plan)  └── CloudWatch (alarms + dashboard)
 ```
+
+> v1's per-household Mac Mini (LAN STT/LLM/TTS/Vision) is removed. Inference now runs entirely on AWS Bedrock; STT/TTS run on-device. mDNS discovery and the LAN health-check stack are gone — see `docs/matika_v2_migration.md`.
 
 ### Cognito Groups
 
@@ -532,10 +605,11 @@ Web Portal (Doctor)
 
 | Date | Changes |
 |------|---------|
+| 2026-05-11 | v3.3: Added §6.6 SNS Platform App + FCM HTTP v1 provisioning (F17); V005–V009 migration list in §3.3; removed v1 Mac Mini architecture diagram; Lambda count corrected to 45 |
 | 2026-05-02 | v3.2: Brand rename to Matika; replaced Mac Mini section with Bedrock provisioning section |
 | 2026-04-26 | v3.1: Restructured guide into linear deployment flow; moved troubleshooting and reference to end |
 | 2026-04-25 | v3.0: Added Mac Mini services, conversational system, 28 Lambdas, model download script, emulator DNS fix, nuclear cleanup |
 
 ---
 
-*Matika Setup and Deployment Guide v3.2 — May 2026*
+*Matika Setup and Deployment Guide v3.3 — May 2026*
