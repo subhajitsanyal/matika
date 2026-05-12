@@ -575,31 +575,23 @@ Followed by a new `model_call` T2 row in RDS (`latency_ms=2653`, no guardrail bl
 
 ---
 
-### F7 — Logcat-trigger voice orchestration ⭐
+### F7 — Logcat-trigger voice orchestration (RESOLVED — superseded by F20, verified 2026-05-10)
 
-**Severity:** High for voice journeys (8+).
+**Severity:** Was High for voice journeys (8+).
 **Owner:** `qa-testing` / orchestrator.
-**Estimated effort:** 0.5 day.
+**Status.** Fixed and verified. F7's intent — replace fixed `sleep N ; matika-say …` with a deterministic logcat trigger — was realized in F20's fix. The end-to-end shape:
 
-**Problem.** `scripts/matika-say.sh` is invoked from a fixed-sleep orchestration: `sleep N ; matika-say …`. `N` is a guess at "when has Maestro reached mic-active?" The first Standard sweep tried 8s and 25s — both spoke before the mic was actually listening (cold install + login + nav takes ~45s on Samsung S21+).
+- New script `scripts/matika-voice-run.sh` (committed `73eddfc`) backgrounds `maestro-run.sh`, tails logcat, waits for the trigger pattern, calls `matika-say`, repeats per turn, joins.
+- The trigger marker chosen at implementation time is `RecognitionListener.onReadyForSpeech: mic open` (deterministic across OEMs), emitted by `SttManager.kt:onReadyForSpeech`. F7's originally-proposed `SodaSpeechRecognizer.*Offline recognizer - start listening` was Pixel-only — see F20 for the OEM-portability fix.
+- `.maestro/flows/patient_voice_*.yaml` headers updated; `docs/matika_test_plan_v2.md` §Phase 4 + `.agents/journey-orchestrator.md` Pattern B updated alongside.
 
-**Fix.** Replace the `sleep` with `adb logcat` waiting on `SodaSpeechRecognizer.*Offline recognizer - start listening`. When that line appears, mic is active for ~4–5s; speak immediately (with `matika-say`'s 600ms predelay).
+Unlocked PT-V2-03/04/05 + CG-V2-03 (verified live 2026-05-10 — five back-to-back voice runs; see F20 entry).
 
-**Implementation.**
-- New script `scripts/matika-voice-run.sh` that: backgrounds `maestro-run.sh`, tails logcat, waits for the trigger pattern, calls `matika-say`, repeats per turn, joins.
-- Update `.maestro/flows/patient_voice_bp_en.yaml` header to point at the new orchestrator.
-- Update `docs/matika_test_plan_v2.md` §Phase 4 coordination matrix to use logcat-trigger instead of fixed sleep.
-- Update `.agents/journey-orchestrator.md` Pattern B accordingly.
+### F5 — `scripts/maestro-run.sh --no-install` is positional-only (RESOLVED — verified 2026-05-11)
 
-**Unlocks (immediately after F7):** PT-V2-03 (single-param en), PT-V2-04 (multi-param en), PT-V2-05 (Hindi), PT-V2-08 (implausible value, T3), PT-V2-09 (emergency, T3), CG-V2-03 (voice protocol config), CG-V2-04 (voice patient onboarding). **7 journeys.**
-
-### F5 — `scripts/maestro-run.sh --no-install` is positional-only
-
-**Severity:** Low (cosmetic; ~5s wasted per run).
+**Severity:** Was Low (cosmetic; ~5s wasted per run).
 **Owner:** `qa-testing`.
-**Estimated effort:** 5 minutes.
-
-**Fix.** Parse args order-independently — loop over `$@`, recognise `--no-install` anywhere.
+**Status.** Fixed in commit `2c351c7` (2026-05-08). `scripts/maestro-run.sh:24-34` loops over `$@` and recognises `--no-install` anywhere; flow name is whichever positional remains. Verified by reading current `scripts/maestro-run.sh` 2026-05-11.
 
 ### F6 — Voice flow `notVisible: thinking` assertion is vacuous (RESOLVED)
 
@@ -749,15 +741,20 @@ The terraform code for the API Gateway route is committed alongside the rest; on
 
 ## Informational / spec alignment
 
-### F8 — Bedrock inference profile name divergence
+### F8 — Bedrock inference profile name divergence (RESOLVED — verified live 2026-05-11)
 
-**Severity:** Informational.
-**Owner:** `devops` or `inference-platform`.
-**Estimated effort:** 30 min.
+**Severity:** Was Informational.
+**Owner:** `devops` / `inference-platform`.
+**Status.** Doc-side aligned to live deployment. Picked spec → reality (no risk to working system). Live state at fix time:
 
-**Problem.** `model_call.model` reads `global.anthropic.claude-haiku-4-5-20251001-v1:0`. Spec §3.3 documents `apac.anthropic.claude-haiku-4-5-v1:0`. The deployment uses the GLOBAL profile; spec says APAC. They're both valid cross-region profiles; just align the docs to reality (or change the env var if APAC was intended).
+| Source | Value |
+|---|---|
+| `matika-dev-bedrock-router` env `BEDROCK_HAIKU_MODEL_ID` | `global.anthropic.claude-haiku-4-5-20251001-v1:0` |
+| `matika-dev-bedrock-router` env `BEDROCK_SONNET_MODEL_ID` | `global.anthropic.claude-sonnet-4-6` |
+| `model_call.model` distinct values (live RDS, 2026-05-11) | `global.anthropic.claude-haiku-4-5-20251001-v1:0` (23 rows), `global.anthropic.claude-sonnet-4-6` (5 rows) |
+| IAM `bedrock-router-access` policy `Resource` ARNs | `arn:aws:bedrock:ap-south-1:316643066568:inference-profile/global.anthropic.claude-haiku-4-5-20251001-v1:0` + `…/global.anthropic.claude-sonnet-4-6` |
 
-**Fix.** Update `docs/matika_spec_v2.md` §3.3 + §7.5 + §14.3 to read `global.*`, OR update `BEDROCK_HAIKU_MODEL_ID` / `BEDROCK_SONNET_MODEL_ID` in the Lambda env to `apac.*`.
+Updated `docs/matika_spec_v2.md` §3.3 (inference-profile table), §7.7 (model-update env block), §11.4 (IAM policy snippet — added account-scoped resource ARNs since global profiles do not match the cross-account `*::` wildcard form), §14.3 (env var block; also corrected `INFERENCE_PROFILE_REGION` from `ap-southeast-1` to live value `ap-south-1`).
 
 ---
 

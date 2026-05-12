@@ -172,8 +172,8 @@ All other Lambdas (`invite-caregiver`, `invite-doctor`, `accept-invite`, `post-c
 
 | Resource | Configuration |
 |---|---|
-| Inference profile (Haiku) | `apac.anthropic.claude-haiku-4-5-v1:0` (or equivalent cross-region profile spanning ap-southeast-1 + us-east-1) |
-| Inference profile (Sonnet) | `apac.anthropic.claude-sonnet-4-x-v1:0` |
+| Inference profile (Haiku) | `global.anthropic.claude-haiku-4-5-20251001-v1:0` (cross-region global profile; matches `BEDROCK_HAIKU_MODEL_ID` on the dev `bedrock-router` Lambda and the live `model_call.model` values) |
+| Inference profile (Sonnet) | `global.anthropic.claude-sonnet-4-6` |
 | Guardrail | One Matika guardrail with: PII filters (PHONE, EMAIL, NAME redaction off — we need names; ADDRESS off; CREDIT_CARD/SSN/PASSPORT/IBAN redact); denied topics (medication-dosage-advice, surgical-recommendation, prognosis-statement); custom topic triggers (self-harm, suicide-ideation, chest-pain-emergency); contextual grounding on outputs |
 | Prompt caching | Enabled on system prompt (large, stable, ~3K tokens) and on per-patient context block (medium, semi-stable, ~1K tokens). 5-minute TTL. |
 
@@ -827,8 +827,8 @@ Returns `degraded` if any check fails. App polls every 30 seconds while in conve
 Model identifiers are environment-variable driven in `bedrock-router`:
 
 ```
-BEDROCK_HAIKU_MODEL_ID=apac.anthropic.claude-haiku-4-5-v1:0
-BEDROCK_SONNET_MODEL_ID=apac.anthropic.claude-sonnet-4-x-v1:0
+BEDROCK_HAIKU_MODEL_ID=global.anthropic.claude-haiku-4-5-20251001-v1:0
+BEDROCK_SONNET_MODEL_ID=global.anthropic.claude-sonnet-4-6
 ```
 
 Updating to a newer model is a Terraform variable change + Lambda alias swap with traffic shifting (10% / 50% / 100%). Rollback is alias revert. No app update required.
@@ -988,10 +988,10 @@ sequenceDiagram
   "Effect": "Allow",
   "Action": ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
   "Resource": [
-    "arn:aws:bedrock:*::inference-profile/apac.anthropic.claude-haiku-4-5-v1:0",
-    "arn:aws:bedrock:*::inference-profile/apac.anthropic.claude-sonnet-4-x-v1:0",
-    "arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku-4-5-v1:0",
-    "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-x-v1:0"
+    "arn:aws:bedrock:ap-south-1:{ACCOUNT}:inference-profile/global.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "arn:aws:bedrock:ap-south-1:{ACCOUNT}:inference-profile/global.anthropic.claude-sonnet-4-6",
+    "arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
+    "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-6"
   ]
 },
 {
@@ -1111,11 +1111,11 @@ See `docs/matika_implementation_plan_v2.md` for task-level breakdown. Phase summ
 ### 14.3 Environment Variables (`bedrock-router` Lambda)
 
 ```
-BEDROCK_HAIKU_MODEL_ID=apac.anthropic.claude-haiku-4-5-v1:0
-BEDROCK_SONNET_MODEL_ID=apac.anthropic.claude-sonnet-4-x-v1:0
+BEDROCK_HAIKU_MODEL_ID=global.anthropic.claude-haiku-4-5-20251001-v1:0
+BEDROCK_SONNET_MODEL_ID=global.anthropic.claude-sonnet-4-6
 BEDROCK_GUARDRAIL_ID={matika-guardrail-id}
 BEDROCK_GUARDRAIL_VERSION={version-number}
-INFERENCE_PROFILE_REGION=ap-southeast-1
+INFERENCE_PROFILE_REGION=ap-south-1
 INFERENCE_PROFILE_FALLBACK_REGION=us-east-1
 PROMPT_CACHE_TTL_SECONDS=300
 SOFT_RATE_LIMIT_PER_PATIENT=100
