@@ -1,8 +1,8 @@
 # Matika v2 — Testing Backlog (Path to Exhaustive Coverage)
 
-**Date:** 2026-05-10 (post-F23 sweep)
-**Source:** Sweep `20260508_215314` (Standard, English voice), augmented by 2026-05-09 backend-chain audit, 2026-05-10 F23 ship + voice cluster, and 2026-05-10 post-F23 manual-vital + caregiver-screen sweep. See report at `test-automation/results/journey-results/20260508_215314/report.md` (local-only; gitignored).
-**Status:** 32 of 64 non-voice journeys PASS as of 2026-05-10 end of day (was 23 yesterday). F27 surfaced as the biggest open unlock (regresses the CI gate + every patient-conversation flow). Exhaustive coverage is **1.5–2 weeks of focused work** away — F27 Path A fix + F17 push transport + DR-V2-* web-portal data-testid + Playwright runner are the four parallel streams.
+**Date:** 2026-05-11 (post-F23 fix sweep)
+**Source:** Sweep `20260508_215314` (Standard, English voice), augmented by 2026-05-09 backend-chain audit, 2026-05-10 F23 ship + voice cluster, 2026-05-10 post-F23 manual-vital + caregiver-screen sweep, and 2026-05-11 post-F23 fix sweep (F27 + EDGE-V2-14 + F3-verified). See report at `test-automation/results/journey-results/20260508_215314/report.md` (local-only; gitignored).
+**Status:** 35 of 64 non-voice journeys PASS as of 2026-05-11 (was 32 yesterday). 2026-05-11 fix sweep restored the CI gate (`patient_logging_happy_path`), flipped EDGE-V2-03 from blocked → PASS, and flipped EDGE-V2-14 from PARTIAL → PASS. 6 legacy conversation-path journeys re-verified post-F27 with no regression (PT-V2-08/09/13, EDGE-V2-11/13). PT-V2-06 (Bengali voice) remains bench-blocked on the Core Audio wedge (lesson 6, reboot-only). Exhaustive coverage is **~1.5 weeks** away — F17 push transport + DR-V2-* web-portal data-testid + Playwright runner are the remaining parallel streams.
 
 ---
 
@@ -656,17 +656,12 @@ The terraform code for the API Gateway route is committed alongside the rest; on
 | Authorization | Different Cognito sub against Jane's session → 404 `{"error":"not_found","message":"Session not found"}` (no leak of session existence) |
 | API Gateway route reachable | `POST https://rsf93ac8bd.execute-api.ap-south-1.amazonaws.com/dev/sessions/{id}/end` without auth → 401 from API Gateway (proves route exists; would be 404 if missing) |
 
-### F3 — `create-patient` masks `UsernameExistsException` as generic 500
+### F3 — `create-patient` masks `UsernameExistsException` as generic 500 (RESOLVED — verified deployed 2026-05-11)
 
-**Severity:** Low–Medium. Real users hitting the email-collision case get a useless error.
+**Severity:** Was Low–Medium. Real users hitting the email-collision case got a useless error.
 **Owner:** `backend`.
-**Estimated effort:** 1 hour.
 
-**Surfaced by:** CG-V2-02 in this sweep (the journey that "skipped" because Jane already existed). Lambda log shows the real cause; UI shows `Failed to create patient: HTTP 500 {"error":"Failed to create patient"}`.
-
-**Fix.** In `backend/lambdas/create-patient/index.js`, catch `UsernameExistsException` specifically and return `409 Conflict` with body `{error: "An account with this email already exists. Use a different email or contact support."}`. Surface via the existing `onboarding_error` testTag with the same string.
-
-**Verification.** Re-run CG-V2-02 against pre-existing Jane → expect `409` in Lambda log + `onboarding_error` text matching the new copy.
+**Status:** Fix shipped in commit `2c351c7` (2026-05-08). Deployed lambda (`/aws/lambda/carelog-dev-create-patient`, last-modified 2026-05-09T06:04Z) confirmed via code download — `index.js:531-547` catches `UsernameExistsException` (`error?.name === 'UsernameExistsException' || error?.__type === 'UsernameExistsException'`) and returns `statusCode: 409` with body `{error, code: "EMAIL_ALREADY_EXISTS"}`. CloudWatch shows 4 `UsernameExistsException` log entries in the last 7 days against the deployed code, each of which falls through to the 409 path. The post-F23-sweep-gaps Gap 5 entry was stale (pre-2026-05-08 view of the lambda); no further work needed.
 
 ---
 
