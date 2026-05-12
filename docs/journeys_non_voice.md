@@ -10,6 +10,8 @@ A journey is in this file when it can be **fully exercised without speech audio 
 
 For voice journeys that genuinely require Mac-speaker injection, see `docs/journeys_voice.md`.
 
+> **v2.0 scope (2026-05-11 rescope):** 52 of the 64 journeys below are in scope for v2.0 (caregiver + patient personas). The 12 doctor-related journeys — **DR-V2-01..08, CG-V2-10, CG-V2-11, CG-V2-14, CG-V2-15** — are deferred to **Phase 2** alongside doctor onboarding. See `docs/v2_launch_plan.md` §13. They remain in this file for the eventual Phase 2 pass; just don't count them toward the v2.0 PASS target.
+
 ---
 
 ## Inventory by persona
