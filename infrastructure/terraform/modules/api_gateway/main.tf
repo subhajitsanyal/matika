@@ -885,6 +885,14 @@ resource "aws_api_gateway_gateway_response" "cors_4xx" {
     "gatewayresponse.header.Access-Control-Allow-Headers" = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
     "gatewayresponse.header.Access-Control-Allow-Methods" = "'GET,POST,PUT,DELETE,OPTIONS'"
   }
+
+  # Mirror AWS's built-in DEFAULT_4XX template so terraform plan converges.
+  # If response_templates is omitted, the AWS API still returns this string
+  # as the active template, producing a permanent state-vs-code diff that
+  # `terraform apply` cannot resolve (the AWS API auto-restores the default).
+  response_templates = {
+    "application/json" = "{\"message\":$context.error.messageString}"
+  }
 }
 
 resource "aws_api_gateway_gateway_response" "cors_5xx" {
@@ -895,6 +903,11 @@ resource "aws_api_gateway_gateway_response" "cors_5xx" {
     "gatewayresponse.header.Access-Control-Allow-Origin"  = "'${var.cors_origin}'"
     "gatewayresponse.header.Access-Control-Allow-Headers" = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
     "gatewayresponse.header.Access-Control-Allow-Methods" = "'GET,POST,PUT,DELETE,OPTIONS'"
+  }
+
+  # See cors_4xx note above — same auto-restore behavior.
+  response_templates = {
+    "application/json" = "{\"message\":$context.error.messageString}"
   }
 }
 
