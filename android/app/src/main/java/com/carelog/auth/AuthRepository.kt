@@ -11,6 +11,7 @@ import com.amplifyframework.auth.cognito.result.AWSCognitoAuthSignOutResult
 import com.amplifyframework.auth.options.AuthSignUpOptions
 import com.amplifyframework.auth.result.AuthSignInResult
 import com.amplifyframework.auth.result.AuthSignUpResult
+import com.amplifyframework.auth.result.step.AuthSignInStep
 import com.amplifyframework.core.Amplify
 import com.carelog.sync.NetworkMonitor
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -31,6 +32,19 @@ sealed class AuthState {
     object NotAuthenticated : AuthState()
     data class Authenticated(val user: CareLogUser) : AuthState()
     data class Error(val message: String) : AuthState()
+}
+
+/**
+ * Outcome of a sign-in attempt. EDGE-V2-04 — Cognito can return a
+ * NEW_PASSWORD_REQUIRED challenge when an admin-created user signs in
+ * with their temporary password for the first time. The repository
+ * surfaces it to the UI so a new-password screen can resolve it via
+ * [AuthRepository.confirmNewPassword].
+ */
+sealed class SignInOutcome {
+    data class Authenticated(val user: CareLogUser) : SignInOutcome()
+    /** Email is captured so the new-password screen can show it for context. */
+    data class NewPasswordRequired(val email: String) : SignInOutcome()
 }
 
 /**
@@ -163,8 +177,15 @@ class AuthRepository @Inject constructor(
 
     /**
      * Sign in with email and password.
+     *
+     * Returns [SignInOutcome.Authenticated] on a clean sign-in,
+     * [SignInOutcome.NewPasswordRequired] when Cognito asks the user to
+     * change a temporary password (EDGE-V2-04: admin-created user's
+     * first sign-in), or [Result.failure] for genuine errors. Other
+     * Cognito challenges (MFA, TOTP) would surface as a generic failure
+     * — they're not in v2.0 scope and there's no UI for them.
      */
-    suspend fun signIn(email: String, password: String): Result<CareLogUser> {
+    suspend fun signIn(email: String, password: String): Result<SignInOutcome> {
         return try {
             _authState.value = AuthState.Loading
             // Sign out any existing session first to avoid "already signed in" errors
@@ -177,14 +198,47 @@ class AuthRepository @Inject constructor(
                 val user = fetchCurrentUser().also { cacheUserForOffline(it) }
                 _currentUser.value = user
                 _authState.value = AuthState.Authenticated(user)
-                Result.success(user)
+                Result.success(SignInOutcome.Authenticated(user))
+            } else if (result.nextStep.signInStep == AuthSignInStep.CONFIRM_SIGN_IN_WITH_NEW_PASSWORD) {
+                // Stay in NotAuthenticated until confirmNewPassword runs;
+                // the UI gates navigation on the SignInOutcome alone, so
+                // there's no flicker to dashboard mid-challenge.
+                _authState.value = AuthState.NotAuthenticated
+                Result.success(SignInOutcome.NewPasswordRequired(email))
             } else {
                 _authState.value = AuthState.NotAuthenticated
-                Result.failure(Exception("Sign in incomplete: ${result.nextStep}"))
+                Result.failure(Exception("Sign in incomplete: ${result.nextStep.signInStep}"))
             }
         } catch (e: Exception) {
             Log.e(TAG, "Sign in failed", e)
             _authState.value = AuthState.Error(e.message ?: "Sign in failed")
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Resolve the NEW_PASSWORD_REQUIRED challenge surfaced by [signIn].
+     * On success completes the sign-in path the same way the happy path
+     * does (post-sign-in user fetch + cache + AuthState transition).
+     */
+    suspend fun confirmNewPassword(newPassword: String): Result<CareLogUser> {
+        return try {
+            _authState.value = AuthState.Loading
+            val result = confirmSignInWithCognito(newPassword)
+            if (!result.isSignedIn) {
+                _authState.value = AuthState.NotAuthenticated
+                return Result.failure(
+                    Exception("Confirm new password incomplete: ${result.nextStep.signInStep}")
+                )
+            }
+            flushPendingPersona()
+            val user = fetchCurrentUser().also { cacheUserForOffline(it) }
+            _currentUser.value = user
+            _authState.value = AuthState.Authenticated(user)
+            Result.success(user)
+        } catch (e: Exception) {
+            Log.e(TAG, "Confirm new password failed", e)
+            _authState.value = AuthState.Error(e.message ?: "Confirm new password failed")
             Result.failure(e)
         }
     }
@@ -446,6 +500,20 @@ class AuthRepository @Inject constructor(
             Amplify.Auth.signIn(
                 email,
                 password,
+                { cont.resume(it) },
+                { cont.resumeWithException(it) }
+            )
+        }
+
+    /**
+     * Resolve the NEW_PASSWORD_REQUIRED challenge. Amplify's confirmSignIn
+     * takes the response (the new password in this case) and continues
+     * the same sign-in transaction Cognito remembers.
+     */
+    private suspend fun confirmSignInWithCognito(newPassword: String): AuthSignInResult =
+        suspendCancellableCoroutine { cont ->
+            Amplify.Auth.confirmSignIn(
+                newPassword,
                 { cont.resume(it) },
                 { cont.resumeWithException(it) }
             )

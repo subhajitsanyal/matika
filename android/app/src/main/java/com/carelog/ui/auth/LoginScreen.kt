@@ -32,6 +32,7 @@ fun LoginScreen(
     onNavigateToRegister: () -> Unit,
     onLoginSuccess: () -> Unit,
     onNavigateToForgotPassword: () -> Unit,
+    onNavigateToNewPassword: (email: String) -> Unit,
     viewModel: LoginViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -42,8 +43,13 @@ fun LoginScreen(
     var passwordVisible by remember { mutableStateOf(false) }
 
     LaunchedEffect(uiState) {
-        if (uiState is LoginUiState.Success) {
-            onLoginSuccess()
+        when (val s = uiState) {
+            is LoginUiState.Success -> onLoginSuccess()
+            // EDGE-V2-04 — Cognito asked the user to set a new password.
+            // Carry the email forward so the new-password screen can
+            // surface it for context.
+            is LoginUiState.NewPasswordRequired -> onNavigateToNewPassword(s.email)
+            else -> Unit
         }
     }
 
@@ -201,5 +207,12 @@ sealed class LoginUiState {
     object Idle : LoginUiState()
     object Loading : LoginUiState()
     object Success : LoginUiState()
+    /**
+     * EDGE-V2-04 — Cognito returned NEW_PASSWORD_REQUIRED for an
+     * admin-created user signing in with their temporary password.
+     * The screen routes to NewPasswordScreen which calls
+     * AuthRepository.confirmNewPassword to resolve the challenge.
+     */
+    data class NewPasswordRequired(val email: String) : LoginUiState()
     data class Error(val message: String) : LoginUiState()
 }

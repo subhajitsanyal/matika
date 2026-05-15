@@ -82,7 +82,23 @@ class AttendantSessionManager @Inject constructor(
             val result = authRepository.signIn(email, password)
 
             if (result.isSuccess) {
-                val user = result.getOrThrow()
+                val outcome = result.getOrThrow()
+
+                // The attendant entry path doesn't drive the new-password
+                // flow today — caregivers self-register and aren't admin-
+                // created. If we ever do hit NEW_PASSWORD_REQUIRED here,
+                // surface it as a discrete error rather than a silent
+                // wedge.
+                val user = when (outcome) {
+                    is SignInOutcome.Authenticated -> outcome.user
+                    is SignInOutcome.NewPasswordRequired ->
+                        return Result.failure(
+                            AttendantSessionException(
+                                "Account requires a new password. " +
+                                    "Use the main login screen to set one."
+                            )
+                        )
+                }
 
                 // Verify user is a caregiver (attendants are now caregivers)
                 @Suppress("DEPRECATION")

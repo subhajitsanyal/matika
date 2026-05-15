@@ -3,6 +3,7 @@ package com.carelog.ui.auth
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.carelog.auth.AuthRepository
+import com.carelog.auth.SignInOutcome
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -31,8 +32,15 @@ class LoginViewModel @Inject constructor(
             val result = authRepository.signIn(email, password)
 
             result.fold(
-                onSuccess = {
-                    _uiState.value = LoginUiState.Success
+                onSuccess = { outcome ->
+                    _uiState.value = when (outcome) {
+                        is SignInOutcome.Authenticated -> LoginUiState.Success
+                        // EDGE-V2-04 — admin-created user's first sign-in
+                        // returns NEW_PASSWORD_REQUIRED. The screen routes
+                        // to NewPasswordScreen which calls confirmNewPassword.
+                        is SignInOutcome.NewPasswordRequired ->
+                            LoginUiState.NewPasswordRequired(outcome.email)
+                    }
                 },
                 onFailure = { error ->
                     _uiState.value = LoginUiState.Error(

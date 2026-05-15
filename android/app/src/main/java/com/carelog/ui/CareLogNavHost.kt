@@ -46,6 +46,7 @@ import com.carelog.ui.attendant.AttendantLoginScreen
 import com.carelog.ui.attendant.AttendantNotesScreen
 import com.carelog.ui.auth.ForgotPasswordScreen
 import com.carelog.ui.auth.LoginScreen
+import com.carelog.ui.auth.NewPasswordScreen
 import com.carelog.ui.auth.RegisterScreen
 import com.carelog.ui.auth.VerificationScreen
 import com.carelog.conversation.ConversationViewModel
@@ -130,6 +131,13 @@ object CareLogRoutes {
 
     // Forgot password
     const val FORGOT_PASSWORD = "forgot_password"
+
+    // EDGE-V2-04 — set new password to resolve Cognito's
+    // NEW_PASSWORD_REQUIRED challenge for an admin-created user
+    // signing in with their temporary password.
+    const val NEW_PASSWORD = "new_password/{email}"
+
+    fun newPassword(email: String) = "new_password/$email"
 
     // LLM Chat placeholder
     const val CHAT = "chat"
@@ -240,6 +248,32 @@ fun CareLogNavHost() {
                 },
                 onNavigateToForgotPassword = {
                     navController.navigate(CareLogRoutes.FORGOT_PASSWORD)
+                },
+                // EDGE-V2-04 — Cognito returned NEW_PASSWORD_REQUIRED.
+                // Don't pop the login screen yet; the new-password screen
+                // backs out to it on cancel.
+                onNavigateToNewPassword = { email ->
+                    navController.navigate(CareLogRoutes.newPassword(email))
+                }
+            )
+        }
+
+        composable(
+            route = CareLogRoutes.NEW_PASSWORD,
+            arguments = listOf(navArgument("email") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val email = backStackEntry.arguments?.getString("email") ?: ""
+            NewPasswordScreen(
+                email = email,
+                onCancel = { navController.popBackStack() },
+                // After the password change resolves the Cognito challenge,
+                // AuthState is Authenticated. Bounce through SPLASH so the
+                // consent gate + persona dispatch run identically to a
+                // happy-path login.
+                onPasswordChanged = {
+                    navController.navigate(CareLogRoutes.SPLASH) {
+                        popUpTo(CareLogRoutes.LOGIN) { inclusive = true }
+                    }
                 }
             )
         }
