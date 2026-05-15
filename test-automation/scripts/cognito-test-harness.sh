@@ -92,13 +92,18 @@ harness_admin_confirm_signup() {
 # "Sign in incomplete: ${nextStep}". This helper is the test-side ready;
 # the app-side change is a separate work item.
 harness_admin_create_force_change_password_user() {
-    local email="$1" temp_password="$2" persona="${3:-caregiver}"
+    local email="$1" temp_password="$2" persona="${3:-caregiver}" name="${4:-Stream C Edge Test}"
+    # `name` is a REQUIRED attribute on this Cognito user pool; if it's
+    # not set at admin-create-user time, the later confirmSignIn call
+    # (resolving the NEW_PASSWORD_REQUIRED challenge) fails with
+    # `InvalidParameterException: One or more parameters are incorrect.`
     aws cognito-idp admin-create-user \
         --user-pool-id "$HARNESS_POOL_ID" \
         --username "$email" \
         --user-attributes \
             Name=email,Value="$email" \
             Name=email_verified,Value=true \
+            Name=name,Value="$name" \
             Name="custom:persona_type",Value="$persona" \
         --temporary-password "$temp_password" \
         --message-action SUPPRESS \

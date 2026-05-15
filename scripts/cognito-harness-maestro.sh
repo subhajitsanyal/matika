@@ -40,7 +40,7 @@ done
 
 if [[ -z "$JOURNEY" ]]; then
     echo "usage: $0 <journey> [--keep-user] [--no-install]" >&2
-    echo "  journeys: cg-v2-01" >&2
+    echo "  journeys: cg-v2-01, edge-v2-04" >&2
     exit 1
 fi
 
@@ -92,6 +92,38 @@ case "$JOURNEY" in
         echo "▸ Cognito state after run:"
         harness_admin_get_user "$EMAIL" \
             --query '{Status: UserStatus, Sub: Attributes[?Name==`sub`].Value | [0], EmailVerified: Attributes[?Name==`email_verified`].Value | [0]}'
+
+        if [[ $KEEP_USER -eq 0 ]]; then
+            echo "▸ Cleanup — admin-delete-user $EMAIL"
+            harness_admin_delete_user "$EMAIL"
+        else
+            echo "▸ --keep-user set; leaving $EMAIL in Cognito for inspection"
+        fi
+        ;;
+    edge-v2-04)
+        # FORCE_CHANGE_PASSWORD first-time login. Use the patient-prefix
+        # email pattern to match the canonical journey definition
+        # (admin-created patients get the temp password; caregivers
+        # would too if added via admin-create-user, but the canonical
+        # actor is a patient).
+        EMAIL="$(harness_generate_test_email pt)"
+        TEMP_PASSWORD="${MATIKA_TEMP_PASSWORD:-Temp2026!Init}"
+        NEW_PASSWORD="${MATIKA_NEW_PASSWORD:-NewP@ss2026!}"
+        echo "▸ Test invited-user email: $EMAIL"
+        echo "▸ Harness — admin-create-user (MessageAction=SUPPRESS, FORCE_CHANGE_PASSWORD)"
+        harness_admin_create_force_change_password_user "$EMAIL" "$TEMP_PASSWORD" patient
+
+        echo "▸ Cognito state pre-flow (expect FORCE_CHANGE_PASSWORD):"
+        harness_admin_get_user "$EMAIL" --query 'UserStatus'
+
+        echo "▸ Phase — login with temp password → set new password → consent screen"
+        maestro test "$FLOWS_DIR/edge_v2_04_force_change_password.yaml" \
+            -e "MATIKA_REGISTER_EMAIL=$EMAIL" \
+            -e "MATIKA_TEMP_PASSWORD=$TEMP_PASSWORD" \
+            -e "MATIKA_NEW_PASSWORD=$NEW_PASSWORD"
+
+        echo "▸ Cognito state post-flow (expect CONFIRMED):"
+        harness_admin_get_user "$EMAIL" --query 'UserStatus'
 
         if [[ $KEEP_USER -eq 0 ]]; then
             echo "▸ Cleanup — admin-delete-user $EMAIL"
