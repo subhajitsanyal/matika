@@ -28,47 +28,13 @@ class ConsentRepositoryImpl @Inject constructor(
 
     private val apiBaseUrl = BuildConfig.API_BASE_URL
 
-    override suspend fun getConsentText(): ConsentData {
-        // For now, return a placeholder consent text
-        // In production, this would fetch from the API
-        return ConsentData(
-            version = "1.0",
-            text = """
-                CareLog Privacy Consent
+    // GET /consent returns BOTH the user's status AND the current
+    // server-side text/version/hash in one payload (Stream C). Cache it
+    // so getConsentText() and getConsentStatus() share a single call.
+    private var cachedPayload: ConsentPayload? = null
 
-                By using CareLog, you consent to the collection, storage, and processing of your health data
-                in accordance with the Digital Personal Data Protection Act (DPDP) of India.
-
-                Data Collection:
-                • Vital signs (blood pressure, glucose, temperature, weight, pulse, SpO2)
-                • Medical documents (prescriptions, reports)
-                • Voice and video notes
-
-                Data Use:
-                • To provide health monitoring services
-                • To share with your designated care team (family members, doctors, attendants)
-                • To generate health insights and alerts
-
-                Your Rights:
-                • Right to access your data
-                • Right to correct your data
-                • Right to withdraw consent
-                • Right to data portability
-
-                Data Security:
-                • All data is encrypted at rest and in transit
-                • Data is stored in compliance with Indian data localization requirements
-                • Access is controlled through role-based permissions
-
-                By accepting this consent, you acknowledge that you have read, understood, and agree to
-                the terms outlined above.
-            """.trimIndent(),
-            hash = "sha256:placeholder-hash",
-            lastUpdated = "2024-01-01T00:00:00Z"
-        )
-    }
-
-    override suspend fun getConsentStatus(): ConsentStatus = withContext(Dispatchers.IO) {
+    private suspend fun fetchConsent(): ConsentPayload = withContext(Dispatchers.IO) {
+        cachedPayload?.let { return@withContext it }
         val token = authRepository.getAccessToken() ?: throw Exception("Not authenticated")
 
         val request = Request.Builder()
@@ -85,12 +51,37 @@ class ConsentRepositoryImpl @Inject constructor(
         }
 
         val json = JSONObject(responseBody)
-        ConsentStatus(
+        val payload = ConsentPayload(
             hasConsent = json.optBoolean("hasConsent", false),
             consentVersion = json.optString("consentVersion").takeIf { it.isNotEmpty() },
             acceptedAt = json.optString("acceptedAt").takeIf { it.isNotEmpty() },
-            currentVersion = json.optString("currentVersion", "1.0"),
-            needsUpdate = json.optBoolean("needsUpdate", false)
+            currentVersion = json.optString("currentVersion", "2.0"),
+            needsUpdate = json.optBoolean("needsUpdate", false),
+            consentText = json.optString("consentText"),
+            consentHash = json.optString("consentHash"),
+        )
+        cachedPayload = payload
+        payload
+    }
+
+    override suspend fun getConsentText(): ConsentData {
+        val p = fetchConsent()
+        return ConsentData(
+            version = p.currentVersion,
+            text = p.consentText,
+            hash = p.consentHash,
+            lastUpdated = ""
+        )
+    }
+
+    override suspend fun getConsentStatus(): ConsentStatus {
+        val p = fetchConsent()
+        return ConsentStatus(
+            hasConsent = p.hasConsent,
+            consentVersion = p.consentVersion,
+            acceptedAt = p.acceptedAt,
+            currentVersion = p.currentVersion,
+            needsUpdate = p.needsUpdate,
         )
     }
 
@@ -100,7 +91,7 @@ class ConsentRepositoryImpl @Inject constructor(
         val requestBody = JSONObject().apply {
             put("version", version)
             put("textHash", textHash)
-            put("acceptedAt", System.currentTimeMillis())
+            put("acceptedTerms", true)
         }.toString()
 
         val request = Request.Builder()
@@ -118,7 +109,21 @@ class ConsentRepositoryImpl @Inject constructor(
             val body = response.body.string()
             throw Exception("Failed to record consent: API ${response.code}: $body")
         }
+        // Invalidate cache so the next getConsentStatus() call sees the
+        // user as having consented (otherwise SplashViewModel would still
+        // route through CONSENT on the next launch).
+        cachedPayload = null
     }
+
+    private data class ConsentPayload(
+        val hasConsent: Boolean,
+        val consentVersion: String?,
+        val acceptedAt: String?,
+        val currentVersion: String,
+        val needsUpdate: Boolean,
+        val consentText: String,
+        val consentHash: String,
+    )
 
     override suspend fun withdrawConsent(reason: String?) {
         val token = authRepository.getAccessToken() ?: throw Exception("Not authenticated")

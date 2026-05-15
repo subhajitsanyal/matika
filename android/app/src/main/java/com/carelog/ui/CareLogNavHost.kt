@@ -25,6 +25,7 @@ import com.carelog.BuildConfig
 import com.carelog.auth.AuthState
 import com.carelog.auth.AuthRepository
 import com.carelog.auth.PersonaType
+import com.carelog.ui.consent.ConsentRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -275,13 +276,24 @@ fun CareLogNavHost() {
         }
 
         composable(CareLogRoutes.CONSENT) {
+            // Stream C — post-login consent gate. SplashViewModel routes
+            // here when GET /consent reports !hasConsent || needsUpdate.
+            // After acceptance, bounce back through SPLASH so the
+            // persona-aware dispatch picks the right dashboard route
+            // (caregiver vs patient).
             ConsentScreen(
                 onConsentAccepted = {
-                    navController.navigate(CareLogRoutes.ONBOARDING) {
+                    navController.navigate(CareLogRoutes.SPLASH) {
                         popUpTo(CareLogRoutes.CONSENT) { inclusive = true }
                     }
                 },
-                onCancel = { navController.popBackStack() }
+                // Cancel = sign out and return to login. Continuing
+                // without consent is not a valid state for v2.0.
+                onCancel = {
+                    navController.navigate(CareLogRoutes.LOGIN) {
+                        popUpTo(0) { inclusive = true }
+                    }
+                }
             )
         }
 
@@ -872,7 +884,8 @@ fun CareLogNavHost() {
  */
 @HiltViewModel
 class SplashViewModel @Inject constructor(
-    private val authRepository: AuthRepository
+    private val authRepository: AuthRepository,
+    private val consentRepository: ConsentRepository
 ) : ViewModel() {
 
     private val _navigateTo = MutableStateFlow<String?>(null)
@@ -891,7 +904,28 @@ class SplashViewModel @Inject constructor(
                         if (BuildConfig.DEBUG) {
                             Log.d("SplashViewModel", "Authenticated as $persona")
                         }
-                        _navigateTo.value = dashboardRouteForPersona(persona)
+
+                        // Stream C — DPDP cross-region inference consent
+                        // gate. If the user hasn't accepted the current
+                        // consent version, route through ConsentScreen
+                        // first; ConsentScreen bounces back through
+                        // SPLASH on accept and the persona dispatch
+                        // below picks the dashboard. consent-record
+                        // failures are non-fatal (consent screen will
+                        // surface its own error) — log + proceed.
+                        val needsConsent = try {
+                            val status = consentRepository.getConsentStatus()
+                            !status.hasConsent || status.needsUpdate
+                        } catch (e: Exception) {
+                            Log.w("SplashViewModel", "Consent status check failed", e)
+                            false
+                        }
+
+                        _navigateTo.value = if (needsConsent) {
+                            CareLogRoutes.CONSENT
+                        } else {
+                            dashboardRouteForPersona(persona)
+                        }
                     }
                     else -> {
                         _navigateTo.value = CareLogRoutes.LOGIN

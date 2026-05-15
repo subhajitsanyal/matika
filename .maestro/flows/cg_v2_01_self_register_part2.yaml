@@ -1,0 +1,67 @@
+# CG-V2-01 part 2 — caregiver login + cross-region consent + dashboard.
+#
+# Pre-condition: part 1 + harness_admin_confirm_signup have already run,
+# so the Cognito user is CONFIRMED and the post-confirmation Lambda has
+# inserted the users-table row + added them to the `caregivers` group.
+#
+# This flow:
+#   1. Logs in with the same creds part 1 used.
+#   2. SplashViewModel calls GET /consent → hasConsent=false → routes to
+#      ConsentScreen.
+#   3. Asserts the cross-region inference disclosure substring is on the
+#      consent screen (PT-V2-23's canonical assertion: "Pass: Consent
+#      screen explicitly mentions cross-region inference").
+#   4. Checks the consent box, taps Accept and Continue. POST /consent
+#      writes a consent_records row.
+#   5. SplashViewModel re-runs and routes to the caregiver dashboard.
+#   6. Asserts the caregiver dashboard's onboard_patient_fab is visible.
+#
+# Env passed by the wrapper:
+#   MATIKA_REGISTER_EMAIL     — same email as part 1
+#   MATIKA_REGISTER_PASSWORD  — same password as part 1
+#
+# Run via wrapper, not directly: scripts/cognito-harness-maestro.sh cg-v2-01
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible: { id: login_email }
+    timeout: 15000
+
+# Login with the freshly-confirmed account.
+- tapOn: { id: login_email }
+- inputText: ${MATIKA_REGISTER_EMAIL}
+- tapOn: { id: login_password }
+- inputText: ${MATIKA_REGISTER_PASSWORD}
+- hideKeyboard
+- tapOn: { id: login_button }
+
+# Splash → ConsentScreen because no consent_records row exists yet.
+# The screen is rendered by ConsentRepositoryImpl.fetchConsent() so the
+# server-side text is what's shown — disclosure is the load-bearing
+# substring.
+- extendedWaitUntil:
+    visible: { id: consent_accept_button }
+    timeout: 20000
+
+# PT-V2-23 + DPDP cross-region disclosure assertion. Per
+# maestro_lessons.md #1, plain-text matchers use full-string regex on
+# accessibility text nodes; .*…* + (?i) is the substring + case-
+# insensitive shape.
+- assertVisible:
+    text: "(?i).*AWS regions outside India.*"
+
+- assertVisible: { id: consent_checkbox }
+- tapOn: { id: consent_checkbox }
+
+- tapOn: { id: consent_accept_button }
+
+# After Accept, the screen invalidates its cached payload and bounces
+# through SPLASH; SplashViewModel re-checks consent (now true) and
+# routes by persona. Caregivers land on CaregiverHomeScreen, which
+# shows onboard_patient_fab.
+- extendedWaitUntil:
+    visible: { id: onboard_patient_fab }
+    timeout: 20000
