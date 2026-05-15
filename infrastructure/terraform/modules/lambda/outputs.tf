@@ -36,6 +36,26 @@ output "vital_coverage_rollup_function_name" {
   value = aws_lambda_function.vital_coverage_rollup.function_name
 }
 
+# Stream A5 — three more Phase 2 telemetry rollups (§4.7).
+output "conversation_session_rollup_arn" {
+  value = aws_lambda_function.conversation_session_rollup.arn
+}
+output "conversation_session_rollup_function_name" {
+  value = aws_lambda_function.conversation_session_rollup.function_name
+}
+output "alert_flow_rollup_arn" {
+  value = aws_lambda_function.alert_flow_rollup.arn
+}
+output "alert_flow_rollup_function_name" {
+  value = aws_lambda_function.alert_flow_rollup.function_name
+}
+output "patient_engagement_rollup_arn" {
+  value = aws_lambda_function.patient_engagement_rollup.arn
+}
+output "patient_engagement_rollup_function_name" {
+  value = aws_lambda_function.patient_engagement_rollup.function_name
+}
+
 # F23 — voice-extracted patient creation
 output "create_patient_from_voice_arn" {
   description = "ARN for create-patient-from-voice (invoked by bedrock-router via SDK)"
@@ -236,6 +256,12 @@ output "all_function_names" {
     # Appended after delete_patient so the count-indexed alarm mapping
     # for every lambda above remains stable (alarm[38]).
     aws_lambda_function.consent.function_name,
+    # Stream A5 — Phase 2 telemetry rollups #2-4 (§4.7). Appended at
+    # the end so alarm count-indexed mapping for the lambdas above
+    # remains stable (alarms[39, 40, 41]).
+    aws_lambda_function.conversation_session_rollup.function_name,
+    aws_lambda_function.alert_flow_rollup.function_name,
+    aws_lambda_function.patient_engagement_rollup.function_name,
   ]
 }
 

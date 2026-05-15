@@ -67,3 +67,12 @@ variable "vital_coverage_rollup_lambda_name" {
   description = "Function name of carelog-<env>-vital-coverage-rollup Lambda (for permission resource)"
   type        = string
 }
+
+# Stream A5 — three more Phase 2 telemetry rollups (§4.7). Same hourly
+# cadence, same idempotent ON CONFLICT upsert pattern.
+variable "conversation_session_rollup_lambda_arn"  { type = string }
+variable "conversation_session_rollup_lambda_name" { type = string }
+variable "alert_flow_rollup_lambda_arn"            { type = string }
+variable "alert_flow_rollup_lambda_name"           { type = string }
+variable "patient_engagement_rollup_lambda_arn"    { type = string }
+variable "patient_engagement_rollup_lambda_name"   { type = string }

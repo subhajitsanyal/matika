@@ -109,3 +109,62 @@ resource "aws_lambda_permission" "vital_coverage_rollup_eventbridge" {
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.vital_coverage_rollup.arn
 }
+
+# ============================================================
+# Rules 5/6/7: Stream A5 — Phase 2 telemetry rollups #2-4 (§4.7)
+#
+# Same hourly cadence as vital_coverage_rollup. Each idempotent on
+# re-run; recomputes today + yesterday on every fire so late-arriving
+# data lands in the rollup tables without backfill.
+# ============================================================
+
+resource "aws_cloudwatch_event_rule" "conversation_session_rollup" {
+  name                = "carelog-conversation-session-rollup-${var.environment}"
+  description         = "Phase 2 telemetry — hourly upsert into conversation_session_daily"
+  schedule_expression = "rate(1 hour)"
+}
+resource "aws_cloudwatch_event_target" "conversation_session_rollup" {
+  rule = aws_cloudwatch_event_rule.conversation_session_rollup.name
+  arn  = var.conversation_session_rollup_lambda_arn
+}
+resource "aws_lambda_permission" "conversation_session_rollup_eventbridge" {
+  statement_id  = "AllowEventBridgeInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = var.conversation_session_rollup_lambda_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.conversation_session_rollup.arn
+}
+
+resource "aws_cloudwatch_event_rule" "alert_flow_rollup" {
+  name                = "carelog-alert-flow-rollup-${var.environment}"
+  description         = "Phase 2 telemetry — hourly upsert into alert_flow_daily"
+  schedule_expression = "rate(1 hour)"
+}
+resource "aws_cloudwatch_event_target" "alert_flow_rollup" {
+  rule = aws_cloudwatch_event_rule.alert_flow_rollup.name
+  arn  = var.alert_flow_rollup_lambda_arn
+}
+resource "aws_lambda_permission" "alert_flow_rollup_eventbridge" {
+  statement_id  = "AllowEventBridgeInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = var.alert_flow_rollup_lambda_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.alert_flow_rollup.arn
+}
+
+resource "aws_cloudwatch_event_rule" "patient_engagement_rollup" {
+  name                = "carelog-patient-engagement-rollup-${var.environment}"
+  description         = "Phase 2 telemetry — hourly upsert into patient_engagement_daily"
+  schedule_expression = "rate(1 hour)"
+}
+resource "aws_cloudwatch_event_target" "patient_engagement_rollup" {
+  rule = aws_cloudwatch_event_rule.patient_engagement_rollup.name
+  arn  = var.patient_engagement_rollup_lambda_arn
+}
+resource "aws_lambda_permission" "patient_engagement_rollup_eventbridge" {
+  statement_id  = "AllowEventBridgeInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = var.patient_engagement_rollup_lambda_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.patient_engagement_rollup.arn
+}

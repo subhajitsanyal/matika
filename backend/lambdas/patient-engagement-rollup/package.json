@@ -1,0 +1,17 @@
+{
+  "name": "carelog-patient-engagement-rollup",
+  "version": "1.0.0",
+  "description": "Hourly EventBridge rollup of per-patient per-day engagement (sessions + observations + alert acks) with zero-activity rows materialized for trivial drop-off detection. Fourth of the §4.7 Phase 2 telemetry rollups.",
+  "main": "index.js",
+  "scripts": {
+    "test": "jest",
+    "package": "zip -r function.zip index.js node_modules package.json"
+  },
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.978.0",
+    "pg": "^8.11.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

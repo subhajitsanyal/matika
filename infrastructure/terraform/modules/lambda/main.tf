@@ -394,6 +394,25 @@ data "archive_file" "vital_coverage_rollup" {
   output_path = "${path.module}/archives/vital-coverage-rollup.zip"
 }
 
+# Stream A5 — three more Phase 2 telemetry rollups (§4.7).
+# Same hourly EventBridge cadence + idempotent ON CONFLICT upsert
+# pattern as vital_coverage_rollup. SQL lives in each lambda's index.js.
+data "archive_file" "conversation_session_rollup" {
+  type        = "zip"
+  source_dir  = "${var.lambdas_source_path}/conversation-session-rollup"
+  output_path = "${path.module}/archives/conversation-session-rollup.zip"
+}
+data "archive_file" "alert_flow_rollup" {
+  type        = "zip"
+  source_dir  = "${var.lambdas_source_path}/alert-flow-rollup"
+  output_path = "${path.module}/archives/alert-flow-rollup.zip"
+}
+data "archive_file" "patient_engagement_rollup" {
+  type        = "zip"
+  source_dir  = "${var.lambdas_source_path}/patient-engagement-rollup"
+  output_path = "${path.module}/archives/patient-engagement-rollup.zip"
+}
+
 # F23 — voice-extracted patient creation. Direct-invoke only (no API
 # Gateway route); bedrock-router calls this at the caregiver_onboarding
 # mid-session pivot. See spec §4.5 / §6.9.
@@ -676,6 +695,58 @@ resource "aws_lambda_function" "vital_coverage_rollup" {
   environment {
     variables = local.rds_env
   }
+}
+
+# Stream A5 — Phase 2 telemetry rollups #2-4 (§4.7). Same shape as
+# vital_coverage_rollup: 60s timeout, 256MB, RDS env, VPC. Hourly
+# cron + alarm wiring is in modules/eventbridge + monitoring (alarm
+# count-indexed via all_function_names append).
+resource "aws_lambda_function" "conversation_session_rollup" {
+  function_name    = "${local.function_prefix}-conversation-session-rollup"
+  role             = aws_iam_role.lambda_rds_cognito.arn
+  handler          = "index.handler"
+  runtime          = "nodejs20.x"
+  timeout          = 60
+  memory_size      = 256
+  filename         = data.archive_file.conversation_session_rollup.output_path
+  source_code_hash = data.archive_file.conversation_session_rollup.output_base64sha256
+  vpc_config {
+    subnet_ids         = var.private_subnet_ids
+    security_group_ids = [var.lambda_security_group_id]
+  }
+  environment { variables = local.rds_env }
+}
+
+resource "aws_lambda_function" "alert_flow_rollup" {
+  function_name    = "${local.function_prefix}-alert-flow-rollup"
+  role             = aws_iam_role.lambda_rds_cognito.arn
+  handler          = "index.handler"
+  runtime          = "nodejs20.x"
+  timeout          = 60
+  memory_size      = 256
+  filename         = data.archive_file.alert_flow_rollup.output_path
+  source_code_hash = data.archive_file.alert_flow_rollup.output_base64sha256
+  vpc_config {
+    subnet_ids         = var.private_subnet_ids
+    security_group_ids = [var.lambda_security_group_id]
+  }
+  environment { variables = local.rds_env }
+}
+
+resource "aws_lambda_function" "patient_engagement_rollup" {
+  function_name    = "${local.function_prefix}-patient-engagement-rollup"
+  role             = aws_iam_role.lambda_rds_cognito.arn
+  handler          = "index.handler"
+  runtime          = "nodejs20.x"
+  timeout          = 60
+  memory_size      = 256
+  filename         = data.archive_file.patient_engagement_rollup.output_path
+  source_code_hash = data.archive_file.patient_engagement_rollup.output_base64sha256
+  vpc_config {
+    subnet_ids         = var.private_subnet_ids
+    security_group_ids = [var.lambda_security_group_id]
+  }
+  environment { variables = local.rds_env }
 }
 
 # F23 — voice-extracted patient creation. Direct-invoke only.

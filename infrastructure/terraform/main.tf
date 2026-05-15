@@ -296,6 +296,14 @@ module "eventbridge" {
   # Phase 2 telemetry — vital coverage rollup (§4.7)
   vital_coverage_rollup_lambda_arn  = module.lambda.vital_coverage_rollup_arn
   vital_coverage_rollup_lambda_name = module.lambda.vital_coverage_rollup_function_name
+
+  # Stream A5 — three more Phase 2 telemetry rollups (§4.7)
+  conversation_session_rollup_lambda_arn  = module.lambda.conversation_session_rollup_arn
+  conversation_session_rollup_lambda_name = module.lambda.conversation_session_rollup_function_name
+  alert_flow_rollup_lambda_arn            = module.lambda.alert_flow_rollup_arn
+  alert_flow_rollup_lambda_name           = module.lambda.alert_flow_rollup_function_name
+  patient_engagement_rollup_lambda_arn    = module.lambda.patient_engagement_rollup_arn
+  patient_engagement_rollup_lambda_name   = module.lambda.patient_engagement_rollup_function_name
 }
 
 # Monitoring Module (CloudWatch alarms, SNS, dashboard)
