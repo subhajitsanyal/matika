@@ -306,96 +306,6 @@ class RelativeApiService @Inject constructor(
     }
 
     /**
-     * Fetch reminder configuration for a patient.
-     */
-    suspend fun getReminderConfig(patientId: String): List<ReminderConfig> = withContext(Dispatchers.IO) {
-        val token = authRepository.getAccessToken()
-            ?: throw Exception("No auth token available")
-
-        val request = Request.Builder()
-            .url("$apiBaseUrl/patients/$patientId/reminders")
-            .header("Authorization", "Bearer $token")
-            .get()
-            .build()
-
-        val response = httpClient.newCall(request).execute()
-        val responseBody = response.body.string()
-
-        if (!response.isSuccessful) {
-            throw Exception("API ${response.code}: $responseBody")
-        }
-
-        val json = JSONObject(responseBody)
-        val reminders = json.getJSONArray("reminders")
-        parseReminderConfigs(reminders)
-    }
-
-    /**
-     * Update reminder configuration.
-     */
-    suspend fun updateReminderConfig(
-        patientId: String,
-        config: ReminderConfig
-    ): Boolean = withContext(Dispatchers.IO) {
-        try {
-            val token = authRepository.getAccessToken() ?: return@withContext false
-
-            val body = JSONObject().apply {
-                put("vitalType", config.vitalType.name)
-                put("windowHours", config.windowHours)
-                put("gracePeriodMinutes", config.gracePeriodMinutes)
-                put("enabled", config.enabled)
-            }.toString()
-
-            val request = Request.Builder()
-                .url("$apiBaseUrl/patients/$patientId/reminders")
-                .header("Authorization", "Bearer $token")
-                .header("Content-Type", "application/json")
-                .put(body.toRequestBody("application/json".toMediaType()))
-                .build()
-
-            val response = httpClient.newCall(request).execute()
-            response.isSuccessful
-        } catch (e: Exception) {
-            false
-        }
-    }
-
-    /**
-     * Update reminder configuration with individual parameters.
-     */
-    suspend fun updateReminderConfig(
-        patientId: String,
-        vitalType: VitalType,
-        windowHours: Int,
-        gracePeriodMinutes: Int,
-        enabled: Boolean
-    ): Boolean = withContext(Dispatchers.IO) {
-        try {
-            val token = authRepository.getAccessToken() ?: return@withContext false
-
-            val body = JSONObject().apply {
-                put("vitalType", vitalType.name)
-                put("windowHours", windowHours)
-                put("gracePeriodMinutes", gracePeriodMinutes)
-                put("enabled", enabled)
-            }.toString()
-
-            val request = Request.Builder()
-                .url("$apiBaseUrl/patients/$patientId/reminders")
-                .header("Authorization", "Bearer $token")
-                .header("Content-Type", "application/json")
-                .put(body.toRequestBody("application/json".toMediaType()))
-                .build()
-
-            val response = httpClient.newCall(request).execute()
-            response.isSuccessful
-        } catch (e: Exception) {
-            false
-        }
-    }
-
-    /**
      * Fetch alerts for a patient.
      */
     suspend fun getAlerts(
@@ -708,18 +618,6 @@ class RelativeApiService @Inject constructor(
         }
     }
 
-    private fun parseReminderConfigs(array: JSONArray): List<ReminderConfig> {
-        return (0 until array.length()).map { i ->
-            val obj = array.getJSONObject(i)
-            ReminderConfig(
-                vitalType = VitalType.valueOf(obj.getString("vitalType").uppercase()),
-                windowHours = obj.getInt("windowHours"),
-                gracePeriodMinutes = obj.getInt("gracePeriodMinutes"),
-                enabled = obj.optBoolean("enabled", true)
-            )
-        }
-    }
-
     private fun parseAlerts(array: JSONArray): List<Alert> {
         return (0 until array.length()).map { i ->
             val obj = array.getJSONObject(i)
@@ -887,13 +785,6 @@ data class ParameterThreshold(
     val maxValue: Double?,
     val unit: String,
     val setByDoctor: Boolean = false,
-)
-
-data class ReminderConfig(
-    val vitalType: VitalType,
-    val windowHours: Int,
-    val gracePeriodMinutes: Int,
-    val enabled: Boolean = true
 )
 
 data class Alert(

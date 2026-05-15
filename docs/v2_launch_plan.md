@@ -66,7 +66,7 @@ From `docs/testing_todos_v2.md`:
 | F7 | Medium | Open | No (voice-side bench fix) |
 | F8 | Informational | Open | No, but align before any audit |
 | F16 | Medium | Dormant | **No — deferred with doctor portal to Phase 2** |
-| F26b | Medium | Product call needed | Yes — gates CG-V2-13 decision (keep, voice-only, or defer) |
+| F26b | Medium | **RESOLVED 2026-05-15 — voice-only** | No (CG-V2-13 PASS-by-architecture) |
 
 **Bench-blocked, no engineering work:**
 
@@ -95,7 +95,7 @@ From `docs/testing_todos_v2.md`:
 | Backend backlog (CG-V2-16 delete-patient, EDGE-V2-08 chaos, EDGE-V2-09 prompt-mutation) | 3 | `inference-platform` + `qa-testing` | ~3 days |
 | Cost-prohibitive (PT-V2-14 sustained Sonnet load) | 1 | Decision: simulate or accept | 1–2 days |
 | Design-blocked (PT-V2-22 patient Care Team view) | 1 | Product + design | TBD — may itself defer to Phase 2 (Care Team primarily shows doctors) |
-| F26 reminders deferred (CG-V2-13) | 1 | Product decision | TBD |
+| ~~F26 reminders deferred (CG-V2-13)~~ **RESOLVED 2026-05-15 voice-only** | 0 | shipped | done |
 
 Plus **organic-run E2E pushes** (CG-V2-08/09 + E2E-V2-02/03/06): transport unblocked by F17; just need a vital-log-triggered evaluate-thresholds-batch path to flip these from synthetic-PASS to organic-PASS. ~1 day of re-runs.
 
@@ -108,7 +108,7 @@ Plus **organic-run E2E pushes** (CG-V2-08/09 + E2E-V2-02/03/06): transport unblo
 **Quality gates — must all be GREEN:**
 
 - [ ] **All in-scope Android journeys PASS:** 52/52 non-voice + 2/2 voice (Bengali requires Mac reboot first). The 12 doctor-related journeys are explicitly deferred (§13) and do not gate beta.
-- [ ] **No critical findings open.** F5/F7/F8 acceptable as Low/Informational. F16 deferred with the doctor portal. F26b must have a product decision (keep manual reminder UX, make voice-only, or defer).
+- [ ] **No critical findings open.** F5/F7/F8 acceptable as Low/Informational. F16 deferred with the doctor portal. ~~F26b must have a product decision~~ F26b RESOLVED 2026-05-15 (voice-only).
 - [ ] **Production environment soak-tested.** 1-week burn-in in staging mirroring prod config, then 1-week burn-in in prod against a synthetic patient.
 - [ ] **Compliance lockdown:** DPDP audit signed off; DPA in place with AWS; privacy policy + ToS reviewed by legal; consent flow approved.
 - [ ] **Penetration test passed** with no Critical or High findings open.
@@ -153,7 +153,7 @@ Streams can run in parallel; calling out dependencies inline. The web-portal str
 | F7 | Bench fix — logcat-trigger voice orchestration helper | ~2 hours | No |
 | F8 | Align spec §3.3/§7.5/§14.3 to runtime `global.*` profile (or flip env to `apac.*`) | 30 min | No, but should be done before any audit |
 | F16 | doctor-patients query schema mismatch | **Deferred to Phase 2** (no doctor portal in v2.0) | No |
-| F26b | Product call: keep manual reminder edit UX in v2 or make voice-only? | Product+eng meeting | YES — gates CG-V2-13 |
+| F26b | ~~Product call: keep manual reminder edit UX in v2 or make voice-only?~~ **RESOLVED 2026-05-15 — voice-only.** Manual UI removed; caregiver_onboarding voice protocol is the canonical reminder-config surface. | shipped | No (CG-V2-13 PASS-by-architecture) |
 
 ### 4.2 Backend backlog
 
@@ -427,7 +427,7 @@ These need product/leadership decisions before plan execution:
 
 1. **Beta region:** Bengaluru-only? Or wider Karnataka? Or all India?
 2. **Beta cohort size:** 10 is the target — flex to 5 or 20?
-3. **F26b reminder UX:** keep manual editing in v2.0, make voice-only, or skip reminders for beta?
+3. ~~**F26b reminder UX:** keep manual editing in v2.0, make voice-only, or skip reminders for beta?~~ **RESOLVED 2026-05-15 → voice-only.** Manual UI removed; caregiver_onboarding voice protocol is the canonical reminder-config surface (handler.ts T-V2-302 → protocol_persister UPSERT on parameter_configs).
 4. **PT-V2-22 (patient Care Team view):** ship a caregiver-only view in v2.0, or defer to Phase 2 with the doctor portal? Recommend defer — Care Team without a doctor isn't a complete experience.
 5. **Crash reporting tool:** Sentry or Firebase Crashlytics?
 6. **Final sender domain for SES:** `no-reply@matika.health`? `support@matika.in`?

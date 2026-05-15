@@ -1,0 +1,93 @@
+# CG-V2-13 — caregiver configures reminders via voice. F26b decision
+# (v2_stream_d_decisions_20260512.md, 2026-05-12): reminders are
+# voice-only in v2.0. The manual reminder-edit screen + route + API
+# layer is removed. The caregiver_onboarding voice session is the
+# canonical entry point — the Sonnet protocol-extraction pass
+# (T-V2-302) writes parameter_configs.frequency_days +
+# daily_deadline + timezone, which the reminder-sender Lambda reads
+# to schedule push notifications.
+#
+# Wire path is identical to CG-V2-03 (caregiver_protocol_voice.yaml);
+# the difference is this flow's utterance explicitly conveys
+# reminder cadence ("every morning … twice a week … on Sundays"),
+# and the PASS criterion is verified out-of-band against
+# parameter_configs.frequency_days / daily_deadline for the patient
+# the caregiver onboarded.
+#
+# Run:
+#   source ~/.matika-test-creds.env
+#   scripts/matika-voice-run.sh cg_v2_13_voice_reminder_config \
+#     --turn "en|160|Please remind her to log her blood pressure every morning at eight A M, fasting blood sugar twice a week on Mondays and Thursdays, and her weight on Sundays.|800"
+#
+# Live evidence (post-run):
+#   - parameter_configs row for the new patient_id, parameter_name
+#     IN ('blood_pressure_systolic','blood_pressure_diastolic',
+#     'glucose','weight') with frequency_days populated (1 / 3 / 7)
+#     and daily_deadline non-null.
+#   - model_call.tier='T3' (Sonnet) for the protocol-extraction turn.
+#   - interaction_sessions.session_type='caregiver_onboarding'.
+#
+# Pre-conditions:
+#   - APK installed on the connected device.
+#   - Caregiver creds in the shell env (see .maestro/README.md).
+#   - Backend dev /health green.
+#   - Mac-mini bench up; `say` queue clear (killall say before run —
+#     voice_harness_lessons.md #2).
+#   - Core Audio not wedged (voice_harness_lessons.md #6 — afplay
+#     sanity check should land within 5s).
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+# Cognito-unique patient email so we can re-run without conflict.
+- runScript: ../scripts/generate_patient_email.js
+
+# ── Caregiver login ─────────────────────────────────────────
+- extendedWaitUntil: { visible: { id: login_email }, timeout: 15000 }
+- tapOn: { id: login_email }
+- inputText: ${MATIKA_CAREGIVER_EMAIL}
+- tapOn: { id: login_password }
+- inputText: ${MATIKA_CAREGIVER_PASSWORD}
+- hideKeyboard
+- tapOn: { id: login_button }
+
+# ── Caregiver dashboard → onboard FAB ──────────────────────
+# Manual reminder-edit card removed per F26b; the only path to
+# reminder configuration is now the patient-onboarding voice
+# session. testTag `caregiver_reminders` no longer exists on this
+# screen (deleted from CaregiverHomeScreen.kt in this same change).
+- extendedWaitUntil: { visible: { id: onboard_patient_fab }, timeout: 60000 }
+- tapOn: { id: onboard_patient_fab }
+
+# ── Patient onboarding form ─────────────────────────────────
+- extendedWaitUntil: { visible: { id: onboarding_name }, timeout: 10000 }
+- tapOn: { id: onboarding_name }
+- inputText: ${output.patientName}
+- tapOn: { id: onboarding_email }
+- inputText: ${output.patientEmail}
+- hideKeyboard
+- scrollUntilVisible: { element: { id: onboarding_create_button }, direction: DOWN }
+- tapOn: { id: onboarding_create_button }
+
+# ── Credentials dialog → dismiss ───────────────────────────
+- extendedWaitUntil: { visible: "Patient Account Created", timeout: 30000 }
+- tapOn: "Done"
+
+# ── Voice path on the caregiver-onboarding conversation ────
+# matika_text_fallback uniquely identifies MatikaConversationScreen
+# in caregiver_onboarding mode.
+- extendedWaitUntil: { visible: { id: matika_text_fallback }, timeout: 30000 }
+# Mic tap kicks off SpeechRecognizer; matika-voice-run.sh's logcat
+# trigger fires on RecognitionListener.onReadyForSpeech and the Mac
+# speaks the reminder-cadence utterance passed via --turn.
+- extendedWaitUntil: { visible: { id: matika_mic }, timeout: 15000 }
+- tapOn: { id: matika_mic }
+# Mic permission may prompt on the very first acoustic test of a
+# fresh-state run — usually pre-granted from prior caregiver flows.
+- tapOn: { text: "Allow|While using the app", optional: true }
+
+# response_card mounts only after a successful Bedrock round-trip.
+- extendedWaitUntil: { visible: { id: matika_response_card }, timeout: 90000 }
+- extendedWaitUntil: { visible: { id: matika_mic }, timeout: 30000 }

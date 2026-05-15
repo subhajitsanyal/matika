@@ -67,7 +67,6 @@ import com.carelog.ui.relative.AlertInboxScreen
 import com.carelog.ui.relative.AuditLogScreen
 import com.carelog.ui.relative.CareTeamScreen
 import com.carelog.ui.relative.RelativeDashboardScreen
-import com.carelog.ui.relative.ReminderConfigScreen
 import com.carelog.ui.relative.ThresholdConfigScreen
 import com.carelog.ui.relative.TrendsScreen
 import com.carelog.ui.settings.SettingsScreen
@@ -121,7 +120,6 @@ object CareLogRoutes {
     const val SETTINGS = "settings"
     const val CARE_TEAM = "care_team"
     const val THRESHOLDS = "thresholds"
-    const val REMINDERS = "reminders"
     const val ALERTS = "alerts"
     const val TRENDS = "trends"
     const val AUDIT_LOG = "audit_log"
@@ -547,9 +545,10 @@ fun CareLogNavHost() {
                     navController.navigate(CareLogRoutes.SETTINGS)
                 },
                 // F4 — Manage section. Routes already exist below; these
-                // callbacks just hook the cards to them.
+                // callbacks just hook the cards to them. F26b: reminders
+                // moved to voice-only (caregiver_onboarding protocol
+                // session), so the manual-edit card is gone.
                 onNavigateToThresholds = { navController.navigate(CareLogRoutes.THRESHOLDS) },
-                onNavigateToReminders = { navController.navigate(CareLogRoutes.REMINDERS) },
                 onNavigateToTrends = { navController.navigate(CareLogRoutes.TRENDS) },
             )
         }
@@ -745,8 +744,7 @@ fun CareLogNavHost() {
                     navController.navigate(CareLogRoutes.SETTINGS)
                 },
                 onNavigateToCareTeam = { navController.navigate(CareLogRoutes.CARE_TEAM) },
-                onNavigateToThresholds = { navController.navigate(CareLogRoutes.THRESHOLDS) },
-                onNavigateToReminders = { navController.navigate(CareLogRoutes.REMINDERS) }
+                onNavigateToThresholds = { navController.navigate(CareLogRoutes.THRESHOLDS) }
             )
         }
 
@@ -769,10 +767,6 @@ fun CareLogNavHost() {
 
         composable(CareLogRoutes.THRESHOLDS) {
             ThresholdConfigScreen(onNavigateBack = { navController.popBackStack() })
-        }
-
-        composable(CareLogRoutes.REMINDERS) {
-            ReminderConfigScreen(onNavigateBack = { navController.popBackStack() })
         }
 
         composable(CareLogRoutes.AUDIT_LOG) {

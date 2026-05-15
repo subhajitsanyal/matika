@@ -98,7 +98,6 @@ fun CaregiverHomeScreen(
     onNavigateToAlerts: (patientId: String) -> Unit = {},
     onNavigateToSettings: () -> Unit = {},
     onNavigateToThresholds: () -> Unit = {},
-    onNavigateToReminders: () -> Unit = {},
     onNavigateToTrends: () -> Unit = {},
     modifier: Modifier = Modifier,
     viewModel: CaregiverDashboardViewModel = hiltViewModel()
@@ -242,12 +241,15 @@ fun CaregiverHomeScreen(
                     )
                 }
 
-                // F4 — Manage section. Three orphan v1 screens
-                // (Thresholds / Reminders / Trends) wired to entry points
-                // here so CG-V2-12, CG-V2-13, CG-V2-17 are reachable.
-                // testTags `caregiver_thresholds` / `caregiver_reminders` /
-                // `caregiver_trends` match the pre-existing journey-doc
-                // expectations from the orphaned RelativeDashboardScreen.
+                // F4 — Manage section. Two orphan v1 screens
+                // (Thresholds / Trends) wired to entry points here so
+                // CG-V2-12 and CG-V2-17 are reachable. F26b: reminders
+                // are voice-only in v2.0 (configured during the
+                // caregiver_onboarding protocol conversation, persisted
+                // to parameter_configs.frequency_days/daily_deadline
+                // via protocol_persister UPSERT), so no Reminders card.
+                // testTags `caregiver_thresholds` / `caregiver_trends`
+                // match the pre-existing journey-doc expectations.
                 // The screens self-resolve patientId via
                 // authRepository.fetchLinkedPatientId(), so no patientId
                 // threading needed from here.
@@ -272,13 +274,6 @@ fun CaregiverHomeScreen(
                             icon = Icons.Filled.Tune,
                             testTagId = "caregiver_thresholds",
                             onClick = onNavigateToThresholds,
-                            modifier = Modifier.weight(1f),
-                        )
-                        ManageCard(
-                            label = "Reminders",
-                            icon = Icons.Filled.Alarm,
-                            testTagId = "caregiver_reminders",
-                            onClick = onNavigateToReminders,
                             modifier = Modifier.weight(1f),
                         )
                         ManageCard(

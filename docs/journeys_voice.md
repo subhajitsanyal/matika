@@ -21,12 +21,13 @@ Journeys whose canonical text describes voice but where the **same product behav
 | **PT-V2-05** | Daily voice logging — Hindi | Tests `hi-IN` STT pack. Lekha voice. |
 | **PT-V2-06** | Daily voice logging — Bengali | macOS lacks `bn-IN` voice; needs `MATIKA_BN_AUDIO=<path>` pre-recorded `.aiff`. |
 
-### Caregiver — voice flows (2)
+### Caregiver — voice flows (3)
 
 | ID | Title | Why voice-only |
 |---|---|---|
 | **CG-V2-03** | Conversational protocol configuration (T3, voice) | Tests caregiver Sonnet protocol-config voice path with multi-turn dialog. Form-based onboarding is CG-V2-02 (non-voice). |
 | **CG-V2-04** | Conversational patient onboarding (Sonnet, voice) | Tests caregiver Sonnet patient-profile extraction from speech. |
+| **CG-V2-13** | Configure reminders via voice (F26b voice-only, 2026-05-15) | Same wire path as CG-V2-03; utterance specifically conveys reminder cadence ("every morning … twice a week … on Sundays"). PASS criterion verified out-of-band against `parameter_configs.frequency_days / daily_deadline / timezone` for the freshly-onboarded patient. Flow: `cg_v2_13_voice_reminder_config.yaml`. |
 
 ### Edge — voice infrastructure (1)
 
@@ -46,6 +47,7 @@ Journeys whose canonical text describes voice but where the **same product behav
 | PT-V2-06 | **bench-blocked (Core Audio wedge, 2026-05-11)** | F27 + F25 unblocked the product path. Setup verified end-to-end pre-audio: helper flow `_bench_set_language_bn.yaml` (added 2026-05-11) flipped DataStore language to bn via the F22 picker successfully. Then `afplay -t 1 /System/Library/Sounds/Pop.aiff` returned `AudioQueueStart failed (-66681)` on all three Mac output devices (External Headphones, Mac mini Speakers, DELL S3222HN) — the wedged Core Audio pattern documented in `voice_harness_lessons.md` lesson 6, which is reboot-only. Re-run after Mac reboot: `source ~/.matika-test-creds.env && scripts/maestro-run.sh _bench_set_language_bn && export MATIKA_BN_AUDIO=$PWD/test-automation/audio/bn-IN-bp-130-85.mp3 && scripts/matika-voice-run.sh patient_voice_bp_bn_single_turn --turn "bn\|160\|$MATIKA_BN_AUDIO\|800"`. |
 | CG-V2-03 | **PASS (single-turn)** | 2026-05-10 session `a61ace08-...`: session_type=`caregiver_onboarding`, **T3 Sonnet 4.6** 2579ms, escalation_reason=`caregiver_protocol_design`, fsm=EXTRACTING. STT chars=103, response_card mounts. Validates the caregiver Sonnet voice path end-to-end. |
 | CG-V2-04 | **architecture-blocked (F23)** | No "Add Patient via Conversation" entry in CaregiverHomeScreen — only `onboard_patient_fab` → form. `PatientOnboardingConversationScreen` exists in code but has no caregiver-flow nav. Voice-only patient profile extraction is not exercisable today. |
+| CG-V2-13 | **PASS-by-architecture; bench-run pending (Stream F, 2026-05-15)** | Manual UI removed (this session); voice path is the canonical reminder-config surface. Schema verified live in dev RDS: Jane's `parameter_configs` rows for systolic+diastolic BP carry `frequency_days=1, daily_deadline=18:00:00, timezone=Asia/Kolkata` — exact columns the protocol_persister UPSERT writes. CloudWatch shows `protocol_extraction` fires on real caregiver_onboarding `complete_session` events. Regression flow `cg_v2_13_voice_reminder_config.yaml` authored; full bench run gated on Mac Core Audio wedge resolution (same blocker as PT-V2-06). |
 | EDGE-V2-17 | **route-reachable; awaits Maestro flow (2026-05-10)** | F25 implemented: `SttManager` silently retries with `EXTRA_PREFER_OFFLINE=false` on error 12/13. Logcat carries `stt_offline_used=true|false` for assertion. Flow needs authoring: bn-IN session, gTTS audio, assert Final emits + logcat shows fallback line. |
 
 ### New voice-related findings (raised this sweep)

@@ -25,7 +25,15 @@
 > T-V2-100..108, 110, 111, 210, 211 (bedrock-router + vision deployed
 > end-to-end) · T-V2-302 caregiver protocol persistence (`91e00ca`) ·
 > T-V2-303 caregiver attribution (`1d7dd46`) · T-V2-304 FHIR
-> Observation bridge (`7c19c37`) · V005 migration applied to dev RDS.
+> Observation bridge (`7c19c37`) · V005 migration applied to dev RDS ·
+> **F26b voice-only reminders shipped 2026-05-15** — manual
+> `ReminderConfigScreen` + route + API surface deleted; reminder
+> cadence is now configured exclusively through the
+> caregiver_onboarding voice protocol (Sonnet protocol-extraction
+> writes `parameter_configs.frequency_days/daily_deadline/timezone`
+> via `protocol_persister.upsertParameterConfig`; same UPSERT serves
+> create + edit). CG-V2-13 PASS-by-architecture; bench regression
+> flow `cg_v2_13_voice_reminder_config.yaml` ready.
 >
 > Items still unticked **and still genuinely open**: the entire
 > Increment 6 (Android v2 client), T-V2-001 AWS BAA cross-region

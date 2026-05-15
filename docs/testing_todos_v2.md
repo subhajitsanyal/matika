@@ -187,7 +187,7 @@ Fix: deleted `com.carelog.core.BuildConfig.kt`, switched 7 imports + 4 fully-qua
 **Owner:** `android-app` (done via F25).
 **Status:** Resolved. F25's silent online fallback handles missing-pack cases automatically — the bn-IN session no longer hard-errors. Manual offline-pack install is no longer required for the test device. (Production users still benefit from installing the pack for offline reliability + lower latency, but it's no longer a hard prerequisite.)
 
-### F26 — Caregiver Threshold/Reminder/Trends fetch lands "Retry" (PARTIALLY RESOLVED 2026-05-10; thresholds wired, reminders deferred)
+### F26 — Caregiver Threshold/Reminder/Trends fetch lands "Retry" (RESOLVED — thresholds 2026-05-10, reminders 2026-05-15 via F26b voice-only)
 
 **Severity:** Was Medium. Surfaced during F4 Path A verification: ThresholdConfigScreen, ReminderConfigScreen, and TrendsScreen all error out on John CG's session because the v1 backend chain (threshold-crud / reminder-crud lambdas + `/patients/{id}/thresholds` and `/patients/{id}/reminders` API routes) is unwired AND points at vestigial v1 tables (`thresholds`, `reminder_configs`) that v2's alert engine doesn't read.
 **Owner:** `android-app` (done for thresholds) + `product` (defer reminder UX to v2 redesign).
@@ -206,7 +206,7 @@ Fix: deleted `com.carelog.core.BuildConfig.kt`, switched 7 imports + 4 fully-qua
 - TrendsViewModel also pointed at `getParameterThresholds`; maps the legacy `VitalType` enum to the schema's parameter_name (BP→systolic by convention) for the chart's breach band.
 - Legacy `getThresholds(patientId)` kept (with `@Deprecated`) for any straggler callers; will be removed when none remain.
 
-**Reminder side deferred.** `ReminderConfigScreen`'s UI shape (`windowHours` + `gracePeriodMinutes` + `enabled`) doesn't map to v2's reminder semantics, where reminders are derived from per-parameter `frequency_days` + `daily_deadline` + `timezone` on `parameter_configs` (set by the caregiver_onboarding voice protocol's protocol-extraction pass). A clean fix needs product input on whether manual reminder editing should remain or be voice-only. Logged as a follow-up.
+**Reminder side resolved via F26b voice-only (2026-05-15).** Product decision (`v2_stream_d_decisions_20260512.md`): reminders are configured exclusively through the caregiver_onboarding voice protocol in v2.0. `ReminderConfigScreen.kt` was deleted along with the `CareLogRoutes.REMINDERS` route, the `caregiver_reminders` Manage card, the `onNavigateToReminders` plumbing across `CaregiverHomeScreen` / `RelativeDashboardScreen` / `CareLogNavHost`, and the now-dead `RelativeApiService.getReminderConfig` / `updateReminderConfig` / `parseReminderConfigs` / `ReminderConfig` data class. The voice path persists frequency cadence via `protocol_persister.upsertParameterConfig` UPSERT on `parameter_configs.frequency_days/daily_deadline/timezone` — same UPSERT serves create AND edit. Live evidence: Jane's BP parameter_configs rows confirm schema (`frequency_days=1, daily_deadline=18:00:00, timezone=Asia/Kolkata`); CloudWatch `protocol_extraction_failed` events on caregiver_onboarding sessions prove the path is wired end-to-end. Maestro regression flow `cg_v2_13_voice_reminder_config.yaml` authored; bench run gated on Stream F (Mac Core Audio wedge).
 
 **Live verification (2026-05-10).** `_f26_threshold_smoke` Maestro flow against Samsung RFCT10C1GSZ:
 
@@ -227,7 +227,7 @@ Fix: deleted `com.carelog.core.BuildConfig.kt`, switched 7 imports + 4 fully-qua
 No backend code changes (the v2 `manage-parameter-configs` lambda was already correct). No terraform. No migration.
 
 **Remaining work (deferred).**
-- Reminder UX redesign + repoint ReminderConfigScreen at parameter_configs's `frequency_days`/`daily_deadline` fields. Needs product call on the right knob shape for caregivers.
+- ~~Reminder UX redesign + repoint ReminderConfigScreen at parameter_configs's `frequency_days`/`daily_deadline` fields.~~ **RESOLVED 2026-05-15** via F26b voice-only — screen and its API surface deleted, voice protocol is the only entry point.
 - Delete the dead `threshold-crud` and `reminder-crud` lambdas + their unwired API Gateway resources (`/thresholds/{patientId}`, `/reminders/{patientId}`). Tracked alongside the broader cognito-drift terraform reconciliation.
 - Author CG-V2-12 Maestro regression flow now that the path is functional.
 

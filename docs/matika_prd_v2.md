@@ -261,7 +261,9 @@ The first half of the voice session captures the new patient's profile. The voic
 
 ### 6.4 Reminder and Alert System
 
-Unchanged from v1.
+Behavior unchanged from v1; configuration surface changed (v2.0 is voice-only).
+
+**Reminder configuration (v2.0 — voice-only).** Reminder cadence (per-parameter `frequency_days`, `daily_deadline`, `timezone`) is configured during the caregiver_onboarding voice protocol session — the Sonnet protocol-extraction pass writes these fields onto `parameter_configs`. There is no manual reminder-edit UI in the v2.0 caregiver app; the legacy v1 `ReminderConfigScreen` and `/patients/{id}/reminders` API path were removed (F26b decision, 2026-05-12). Editing reminders post-onboarding is also voice-driven (the same UPSERT path handles create AND edit on conflict). A future Phase 2 / v2.1 doctor-portal pass MAY add a write-back surface for clinician overrides.
 
 **Reminders (to patient):** hourly push notifications begin after the configured daily deadline if logging is incomplete.
 

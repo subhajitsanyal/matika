@@ -39,7 +39,6 @@ fun RelativeDashboardScreen(
     onNavigateToSettings: () -> Unit,
     onNavigateToCareTeam: () -> Unit,
     onNavigateToThresholds: () -> Unit,
-    onNavigateToReminders: () -> Unit,
     viewModel: RelativeDashboardViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -135,8 +134,7 @@ fun RelativeDashboardScreen(
                     DashboardContent(
                         summary = uiState.patientSummary,
                         onVitalClick = { /* Navigate to vital detail */ },
-                        onNavigateToThresholds = onNavigateToThresholds,
-                        onNavigateToReminders = onNavigateToReminders
+                        onNavigateToThresholds = onNavigateToThresholds
                     )
                 }
             }
@@ -148,8 +146,7 @@ fun RelativeDashboardScreen(
 private fun DashboardContent(
     summary: PatientSummary?,
     onVitalClick: (VitalType) -> Unit,
-    onNavigateToThresholds: () -> Unit,
-    onNavigateToReminders: () -> Unit
+    onNavigateToThresholds: () -> Unit
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -163,7 +160,9 @@ private fun DashboardContent(
             }
         }
 
-        // Quick action cards
+        // Quick action cards. F26b — Reminders moved to voice-only
+        // (caregiver_onboarding protocol session), so only Thresholds
+        // remains here in the legacy relative-dashboard quick actions.
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -176,14 +175,6 @@ private fun DashboardContent(
                     icon = Icons.Default.Tune,
                     label = "Thresholds",
                     onClick = onNavigateToThresholds
-                )
-                QuickActionCard(
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("caregiver_reminders"),
-                    icon = Icons.Default.Alarm,
-                    label = "Reminders",
-                    onClick = onNavigateToReminders
                 )
             }
         }
