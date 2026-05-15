@@ -12,6 +12,7 @@ import { resolve as resolvePath } from 'node:path';
 import { handleTurn, handleTurnStream, TurnRequest, TurnResponse, HandlerDeps } from './handler';
 import { CollectingSseEmitter, serializeEvent } from './sse_events';
 import { AwsBedrockInvoker } from './bedrock_client';
+import { MalformedJsonBedrockInvoker, parseChaosMode } from './bedrock_chaos';
 import {
   PgPatientContextLoader,
   PgTurnContextLoader,
@@ -170,6 +171,23 @@ interface ApiGatewayProxyEvent {
   // "/conversation/turn-stream"). Stable across stages.
   resource?: string;
   path?: string;
+  // EDGE-V2-09 chaos hook reads `x-test-chaos`. Header name casing varies
+  // by API GW integration version, so the helper checks both forms.
+  headers?: Record<string, string>;
+}
+
+/**
+ * EDGE-V2-09 — case-insensitive header lookup. API GW REST integrations
+ * preserve header case as sent by the client; HTTP API normalizes to
+ * lowercase. We accept either.
+ */
+function getHeader(event: ApiGatewayProxyEvent, name: string): string | undefined {
+  const headers = event.headers ?? {};
+  const lower = name.toLowerCase();
+  for (const [k, v] of Object.entries(headers)) {
+    if (k.toLowerCase() === lower) return v;
+  }
+  return undefined;
 }
 
 interface ApiGatewayProxyResponse {
@@ -214,6 +232,16 @@ async function handleProxyInvocation(
       error: 'invalid_json',
       message: err instanceof Error ? err.message : String(err),
     });
+  }
+
+  // EDGE-V2-09 fault-injection. Production never sets this header; only
+  // the cognito-harness-maestro.sh edge-v2-09 wrapper does. Per-invocation
+  // wrapping (no shared state across requests) so chaos can't leak into
+  // a concurrent normal request.
+  const chaosMode = parseChaosMode(getHeader(event, 'x-test-chaos'));
+  if (chaosMode === 'malformed_json') {
+    console.warn('chaos_mode_active', { mode: chaosMode });
+    deps = { ...deps, bedrock: new MalformedJsonBedrockInvoker(deps.bedrock) };
   }
 
   if (isStreamingPath(event)) {
