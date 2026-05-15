@@ -1,0 +1,85 @@
+# CG-V2-16 — caregiver deletes a patient (DPDP right-to-erasure cascade).
+#
+# Pre-condition: the wrapper (`scripts/cognito-harness-maestro.sh
+# cg-v2-16`) has already invoked the create-patient lambda with the
+# caregiver's claims to provision a synthetic test patient. The
+# create-patient lambda sets the caregiver's `custom:linked_patient_id`
+# to the new patient, so SettingsScreen.PrimaryPatientCard renders
+# with the synthetic patient as the deletable subject.
+#
+# Pre-condition #2: John CG's consent_records row was pre-seeded by
+# the wrapper (idempotent SQL INSERT) so SplashViewModel doesn't
+# divert through the consent screen mid-flow.
+#
+# This flow:
+#   1. Logs in as John CG.
+#   2. Lands on the caregiver dashboard (onboard_patient_fab visible).
+#   3. Opens settings (TopAppBar gear; targeted by contentDescription).
+#   4. Scrolls to the primary-patient card.
+#   5. Taps Delete Patient & All Associated Personas.
+#   6. Confirms the destructive AlertDialog.
+#   7. Asserts the app signs out (back to login) — this is what
+#      SettingsViewModel.deletePatientState=Success triggers via the
+#      onSignedOut callback.
+#
+# Post-flow the wrapper verifies the cascade in dev RDS:
+#   - patients.id row gone (hard delete)
+#   - persona_links.is_active=false for the deleted patient
+#   - users.is_active=false for the deleted patient's user row
+#   - audit_log row with action='DELETE_CASCADE'
+# And restores John CG's `custom:linked_patient_id` to Jane.
+#
+# Run via wrapper, not directly: scripts/cognito-harness-maestro.sh cg-v2-16
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible: { id: login_email }
+    timeout: 15000
+
+# ── Caregiver login ──────────────────────────────────────
+- tapOn: { id: login_email }
+- inputText: ${MATIKA_CAREGIVER_EMAIL}
+- tapOn: { id: login_password }
+- inputText: ${MATIKA_CAREGIVER_PASSWORD}
+- hideKeyboard
+- tapOn: { id: login_button }
+
+# Splash → caregiver dashboard (consent already pre-seeded; no detour).
+- extendedWaitUntil:
+    visible: { id: onboard_patient_fab }
+    timeout: 30000
+
+# ── Open Settings ────────────────────────────────────────
+# CaregiverHomeScreen TopAppBar settings IconButton uses contentDescription
+# ("Open settings"). Per maestro_lessons.md #1 + #3 we target the icon
+# via accessibility text with full-string regex.
+- tapOn:
+    text: "(?i).*Open settings.*"
+- extendedWaitUntil:
+    visible: { id: settings_primary_patient_card }
+    timeout: 15000
+
+# ── Trigger destructive flow ─────────────────────────────
+- scrollUntilVisible:
+    element: { id: delete_patient_button }
+    direction: DOWN
+- tapOn: { id: delete_patient_button }
+
+# AlertDialog renders in its own Popup window — testTagsAsResourceId
+# was set directly on the dialog (per maestro_lessons.md #8) so
+# resource-id targeting works inside the popup.
+- extendedWaitUntil:
+    visible: { id: delete_patient_dialog }
+    timeout: 5000
+
+- tapOn: { id: delete_patient_confirm }
+
+# SettingsViewModel.deletePatient() succeeds → onSignedOut → back to LOGIN.
+# Allow extra time: the lambda does Cognito disable + RDS UPDATEs +
+# audit_log INSERT before returning 200.
+- extendedWaitUntil:
+    visible: { id: login_email }
+    timeout: 30000

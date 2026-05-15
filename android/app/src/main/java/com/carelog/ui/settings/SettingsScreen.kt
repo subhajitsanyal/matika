@@ -10,8 +10,11 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -29,7 +32,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
 fun SettingsScreen(
     onNavigateBack: () -> Unit,
@@ -288,9 +291,17 @@ fun SettingsScreen(
         }
     }
 
-    // Delete patient confirmation dialog
+    // Delete patient confirmation dialog. AlertDialog renders in its own
+    // Popup window; per maestro_lessons.md #8 the root testTagsAsResourceId
+    // bridge does NOT propagate across that boundary, so we set it directly
+    // on the dialog's modifier and tag both the dialog + the destructive
+    // confirm button. Without this the inner buttons are invisible to
+    // Maestro by resource-id even though they're on screen.
     if (showDeletePatientDialog) {
         AlertDialog(
+            modifier = Modifier
+                .semantics { testTagsAsResourceId = true }
+                .testTag("delete_patient_dialog"),
             onDismissRequest = { showDeletePatientDialog = false },
             icon = { Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
             title = { Text("Delete Patient?") },
@@ -309,13 +320,17 @@ fun SettingsScreen(
                     },
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.error
-                    )
+                    ),
+                    modifier = Modifier.testTag("delete_patient_confirm")
                 ) {
                     Text("Delete Patient")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showDeletePatientDialog = false }) {
+                TextButton(
+                    onClick = { showDeletePatientDialog = false },
+                    modifier = Modifier.testTag("delete_patient_cancel")
+                ) {
                     Text("Cancel")
                 }
             }
@@ -457,7 +472,12 @@ private fun PrimaryPatientCard(
     onDeletePatient: () -> Unit,
     isDeleting: Boolean
 ) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+    // testTag on the outer card so a Maestro flow can scrollUntilVisible
+    // to it before tapping the inner delete button — Settings is a
+    // long vertical scroll and the delete card is below the fold.
+    Card(modifier = Modifier
+        .fillMaxWidth()
+        .testTag("settings_primary_patient_card")) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
                 text = "Primary Patient",
@@ -493,7 +513,9 @@ private fun PrimaryPatientCard(
                     colors = ButtonDefaults.outlinedButtonColors(
                         contentColor = MaterialTheme.colorScheme.error
                     ),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("delete_patient_button")
                 ) {
                     if (isDeleting) {
                         CircularProgressIndicator(modifier = Modifier.size(16.dp))

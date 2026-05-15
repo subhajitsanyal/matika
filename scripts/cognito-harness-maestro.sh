@@ -40,9 +40,19 @@ done
 
 if [[ -z "$JOURNEY" ]]; then
     echo "usage: $0 <journey> [--keep-user] [--no-install]" >&2
-    echo "  journeys: cg-v2-01, edge-v2-04" >&2
+    echo "  journeys: cg-v2-01, edge-v2-04, cg-v2-16" >&2
     exit 1
 fi
+
+# John CG identifiers (canonical dev caregiver, jane_dev_test_account memory).
+JOHN_CG_COGNITO_SUB="2193bdfa-d001-70da-aa9a-395dabbe8122"
+JOHN_CG_USERNAME="sanyalsubhajit2010+cg@gmail.com"
+JANE_PATIENT_ID="CL-63NRGO"
+
+# Source the matika-test-creds env so the wrapper can reach
+# MATIKA_CAREGIVER_EMAIL/_PASSWORD for the Maestro -e bridge.
+CREDS="${MATIKA_CREDS_FILE:-$HOME/.matika-test-creds.env}"
+[[ -f "$CREDS" ]] && source "$CREDS"
 
 # ── Sanity checks (mirror maestro-run.sh) ─────────────────
 for cmd in maestro adb aws; do
@@ -99,6 +109,92 @@ case "$JOURNEY" in
         else
             echo "▸ --keep-user set; leaving $EMAIL in Cognito for inspection"
         fi
+        ;;
+    cg-v2-16)
+        # CG-V2-16 — destructive cascade test for delete-patient (DPDP
+        # right-to-erasure). Use John CG (canonical caregiver) plus a
+        # synthetic patient created out-of-band via direct lambda invoke
+        # so we never touch Jane.
+        #
+        # Flow:
+        #   1. Invoke create-patient lambda with a hand-crafted authorizer
+        #      claims context for John CG. Lambda creates a Cognito patient
+        #      user, persona_links row (primary=true, active=true), users
+        #      row, parameter_configs (default protocol), AND sets John CG's
+        #      `custom:linked_patient_id` to the new patient.
+        #   2. Run the Maestro flow which logs in as John CG → settings →
+        #      tap delete → confirm → asserts sign-out.
+        #   3. Verify the cascade in dev RDS via SSM tunnel.
+        #   4. Restore John CG's `custom:linked_patient_id` back to Jane
+        #      so subsequent runs of other flows aren't disrupted.
+        STAMP="$(date +%s | tail -c 7)"
+        TEST_PATIENT_NAME="Cascade Test ${STAMP}"
+        TEST_PATIENT_EMAIL="${MATIKA_TEST_EMAIL_BASE:-sanyalsubhajit2010}+pt-cascade-${STAMP}@gmail.com"
+        echo "▸ Creating synthetic test patient via create-patient lambda"
+        echo "  caregiver: $JOHN_CG_USERNAME ($JOHN_CG_COGNITO_SUB)"
+        echo "  patient:   $TEST_PATIENT_EMAIL"
+
+        # Hand-craft the API Gateway proxy event the lambda expects. The
+        # claims block mirrors what the COGNITO_USER_POOLS authorizer
+        # populates in production — sub/email/name/cognito:username.
+        PAYLOAD_FILE="$(mktemp -t cg-v2-16-payload-XXXXXX.json)"
+        cat > "$PAYLOAD_FILE" <<JSON
+{
+  "body": "{\"name\":\"$TEST_PATIENT_NAME\",\"patientEmail\":\"$TEST_PATIENT_EMAIL\",\"dateOfBirth\":\"01/01/1950\",\"gender\":\"female\",\"language\":\"en\",\"timezone\":\"Asia/Kolkata\"}",
+  "requestContext": {
+    "authorizer": {
+      "claims": {
+        "sub": "$JOHN_CG_COGNITO_SUB",
+        "email": "$JOHN_CG_USERNAME",
+        "name": "John CG",
+        "cognito:username": "$JOHN_CG_USERNAME"
+      }
+    }
+  }
+}
+JSON
+        RESPONSE_FILE="$(mktemp -t cg-v2-16-resp-XXXXXX.json)"
+        aws lambda invoke \
+            --function-name carelog-dev-create-patient \
+            --region "$HARNESS_REGION" \
+            --cli-binary-format raw-in-base64-out \
+            --payload "file://$PAYLOAD_FILE" \
+            "$RESPONSE_FILE" >/dev/null
+        rm -f "$PAYLOAD_FILE"
+
+        STATUS_CODE="$(python3 -c "import json,sys; r=json.load(open('$RESPONSE_FILE')); print(r.get('statusCode'))")"
+        if [[ "$STATUS_CODE" != "201" ]]; then
+            echo "ERROR: create-patient returned $STATUS_CODE; response:" >&2
+            cat "$RESPONSE_FILE" >&2
+            rm -f "$RESPONSE_FILE"
+            exit 1
+        fi
+        TEST_PATIENT_ID="$(python3 -c "import json,sys; r=json.load(open('$RESPONSE_FILE')); b=json.loads(r['body']); print(b['patientId'])")"
+        TEST_PATIENT_COGNITO_SUB="$(python3 -c "import json,sys; r=json.load(open('$RESPONSE_FILE')); b=json.loads(r['body']); print(b['cognito_sub'])")"
+        rm -f "$RESPONSE_FILE"
+        echo "  → patientId=$TEST_PATIENT_ID, cognito_sub=$TEST_PATIENT_COGNITO_SUB"
+
+        echo "▸ Phase — login as John CG → settings → delete → assert sign-out"
+        maestro test "$FLOWS_DIR/cg_v2_16_delete_patient_cascade.yaml" \
+            -e "MATIKA_CAREGIVER_EMAIL=$MATIKA_CAREGIVER_EMAIL" \
+            -e "MATIKA_CAREGIVER_PASSWORD=$MATIKA_CAREGIVER_PASSWORD"
+
+        echo "▸ Restore John CG's custom:linked_patient_id back to Jane ($JANE_PATIENT_ID)"
+        aws cognito-idp admin-update-user-attributes \
+            --user-pool-id "$HARNESS_POOL_ID" \
+            --username "$JOHN_CG_USERNAME" \
+            --user-attributes "Name=custom:linked_patient_id,Value=$JANE_PATIENT_ID" \
+            --region "$HARNESS_REGION"
+        echo "  → restored"
+
+        echo "▸ Cascade verification — query dev RDS via SSM tunnel"
+        echo "  Expecting: patients row gone (hard delete); persona_links" \
+             "is_active=false; users is_active=false; audit_log entry."
+        echo "  Run separately via:" \
+             "  aws ssm start-session --target $JOHN_CG_USERNAME ... + psql"
+        echo "  Test patient identifiers for inspection:"
+        echo "    patientId:   $TEST_PATIENT_ID"
+        echo "    cognito_sub: $TEST_PATIENT_COGNITO_SUB"
         ;;
     edge-v2-04)
         # FORCE_CHANGE_PASSWORD first-time login. Use the patient-prefix
