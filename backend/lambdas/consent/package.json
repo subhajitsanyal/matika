@@ -1,0 +1,11 @@
+{
+  "name": "carelog-consent",
+  "version": "1.0.0",
+  "description": "DPDP consent records — GET/POST/DELETE /consent",
+  "main": "index.js",
+  "dependencies": {
+    "pg": "^8.13.1",
+    "uuid": "^9.0.1",
+    "@aws-sdk/client-secrets-manager": "^3.700.0"
+  }
+}

@@ -144,6 +144,9 @@ module "api_gateway" {
 
   # F29 / CG-V2-16 — DPDP right-to-erasure (DELETE /patients/{patientId})
   delete_patient_invoke_arn = module.lambda.delete_patient_invoke_arn
+
+  # Stream C — DPDP consent (GET/POST/DELETE /consent)
+  consent_invoke_arn = module.lambda.consent_invoke_arn
 }
 
 # HealthLake Module

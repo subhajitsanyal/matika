@@ -443,6 +443,15 @@ data "archive_file" "care_team" {
   output_path = "${path.module}/archives/care-team.zip"
 }
 
+# Stream C — DPDP consent records (GET/POST/DELETE /consent).
+# Records the cross-region inference disclosure version + sha256 hash
+# the user accepted. Reads/writes consent_records (V001 schema).
+data "archive_file" "consent" {
+  type        = "zip"
+  source_dir  = "${var.lambdas_source_path}/consent"
+  output_path = "${path.module}/archives/consent.zip"
+}
+
 data "archive_file" "process_pending_invites" {
   type        = "zip"
   source_dir  = "${var.lambdas_source_path}/process-pending-invites"
@@ -932,6 +941,29 @@ resource "aws_lambda_function" "care_team" {
   }
 }
 
+# Stream C — DPDP consent. Writes/reads consent_records; needs RDS only.
+# Reuses the lambda_rds_cognito role (RDS access; no Cognito calls in
+# the handler today, but the role's RDS perms match the access pattern).
+resource "aws_lambda_function" "consent" {
+  function_name    = "${local.function_prefix}-consent"
+  role             = aws_iam_role.lambda_rds_cognito.arn
+  handler          = "index.handler"
+  runtime          = "nodejs20.x"
+  timeout          = 30
+  memory_size      = 256
+  filename         = data.archive_file.consent.output_path
+  source_code_hash = data.archive_file.consent.output_base64sha256
+
+  vpc_config {
+    subnet_ids         = var.private_subnet_ids
+    security_group_ids = [var.lambda_security_group_id]
+  }
+
+  environment {
+    variables = local.rds_env
+  }
+}
+
 resource "aws_lambda_function" "fetch_session_config" {
   function_name    = "${local.function_prefix}-fetch-session-config"
   role             = aws_iam_role.lambda_rds_s3_invoke.arn
@@ -1399,6 +1431,11 @@ resource "aws_cloudwatch_log_group" "care_team" {
   retention_in_days = 365
 }
 
+resource "aws_cloudwatch_log_group" "consent" {
+  name              = "/aws/lambda/${aws_lambda_function.consent.function_name}"
+  retention_in_days = 365
+}
+
 resource "aws_cloudwatch_log_group" "process_pending_invites" {
   name              = "/aws/lambda/${aws_lambda_function.process_pending_invites.function_name}"
   retention_in_days = 365
@@ -1584,6 +1621,14 @@ resource "aws_lambda_permission" "care_team" {
   statement_id  = "AllowAPIGateway"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.care_team.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${var.api_execution_arn}/*"
+}
+
+resource "aws_lambda_permission" "consent" {
+  statement_id  = "AllowAPIGateway"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.consent.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${var.api_execution_arn}/*"
 }

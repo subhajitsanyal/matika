@@ -78,6 +78,10 @@ output "care_team_invoke_arn" {
   value = aws_lambda_function.care_team.invoke_arn
 }
 
+output "consent_invoke_arn" {
+  value = aws_lambda_function.consent.invoke_arn
+}
+
 output "patient_summary_invoke_arn" {
   value = aws_lambda_function.patient_summary.invoke_arn
 }
@@ -228,6 +232,10 @@ output "all_function_names" {
     # F29 / CG-V2-16 — DPDP right-to-erasure (appended to preserve
     # the count-indexed alarm mapping for the lambdas above).
     aws_lambda_function.delete_patient.function_name,
+    # Stream C — DPDP consent records GET/POST/DELETE /consent.
+    # Appended after delete_patient so the count-indexed alarm mapping
+    # for every lambda above remains stable (alarm[38]).
+    aws_lambda_function.consent.function_name,
   ]
 }
 

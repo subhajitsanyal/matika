@@ -35,8 +35,10 @@ async function createDbConnection() {
   return client;
 }
 
-// Current consent version
-const CURRENT_CONSENT_VERSION = '1.0';
+// Current consent version. Bump when getConsentDocument() text changes
+// in a legally material way — clients with an older accepted version will
+// be re-prompted (getConsentStatus → needsUpdate=true).
+const CURRENT_CONSENT_VERSION = '2.0';
 
 exports.handler = async (event) => {
   console.log('Consent request:', event.httpMethod, event.path);
@@ -50,12 +52,13 @@ exports.handler = async (event) => {
 
     switch (httpMethod) {
       case 'GET':
-        if (event.path?.endsWith('/text')) {
-          return await getConsentText();
-        }
         if (!userId) {
           return errorResponse(401, 'Unauthorized');
         }
+        // Returns the per-user status AND the current server-side
+        // consent text/version/hash in one payload. Saves the client a
+        // second round-trip and guarantees the hash the client posts
+        // back was authored against the same server-side text.
         return await getConsentStatus(client, userId);
       case 'POST':
         if (!userId) {
@@ -93,9 +96,39 @@ async function getConsentText() {
 }
 
 /**
- * Get user's consent status.
+ * Get user's consent status. Resolves cognito_sub → users.id (records
+ * are keyed by the internal UUID, not the Cognito sub) before hitting
+ * consent_records. Always includes the current server-side text +
+ * hash so the client can render the consent screen and submit the
+ * matching hash back without a second round-trip.
  */
-async function getConsentStatus(client, userId) {
+async function getConsentStatus(client, cognitoSub) {
+  const consentText = getConsentDocument();
+  const consentHash = hashText(consentText);
+  const baseConsent = {
+    currentVersion: CURRENT_CONSENT_VERSION,
+    consentText,
+    consentHash,
+  };
+
+  // Resolve cognito sub → internal user UUID. consent_records.user_id is
+  // the internal users.id (FK), not the Cognito sub directly. If the
+  // user row doesn't exist yet (post_confirmation Lambda hasn't fired or
+  // failed silently), treat as not-yet-consented so the client routes
+  // through the consent screen on first launch.
+  const userRow = await client.query(
+    `SELECT id FROM users WHERE cognito_sub = $1 LIMIT 1`,
+    [cognitoSub]
+  );
+  if (userRow.rows.length === 0) {
+    return successResponse(200, {
+      ...baseConsent,
+      hasConsent: false,
+      needsUpdate: true,
+    });
+  }
+  const userId = userRow.rows[0].id;
+
   const result = await client.query(
     `SELECT
        id,
@@ -112,8 +145,8 @@ async function getConsentStatus(client, userId) {
 
   if (result.rows.length === 0) {
     return successResponse(200, {
+      ...baseConsent,
       hasConsent: false,
-      currentVersion: CURRENT_CONSENT_VERSION,
       needsUpdate: true,
     });
   }
@@ -122,20 +155,26 @@ async function getConsentStatus(client, userId) {
   const needsUpdate = record.consent_version !== CURRENT_CONSENT_VERSION;
 
   return successResponse(200, {
+    ...baseConsent,
     hasConsent: true,
     consentVersion: record.consent_version,
     acceptedAt: record.accepted_at,
-    currentVersion: CURRENT_CONSENT_VERSION,
     needsUpdate,
   });
 }
 
 /**
- * Record user consent acceptance.
+ * Record user consent acceptance. Resolves cognito_sub → users.id (FK
+ * target) before writing to consent_records.
  */
-async function recordConsent(client, event, userId) {
+async function recordConsent(client, event, cognitoSub) {
   const body = JSON.parse(event.body || '{}');
-  const { version, textHash, acceptedTerms } = body;
+  // Client may send {acceptedTerms} explicitly or just {version, textHash}.
+  // The fact that POST /consent was called at all is itself the affirmative
+  // act on the consent screen, so default acceptedTerms to true when only
+  // version+hash are present.
+  const { version, textHash } = body;
+  const acceptedTerms = body.acceptedTerms !== false;
 
   if (!version || !textHash) {
     return errorResponse(400, 'Version and text hash required');
@@ -153,6 +192,18 @@ async function recordConsent(client, event, userId) {
     return errorResponse(400, 'Consent text has been updated. Please review the latest version.');
   }
 
+  // Resolve internal user UUID. The post-confirmation Lambda is supposed
+  // to have created the row; if it hasn't, surface 409 so the client can
+  // retry rather than silently writing an orphan FK.
+  const userRow = await client.query(
+    `SELECT id FROM users WHERE cognito_sub = $1 LIMIT 1`,
+    [cognitoSub]
+  );
+  if (userRow.rows.length === 0) {
+    return errorResponse(409, 'User record not yet provisioned. Try again in a moment.');
+  }
+  const userId = userRow.rows[0].id;
+
   // Get IP address from request
   const ipAddress = event.requestContext?.identity?.sourceIp ||
     event.headers?.['X-Forwarded-For']?.split(',')[0] ||
@@ -164,39 +215,42 @@ async function recordConsent(client, event, userId) {
     `INSERT INTO consent_records (
        id,
        user_id,
+       consent_type,
        consent_version,
        consent_text_hash,
+       is_accepted,
        ip_address,
        user_agent,
        accepted_at
-     ) VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
     [
       id,
       userId,
+      'cross_region_inference',
       version,
       textHash,
+      true,
       ipAddress,
       event.headers?.['User-Agent'] || 'unknown',
     ]
   );
 
-  // Log audit event
+  // Log audit event. audit_log schema (V001) is action/resource_type/
+  // resource_id/user_id/user_persona/details — no actor_role column.
   await client.query(
     `INSERT INTO audit_log (
        action,
        resource_type,
        resource_id,
        user_id,
-       actor_role,
        details,
        created_at
-     ) VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+     ) VALUES ($1, $2, $3, $4, $5, NOW())`,
     [
       'CREATE',
       'Consent',
       id,
       userId,
-      'user',
       JSON.stringify({ version, ipAddress }),
     ]
   );
@@ -210,42 +264,53 @@ async function recordConsent(client, event, userId) {
 }
 
 /**
- * Withdraw consent (DPDP right to withdraw).
+ * Withdraw consent (DPDP right to withdraw). Resolves cognito_sub →
+ * users.id (FK) before updating consent_records.
  */
-async function withdrawConsent(client, event, userId) {
+async function withdrawConsent(client, event, cognitoSub) {
   const body = JSON.parse(event.body || '{}');
   const { reason } = body;
 
-  // Mark all consent records as withdrawn
+  const userRow = await client.query(
+    `SELECT id FROM users WHERE cognito_sub = $1 LIMIT 1`,
+    [cognitoSub]
+  );
+  if (userRow.rows.length === 0) {
+    return errorResponse(404, 'User record not found');
+  }
+  const userId = userRow.rows[0].id;
+
+  // Mark all active consent records as withdrawn. The schema doesn't have
+  // a withdrawal_reason column today, so the reason text is preserved on
+  // the audit_log row below — that's the durable surface for DPDP audit.
   const result = await client.query(
     `UPDATE consent_records
-     SET withdrawn_at = NOW(), withdrawal_reason = $2
+     SET withdrawn_at = NOW()
      WHERE user_id = $1 AND withdrawn_at IS NULL
      RETURNING id`,
-    [userId, reason || 'User requested withdrawal']
+    [userId]
   );
 
   if (result.rows.length === 0) {
     return errorResponse(404, 'No active consent found');
   }
 
-  // Log audit event
+  // Log audit event (DPDP withdrawal). Uses the same audit_log schema
+  // as recordConsent's audit row above — no actor_role column.
   await client.query(
     `INSERT INTO audit_log (
        action,
        resource_type,
        resource_id,
        user_id,
-       actor_role,
        details,
        created_at
-     ) VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+     ) VALUES ($1, $2, $3, $4, $5, NOW())`,
     [
       'DELETE',
       'Consent',
       result.rows[0].id,
       userId,
-      'user',
       JSON.stringify({ reason: reason || 'User requested withdrawal' }),
     ]
   );
@@ -302,6 +367,7 @@ We will NEVER sell your personal health information.
 
 - Your data is stored securely on AWS servers with encryption at rest and in transit
 - Data for Indian users is stored in AWS ap-south-1 (Mumbai) region
+- To answer your conversations quickly, your messages may be processed by AI on AWS regions outside India and routed back to you. No personal identifiers are stored outside India; only the conversation content transits cross-region for inference.
 - Access to your data is controlled through multi-factor authentication
 - We maintain comprehensive audit logs of all data access
 

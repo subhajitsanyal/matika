@@ -182,6 +182,14 @@ resource "aws_api_gateway_resource" "audit_log" {
   path_part   = "audit-log"
 }
 
+# Stream C — /consent. Single resource handles GET (status), POST (record),
+# DELETE (withdraw). The lambda routes by event.httpMethod.
+resource "aws_api_gateway_resource" "consent" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  parent_id   = aws_api_gateway_rest_api.main.root_resource_id
+  path_part   = "consent"
+}
+
 # ============================================================
 # ADDITIONAL RESOURCES
 # ============================================================
@@ -372,6 +380,61 @@ resource "aws_api_gateway_method_response" "patient_delete_200" {
   response_parameters = {
     "method.response.header.Access-Control-Allow-Origin" = true
   }
+}
+
+# Stream C — /consent. GET = current consent status for the caller
+# (consent_records WHERE user_id=$claims.sub AND withdrawn_at IS NULL).
+# POST = record acceptance (verifies textHash matches the current server-
+# side document hash). DELETE = withdraw (sets withdrawn_at).
+resource "aws_api_gateway_method" "consent_get" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.consent.id
+  http_method   = "GET"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+}
+
+resource "aws_api_gateway_integration" "consent_get" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.consent.id
+  http_method             = aws_api_gateway_method.consent_get.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = var.consent_invoke_arn
+}
+
+resource "aws_api_gateway_method" "consent_post" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.consent.id
+  http_method   = "POST"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+}
+
+resource "aws_api_gateway_integration" "consent_post" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.consent.id
+  http_method             = aws_api_gateway_method.consent_post.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = var.consent_invoke_arn
+}
+
+resource "aws_api_gateway_method" "consent_delete" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.consent.id
+  http_method   = "DELETE"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+}
+
+resource "aws_api_gateway_integration" "consent_delete" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.consent.id
+  http_method             = aws_api_gateway_method.consent_delete.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = var.consent_invoke_arn
 }
 
 # DELETE /patients/{patientId}/team/{memberId} — remove-team-member (kept as MOCK)
@@ -1090,6 +1153,14 @@ resource "aws_api_gateway_deployment" "main" {
       aws_api_gateway_integration.device_tokens_post.id,
       aws_api_gateway_method.device_tokens_delete.id,
       aws_api_gateway_integration.device_tokens_delete.id,
+      # Stream C — GET/POST/DELETE /consent (DPDP cross-region disclosure).
+      aws_api_gateway_resource.consent.id,
+      aws_api_gateway_method.consent_get.id,
+      aws_api_gateway_integration.consent_get.id,
+      aws_api_gateway_method.consent_post.id,
+      aws_api_gateway_integration.consent_post.id,
+      aws_api_gateway_method.consent_delete.id,
+      aws_api_gateway_integration.consent_delete.id,
     ]))
   }
 

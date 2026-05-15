@@ -168,3 +168,10 @@ variable "delete_patient_invoke_arn" {
   type        = string
   default     = ""
 }
+
+# Stream C — DPDP consent records (GET/POST/DELETE /consent).
+variable "consent_invoke_arn" {
+  description = "Invoke ARN for carelog-<env>-consent (GET /consent for status, POST /consent to record acceptance, DELETE /consent to withdraw)."
+  type        = string
+  default     = ""
+}
