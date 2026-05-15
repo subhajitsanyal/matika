@@ -1,6 +1,6 @@
 # Matika Setup and Deployment Guide
 
-**Version:** 3.3
+**Version:** 3.4
 **Last Updated:** May 2026
 
 > **v2.0 note:** v1's Mac Mini per-household inference setup is removed. Inference now runs on AWS Bedrock (cross-region). Section 6 documents the Bedrock provisioning steps that replace the v1 Mac Mini setup. Existing AWS resource names (`carelog-*`) and Android packages (`com.carelog.*`) are deliberately retained until the v2.1 rename pass — see `docs/matika_v2_migration.md`.
@@ -601,10 +601,101 @@ iOS App (parked v2.0 — see launch plan)  └── CloudWatch (alarms + dashbo
 
 ---
 
+## Staging environment stand-up (Stream H)
+
+Run-once stand-up for `infrastructure/terraform/environments/staging/`.
+Expects the dev environment is already deployed (the bootstrap state
+bucket + lock table are shared across envs).
+
+**Decisions baked into this runbook (Stream H, 2026-05-14):**
+- Same AWS account as dev (`316643066568`). Bucket names disambiguate
+  via the env segment in the s3 module's `${prefix}-${env}-${kind}-${acct}`
+  pattern.
+- Shared Firebase project `carelog-7de0c` for FCM. Staging-namespaced
+  secret `carelog-staging/fcm-service-account` was provisioned by
+  copying the dev secret value (already done — verify with
+  `aws secretsmanager describe-secret --secret-id carelog-staging/fcm-service-account`).
+- SES sender domain still HOLD (Stream D #5). Staging applies with
+  empty SES placeholders — Cognito self-registration emails will not
+  send until the domain decision lands. Set `ses_email_arn` +
+  `ses_from_email` in `staging/terraform.tfvars` (gitignored) once
+  decided.
+
+**Prerequisites:**
+- AWS CLI configured for account `316643066568`, region `ap-south-1`.
+- Bootstrap state bucket `carelog-terraform-state` + lock table
+  `carelog-terraform-locks` exist (provisioned 2026-05-02 — verify with
+  `aws s3 ls carelog-terraform-state/` and
+  `aws dynamodb describe-table --table-name carelog-terraform-locks`).
+- Staging FCM secret exists (verify per above).
+
+**First-apply sequence:**
+
+```bash
+cd infrastructure/terraform/environments/staging
+
+# Optional: create staging/terraform.tfvars with the alert + SES values.
+# Both are optional — empty defaults disable monitoring + Cognito email.
+# cat > terraform.tfvars <<EOF
+# alert_email    = "ops@matika.health"
+# ses_email_arn  = "arn:aws:ses:ap-south-1:316643066568:identity/..."
+# ses_from_email = "Matika <noreply@matika.health>"
+# EOF
+
+# First time only: initialise the S3 backend.
+terraform init
+
+# Plan + apply. Inspect the plan carefully before approving — staging is
+# a fresh environment so everything will appear as a `+ create`.
+terraform plan -out=staging.tfplan
+terraform apply staging.tfplan
+```
+
+**Post-apply schema migration** (mirrors §3.3 dev pattern):
+
+```bash
+BASTION_ID=$(terraform output -raw bastion_instance_id)
+RDS_HOST=$(aws ssm get-parameters \
+  --names "/carelog/staging/rds_endpoint" \
+  --region ap-south-1 \
+  --query 'Parameters[0].Value' --output text)
+
+aws ssm start-session --target "$BASTION_ID" \
+  --document-name AWS-StartPortForwardingSessionToRemoteHost \
+  --parameters "{\"host\":[\"$RDS_HOST\"],\"portNumber\":[\"5432\"],\"localPortNumber\":[\"55433\"]}" \
+  --region ap-south-1 &
+sleep 5
+
+export PGPASSWORD=$(aws secretsmanager get-secret-value \
+  --secret-id carelog-staging-db-password --region ap-south-1 \
+  --query SecretString --output text \
+  | python3 -c "import json,sys; print(json.load(sys.stdin)['password'])")
+cd backend/database
+flyway -url="jdbc:postgresql://127.0.0.1:55433/carelog_staging" \
+       -user=carelog_staging_admin -password="$PGPASSWORD" migrate
+unset PGPASSWORD
+```
+
+**Post-apply Maestro smoke:** point `API_BASE_URL` at the staging API GW
+invoke URL via `scripts/update-app-config.sh staging`, install the
+resulting APK, run `scripts/maestro-run.sh`.
+
+**Soak gate:** 1 week against staging with `alert_email` set + synthetic
+load before promoting to prod first-apply (see §7.1 of
+`docs/v2_launch_plan.md`).
+
+**Known unblocked-but-deferred:** SES sender domain (Stream D #5 still
+HOLD). When that lands, set the two `ses_*` vars in
+`staging/terraform.tfvars` and re-apply — only the cognito module diff
+would land.
+
+---
+
 ## Changelog
 
 | Date | Changes |
 |------|---------|
+| 2026-05-14 | v3.4: Added Staging environment stand-up runbook (Stream H). Staging files updated to mirror dev's plumbing pattern (backend uncommented, alert_email + s3_bucket_prefix plumbed). FCM secret `carelog-staging/fcm-service-account` provisioned. |
 | 2026-05-11 | v3.3: Added §6.6 SNS Platform App + FCM HTTP v1 provisioning (F17); V005–V009 migration list in §3.3; removed v1 Mac Mini architecture diagram; Lambda count corrected to 45 |
 | 2026-05-02 | v3.2: Brand rename to Matika; replaced Mac Mini section with Bedrock provisioning section |
 | 2026-04-26 | v3.1: Restructured guide into linear deployment flow; moved troubleshooting and reference to end |
@@ -612,4 +703,4 @@ iOS App (parked v2.0 — see launch plan)  └── CloudWatch (alarms + dashbo
 
 ---
 
-*Matika Setup and Deployment Guide v3.3 — May 2026*
+*Matika Setup and Deployment Guide v3.4 — May 2026*
