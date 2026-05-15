@@ -4,6 +4,9 @@ plugins {
     id("com.google.dagger.hilt.android")
     id("org.jetbrains.kotlin.plugin.serialization")
     id("com.google.gms.google-services")
+    // Stream D #4 — Crashlytics gradle plugin uploads the mapping file on
+    // release builds so deobfuscated stack traces reach the console.
+    id("com.google.firebase.crashlytics")
     id("com.google.devtools.ksp")
 }
 
@@ -119,6 +122,10 @@ dependencies {
     // Firebase
     implementation(platform("com.google.firebase:firebase-bom:32.7.0"))
     implementation("com.google.firebase:firebase-messaging-ktx")
+    // Stream D #4 — Crashlytics. Release-only crash + ANR + non-fatal
+    // reporting; collection gated to !BuildConfig.DEBUG in
+    // CareLogApplication so dev iteration never floods the console.
+    implementation("com.google.firebase:firebase-crashlytics-ktx")
 
     // SpeziKt - Stanford Spezi Framework for Kotlin
     // FHIR support via HAPI FHIR (SpeziKt compatible)

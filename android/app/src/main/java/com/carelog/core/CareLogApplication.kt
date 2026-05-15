@@ -10,6 +10,7 @@ import com.amplifyframework.core.Amplify
 // import com.amplifyframework.storage.s3.AWSS3StoragePlugin
 import com.carelog.BuildConfig
 import com.carelog.discovery.HealthCheckService
+import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.carelog.discovery.MacMiniDiscovery
 import com.carelog.notifications.DeviceTokenManager
 import com.carelog.sync.SyncManager
@@ -51,6 +52,7 @@ class CareLogApplication : Application(), Configuration.Provider {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        initializeCrashlytics()
         initializeAmplify()
         syncManager.initialize()
         macMiniDiscovery.startDiscovery()
@@ -60,6 +62,24 @@ class CareLogApplication : Application(), Configuration.Provider {
         // it fires once per FCM enrollment (often pre-login), so the auth
         // header is missing and the call no-ops.
         deviceTokenManager.start()
+    }
+
+    /**
+     * Stream D #4 — Firebase Crashlytics. Release-only; debug builds opt
+     * out so dev iteration never floods the console with stack traces from
+     * `am force-stop` / device reboots / etc.
+     *
+     * PII discipline: do NOT call FirebaseCrashlytics.setUserId() with
+     * cognito_sub, FirebaseCrashlytics.setCustomKey() with patientId/email,
+     * or FirebaseCrashlytics.log() with conversation transcript / vital
+     * values. Default-config Crashlytics ships only stack traces + device
+     * metadata; PHI only leaks if a future caller adds setCustomKey/log
+     * with patient data. Audit any Crashlytics.* call before merging.
+     */
+    private fun initializeCrashlytics() {
+        FirebaseCrashlytics.getInstance().setCrashlyticsCollectionEnabled(
+            !BuildConfig.DEBUG,
+        )
     }
 
     private fun initializeAmplify() {
