@@ -40,6 +40,11 @@ fun SettingsScreen(
     onNavigateToCareTeam: () -> Unit,
     onNavigateToInviteAttendant: () -> Unit,
     onNavigateToInviteDoctor: () -> Unit,
+    // PT-V2-22 — patient-side read-only Care Team. Distinct callback from
+    // onNavigateToCareTeam (which targets the caregiver-side edit-heavy
+    // screen) so the patient route never accidentally lands on the
+    // invite/remove affordances.
+    onNavigateToPatientCareTeam: () -> Unit,
     onSignedOut: () -> Unit,
     viewModel: SettingsViewModel = hiltViewModel()
 ) {
@@ -153,6 +158,19 @@ fun SettingsScreen(
                         )
                     }
                 }
+            }
+
+            // PT-V2-22 — patient-side read-only Care Team entry. Distinct
+            // route + screen from the caregiver-side CARE_TEAM (which has
+            // FAB invite + remove affordances). Doctor section suppressed
+            // on the patient screen until Phase 2 (Stream D 2026-05-12).
+            if (user?.personaType == PersonaType.PATIENT) {
+                SettingsActionRow(
+                    icon = Icons.Default.Group,
+                    title = "View Care Team",
+                    subtitle = "See the people who help look after you",
+                    onClick = onNavigateToPatientCareTeam
+                )
             }
 
             // Attendant session section (shown when in attendant mode on a patient device)

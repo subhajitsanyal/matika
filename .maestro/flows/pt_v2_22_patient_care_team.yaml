@@ -1,0 +1,77 @@
+# PT-V2-22 — patient-side read-only Care Team view (Stream D 2026-05-12).
+#
+# Pre-condition: Jane (canonical dev test patient) has a persona_links
+# row connecting her patient_id to John CG with relationship='caregiver',
+# is_primary=true, is_active=true. Both users have pre-seeded consent_records
+# rows so SplashViewModel doesn't divert through ConsentScreen.
+#
+# This flow:
+#   1. Logs in as Jane.
+#   2. Lands on the patient home (patient_home_start_conversation visible).
+#   3. Opens Settings (TopAppBar gear; targeted by contentDescription).
+#   4. Taps "View Care Team" — the auto-generated testTag from
+#      SettingsActionRow is `settings_action_view_care_team`.
+#   5. Asserts patient_care_team_screen mounts.
+#   6. Asserts John CG's caregiver row is visible by his canonical
+#      users.id (a2b0af09-86a7-4156-8e24-7837c311f7de).
+#   7. Asserts the "Primary" badge renders (John CG has is_primary=true).
+#
+# Live evidence: in-place backend test already confirmed via direct
+# curl. This flow is the device-side proof.
+#
+# Run via the standard wrapper:
+#   scripts/maestro-run.sh pt_v2_22_patient_care_team
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible: { id: login_email }
+    timeout: 15000
+
+# ── Patient login ────────────────────────────────────────
+- tapOn: { id: login_email }
+- inputText: ${MATIKA_PATIENT_EMAIL}
+- tapOn: { id: login_password }
+- inputText: ${MATIKA_PATIENT_PASSWORD}
+- hideKeyboard
+- tapOn: { id: login_button }
+
+# Splash → patient home (consent already pre-seeded; no detour).
+- extendedWaitUntil:
+    visible: { id: patient_home_start_conversation }
+    timeout: 30000
+
+# ── Open Settings ────────────────────────────────────────
+# PatientHomeScreen TopAppBar settings IconButton uses contentDescription.
+# Per maestro_lessons.md #1 + #3 we target the icon via accessibility text.
+- tapOn:
+    text: "(?i).*Open settings.*"
+
+# Wait for an entry-row to confirm Settings has rendered. The CareLog
+# Device card is universal; it doesn't have a testTag, so use the
+# auto-generated SettingsActionRow tag for "View Care Team".
+- extendedWaitUntil:
+    visible: { id: settings_action_view_care_team }
+    timeout: 15000
+
+- tapOn: { id: settings_action_view_care_team }
+
+# ── Assert care team renders + John CG visible + Primary badge ─
+- extendedWaitUntil:
+    visible: { id: patient_care_team_screen }
+    timeout: 20000
+
+# John CG's users.id (jane_dev_test_account memory).
+- extendedWaitUntil:
+    visible: { id: patient_care_team_caregiver_a2b0af09-86a7-4156-8e24-7837c311f7de }
+    timeout: 10000
+
+- assertVisible: { id: patient_care_team_primary_badge_a2b0af09-86a7-4156-8e24-7837c311f7de }
+
+# Belt-and-braces: name + email render in the row text.
+- assertVisible:
+    text: "(?i).*John CG.*"
+- assertVisible:
+    text: "(?i).*sanyalsubhajit2010\\+cg@gmail.com.*"

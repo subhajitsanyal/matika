@@ -58,13 +58,29 @@ exports.handler = async (event) => {
   try {
     dbClient = await createDbConnection();
 
-    // Verify caller has access to this patient
+    // Verify caller has access to this patient. Two valid cases:
+    //   (a) caller is a caregiver/team-manager on this patient (existing
+    //       persona_links row with relationship in caregiver/attendant/relative/doctor
+    //       and is_active=true), OR
+    //   (b) caller IS the patient themselves (patients.user_id → users.cognito_sub).
+    //       PT-V2-22 — patients have read-only access to their own care team;
+    //       see Stream D decision 2026-05-12.
+    //
+    // Accept either the UUID `patients.id` or the short form `patients.patient_id`
+    // (e.g. CL-63NRGO). Patient apps know the short form via Cognito's
+    // custom:linked_patient_id attribute, not the UUID.
     const accessCheck = await dbClient.query(
       `SELECT p.id AS patient_db_id
        FROM patients p
-       JOIN persona_links pl ON pl.patient_id = p.id
-       JOIN users u ON pl.linked_user_id = u.id
-       WHERE p.id = $1::uuid AND u.cognito_sub = $2 AND pl.is_active = true`,
+       LEFT JOIN persona_links pl
+         ON pl.patient_id = p.id AND pl.is_active = true
+       LEFT JOIN users u_caller
+         ON u_caller.id = pl.linked_user_id
+       LEFT JOIN users u_patient
+         ON u_patient.id = p.user_id
+       WHERE (p.id::text = $1 OR p.patient_id = $1)
+         AND (u_caller.cognito_sub = $2 OR u_patient.cognito_sub = $2)
+       LIMIT 1`,
       [patientId, cognitoSub]
     );
 
@@ -97,10 +113,12 @@ exports.handler = async (event) => {
       return response(200, { message: "Invite revoked", inviteId });
     }
 
-    // Fetch all active team members
+    // Fetch all active team members. is_primary surfaced for PT-V2-22's
+    // patient-side read-only view (caregiver list shows a "Primary" badge).
     const teamResult = await dbClient.query(
       `SELECT u.id, u.name, u.email, u.phone_number AS phone,
-              pl.relationship AS role, pl.accepted_at AS joined_at
+              pl.relationship AS role, pl.accepted_at AS joined_at,
+              pl.is_primary AS is_primary
        FROM persona_links pl
        JOIN users u ON pl.linked_user_id = u.id
        WHERE pl.patient_id = $1 AND pl.is_active = true
@@ -120,6 +138,7 @@ exports.handler = async (event) => {
         phone: row.phone || "",
         role: row.role,
         joinedAt: row.joined_at ? row.joined_at.toISOString() : null,
+        isPrimary: !!row.is_primary,
       };
 
       switch (row.role) {

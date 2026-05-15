@@ -59,6 +59,7 @@ import com.carelog.ui.consent.ConsentScreen
 import com.carelog.ui.dashboard.DashboardScreen
 import com.carelog.ui.dashboard.VitalType
 import com.carelog.ui.history.HistoryScreen
+import com.carelog.ui.patient.PatientCareTeamScreen
 import com.carelog.ui.invite.InviteAttendantScreen
 import com.carelog.ui.invite.InviteDoctorScreen
 import com.carelog.ui.onboarding.PatientOnboardingScreen
@@ -138,6 +139,11 @@ object CareLogRoutes {
     const val NEW_PASSWORD = "new_password/{email}"
 
     fun newPassword(email: String) = "new_password/$email"
+
+    // PT-V2-22 — patient-side read-only Care Team view (Stream D 2026-05-12).
+    // Distinct from CARE_TEAM (the caregiver-side edit-heavy screen) so the
+    // patient screen never accidentally exposes invite/remove affordances.
+    const val PATIENT_CARE_TEAM = "patient_care_team"
 
     // LLM Chat placeholder
     const val CHAT = "chat"
@@ -484,6 +490,9 @@ fun CareLogNavHost() {
                 onNavigateToInviteDoctor = {
                     navController.navigate(CareLogRoutes.INVITE_DOCTOR)
                 },
+                onNavigateToPatientCareTeam = {
+                    navController.navigate(CareLogRoutes.PATIENT_CARE_TEAM)
+                },
                 onSignedOut = {
                     navController.navigate(CareLogRoutes.LOGIN) {
                         popUpTo(0) { inclusive = true }
@@ -751,6 +760,11 @@ fun CareLogNavHost() {
 
         composable(CareLogRoutes.CARE_TEAM) {
             CareTeamScreen(onNavigateBack = { navController.popBackStack() })
+        }
+
+        // PT-V2-22 — patient-side read-only Care Team view.
+        composable(CareLogRoutes.PATIENT_CARE_TEAM) {
+            PatientCareTeamScreen(onNavigateBack = { navController.popBackStack() })
         }
 
         composable(CareLogRoutes.THRESHOLDS) {

@@ -740,6 +740,7 @@ class RelativeApiService @Inject constructor(
         val attendants = mutableListOf<CareTeamMember>()
         val doctors = mutableListOf<CareTeamMember>()
         val relatives = mutableListOf<CareTeamMember>()
+        val caregivers = mutableListOf<CareTeamMember>()
         val pendingInvites = mutableListOf<PendingInvite>()
 
         json.optJSONArray("attendants")?.let { array ->
@@ -763,6 +764,13 @@ class RelativeApiService @Inject constructor(
             }
         }
 
+        json.optJSONArray("caregivers")?.let { array ->
+            (0 until array.length()).forEach { i ->
+                val obj = array.getJSONObject(i)
+                caregivers.add(parseCareTeamMember(obj))
+            }
+        }
+
         json.optJSONArray("pendingInvites")?.let { array ->
             (0 until array.length()).forEach { i ->
                 val obj = array.getJSONObject(i)
@@ -781,6 +789,7 @@ class RelativeApiService @Inject constructor(
             attendants = attendants,
             doctors = doctors,
             relatives = relatives,
+            caregivers = caregivers,
             pendingInvites = pendingInvites
         )
     }
@@ -794,7 +803,8 @@ class RelativeApiService @Inject constructor(
             role = json.getString("role"),
             joinedAt = json.optString("joinedAt")?.let {
                 if (it.isNotEmpty()) Instant.parse(it) else null
-            }
+            },
+            isPrimary = json.optBoolean("isPrimary", false)
         )
     }
 }
@@ -900,6 +910,11 @@ data class CareTeam(
     val attendants: List<CareTeamMember>,
     val doctors: List<CareTeamMember>,
     val relatives: List<CareTeamMember>,
+    // PT-V2-22 — lambda returns the merged caregivers bucket as `caregivers`
+    // (legacy attendants/relatives map to caregiver server-side per
+    // care-team/index.js getGroupName-equivalent). Patient-side view reads
+    // this; caregiver-side CareTeamScreen still uses the legacy buckets.
+    val caregivers: List<CareTeamMember>,
     val pendingInvites: List<PendingInvite>
 )
 
@@ -909,7 +924,11 @@ data class CareTeamMember(
     val email: String?,
     val phone: String?,
     val role: String,
-    val joinedAt: Instant?
+    val joinedAt: Instant?,
+    // PT-V2-22 — surfaces persona_links.is_primary for the patient-side
+    // "Primary" badge. Defaulted false so callers that don't care
+    // (caregiver-side) compile against the new shape unchanged.
+    val isPrimary: Boolean = false
 )
 
 data class PendingInvite(
