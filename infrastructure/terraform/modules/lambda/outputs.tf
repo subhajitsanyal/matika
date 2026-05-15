@@ -262,7 +262,21 @@ output "all_function_names" {
     aws_lambda_function.conversation_session_rollup.function_name,
     aws_lambda_function.alert_flow_rollup.function_name,
     aws_lambda_function.patient_engagement_rollup.function_name,
+    # Task #23 — SES bounce/complaint suppression handler. Appended
+    # at the end so alarm count-indexed mapping for the lambdas above
+    # remains stable (alarm[42]).
+    aws_lambda_function.ses_suppression_handler.function_name,
   ]
+}
+
+output "ses_configuration_set_name" {
+  description = "Name of the SES configuration set that fan-outs Bounce/Complaint events to the suppression handler. Wire into the cognito module's email_configuration so Cognito's transactional sends also flow through bounce handling."
+  value       = aws_sesv2_configuration_set.matika_default.configuration_set_name
+}
+
+output "ses_events_topic_arn" {
+  description = "ARN of the SNS topic the SES configuration set publishes Bounce + Complaint events to. Cite in the AWS Support SES production-access ticket."
+  value       = aws_sns_topic.ses_events.arn
 }
 
 # ============================================================

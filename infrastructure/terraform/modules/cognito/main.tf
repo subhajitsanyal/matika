@@ -55,6 +55,11 @@ resource "aws_cognito_user_pool" "main" {
     source_arn             = var.ses_email_arn != "" ? var.ses_email_arn : null
     from_email_address     = var.ses_from_email != "" ? var.ses_from_email : null
     reply_to_email_address = var.ses_from_email != "" ? regex("<([^>]+)>", var.ses_from_email)[0] : null
+    # Task #23 — when wired, Cognito's PostConfirmation / AdminCreateUser
+    # / FORCE_CHANGE_PASSWORD / password-reset emails route through this
+    # configuration set; bounce + complaint events fan out to the
+    # ses-suppression-handler. Empty = no config set attached.
+    configuration_set = var.ses_configuration_set_name != "" ? var.ses_configuration_set_name : null
   }
 
   # Lambda triggers — declared inline so this module owns the full

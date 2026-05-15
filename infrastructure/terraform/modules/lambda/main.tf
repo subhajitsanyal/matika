@@ -771,7 +771,8 @@ resource "aws_lambda_function" "create_patient_from_voice" {
 
   environment {
     variables = merge(local.rds_env, {
-      FROM_EMAIL = var.from_email
+      FROM_EMAIL              = var.from_email
+      SES_CONFIGURATION_SET   = aws_sesv2_configuration_set.matika_default.configuration_set_name
     })
   }
 }
@@ -853,7 +854,8 @@ resource "aws_lambda_function" "invite_attendant" {
 
   environment {
     variables = merge(local.rds_env, {
-      FROM_EMAIL = var.from_email
+      FROM_EMAIL              = var.from_email
+      SES_CONFIGURATION_SET   = aws_sesv2_configuration_set.matika_default.configuration_set_name
     })
   }
 }
@@ -875,7 +877,8 @@ resource "aws_lambda_function" "invite_doctor" {
 
   environment {
     variables = merge(local.rds_env, {
-      FROM_EMAIL = var.from_email
+      FROM_EMAIL              = var.from_email
+      SES_CONFIGURATION_SET   = aws_sesv2_configuration_set.matika_default.configuration_set_name
     })
   }
 }
@@ -1267,7 +1270,8 @@ resource "aws_lambda_function" "process_pending_invites" {
 
   environment {
     variables = merge(local.rds_env, {
-      FROM_EMAIL = var.from_email
+      FROM_EMAIL              = var.from_email
+      SES_CONFIGURATION_SET   = aws_sesv2_configuration_set.matika_default.configuration_set_name
     })
   }
 }

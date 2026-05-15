@@ -58,6 +58,10 @@ async function sendInviteEmail(email, attendantName, patientName, inviteLink) {
   // Note: inviteLink is now used as downloadLink for the process-pending path
   const params = {
     Source: process.env.FROM_EMAIL || "noreply@carelog.com",
+    // Route through the env's SES configuration set so Bounce + Complaint
+    // events fan out to the ses-suppression-handler. Absent env var =>
+    // direct send (legacy behavior, no event publishing).
+    ConfigurationSetName: process.env.SES_CONFIGURATION_SET || undefined,
     Destination: { ToAddresses: [email] },
     Message: {
       Subject: {

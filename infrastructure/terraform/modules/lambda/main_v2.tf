@@ -610,3 +610,129 @@ resource "aws_lambda_permission" "photo_presign_apigw" {
 
 # cost_telemetry_rollup: invoked by EventBridge — permission lives in
 # modules/eventbridge/cost_rollup.tf to keep EventBridge wiring colocated.
+
+# ============================================================
+# SES bounce/complaint handling (task #23, pre-beta).
+#
+# Required to honor the "we will wire bounce handling" commitment
+# in the deferred AWS Support SES production-access ticket draft.
+# AWS Support typically lifts the last reviewer objection when the
+# ticket can cite a live configuration-set ARN + lambda subscription
+# fan-out — both delivered by this block.
+#
+# Topology:
+#   SES SendEmail (with ConfigurationSetName) → SES config set →
+#   event destination → SNS topic → ses-suppression-handler →
+#   INSERT INTO email_suppression (V014).
+#
+# Both the four direct-SES lambdas (invite-attendant, invite-doctor,
+# process-pending-invites, create-patient-from-voice) and Cognito's
+# email_configuration (passed via outputs into modules/cognito) route
+# through the same configuration set, so every outbound email's
+# bounce/complaint events land in one place.
+# ============================================================
+
+resource "aws_sns_topic" "ses_events" {
+  name = "${local.v2_function_prefix}-ses-events"
+}
+
+# Allow SES service principal in this AWS account to publish bounce +
+# complaint notifications to the topic. Scoped by SourceAccount so a
+# different account's SES can't poison the queue.
+data "aws_caller_identity" "current" {}
+
+resource "aws_sns_topic_policy" "ses_events" {
+  arn = aws_sns_topic.ses_events.arn
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "AllowSESPublish"
+      Effect    = "Allow"
+      Principal = { Service = "ses.amazonaws.com" }
+      Action    = "sns:Publish"
+      Resource  = aws_sns_topic.ses_events.arn
+      Condition = {
+        StringEquals = {
+          "AWS:SourceAccount" = data.aws_caller_identity.current.account_id
+        }
+      }
+    }]
+  })
+}
+
+# SES v2 API resources. Provider v5+ dropped the v1
+# aws_ses_configuration_set_event_destination resource; v2 is the only
+# managed path. The underlying SES configuration set is the same SES
+# entity regardless of which API created it, so SendEmailCommand
+# (v1 SDK `@aws-sdk/client-ses`) sets ConfigurationSetName to the
+# v2-created name without issue.
+resource "aws_sesv2_configuration_set" "matika_default" {
+  configuration_set_name = "${local.v2_function_prefix}-default"
+}
+
+resource "aws_sesv2_configuration_set_event_destination" "bounce_complaint" {
+  configuration_set_name = aws_sesv2_configuration_set.matika_default.configuration_set_name
+  event_destination_name = "${local.v2_function_prefix}-bounce-complaint"
+
+  event_destination {
+    enabled              = true
+    # SES v2 uses uppercase event type names (the v1 API used lowercase).
+    matching_event_types = ["BOUNCE", "COMPLAINT"]
+
+    sns_destination {
+      topic_arn = aws_sns_topic.ses_events.arn
+    }
+  }
+}
+
+# ses-suppression-handler — consumes the SNS topic, upserts into
+# email_suppression. Reuses lambda_rds_cognito (VPC + Secrets Manager
+# + KMS decrypt cover all of its needs).
+data "archive_file" "ses_suppression_handler" {
+  type        = "zip"
+  source_dir  = "${var.lambdas_source_path}/ses-suppression-handler"
+  output_path = "${path.module}/archives/ses-suppression-handler.zip"
+}
+
+resource "aws_lambda_function" "ses_suppression_handler" {
+  function_name    = "${local.v2_function_prefix}-ses-suppression-handler"
+  role             = aws_iam_role.lambda_rds_cognito.arn
+  handler          = "index.handler"
+  runtime          = "nodejs20.x"
+  timeout          = 30
+  memory_size      = 256
+  filename         = data.archive_file.ses_suppression_handler.output_path
+  source_code_hash = data.archive_file.ses_suppression_handler.output_base64sha256
+
+  vpc_config {
+    subnet_ids         = var.private_subnet_ids
+    security_group_ids = [var.lambda_security_group_id]
+  }
+
+  environment {
+    variables = {
+      DB_SECRET_NAME = var.db_secret_name
+    }
+  }
+}
+
+resource "aws_cloudwatch_log_group" "ses_suppression_handler" {
+  name              = "/aws/lambda/${aws_lambda_function.ses_suppression_handler.function_name}"
+  retention_in_days = 365
+}
+
+resource "aws_lambda_permission" "allow_sns_invoke_ses_suppression" {
+  statement_id  = "AllowSNSInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.ses_suppression_handler.function_name
+  principal     = "sns.amazonaws.com"
+  source_arn    = aws_sns_topic.ses_events.arn
+}
+
+resource "aws_sns_topic_subscription" "ses_events_lambda" {
+  topic_arn = aws_sns_topic.ses_events.arn
+  protocol  = "lambda"
+  endpoint  = aws_lambda_function.ses_suppression_handler.arn
+
+  depends_on = [aws_lambda_permission.allow_sns_invoke_ses_suppression]
+}

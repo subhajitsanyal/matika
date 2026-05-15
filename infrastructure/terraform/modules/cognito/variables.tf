@@ -39,6 +39,12 @@ variable "ses_from_email" {
   default     = ""
 }
 
+variable "ses_configuration_set_name" {
+  description = "Name of the SES configuration set Cognito's transactional sends should route through. Empty = no configuration set attached (bounce/complaint events for Cognito-originated mail will NOT fan out to the suppression handler). Task #23."
+  type        = string
+  default     = ""
+}
+
 variable "domain_name" {
   description = "Base domain name for email templates and links"
   type        = string

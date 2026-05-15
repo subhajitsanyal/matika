@@ -1,0 +1,17 @@
+{
+  "name": "matika-ses-suppression-handler",
+  "version": "1.0.0",
+  "description": "Consumes SNS notifications from the SES configuration set's Bounce + Complaint event destination; upserts affected addresses into email_suppression (V014). Task #23 — bounce/complaint wiring; precursor to the AWS Support SES production-access ticket submission.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"no tests yet\" && exit 0",
+    "package": "zip -r function.zip index.js node_modules package.json"
+  },
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.978.0",
+    "pg": "^8.11.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

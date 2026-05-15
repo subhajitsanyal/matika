@@ -339,6 +339,10 @@ async function sendWelcomeEmail({ loginEmail, patientName, tempPassword, caregiv
   await sesClient.send(
     new SendEmailCommand({
       Source: fromEmail,
+      // Route through the env's SES configuration set so Bounce +
+      // Complaint events fan out to the ses-suppression-handler.
+      // Absent env var => direct send (legacy behavior).
+      ConfigurationSetName: process.env.SES_CONFIGURATION_SET || undefined,
       Destination: { ToAddresses: [loginEmail] },
       Message: {
         Subject: { Data: 'Welcome to CareLog — Your Login Credentials', Charset: 'UTF-8' },

@@ -86,6 +86,16 @@ module "cognito" {
   web_logout_urls         = var.environment == "prod" ? ["https://portal.${var.domain_name}/logout"] : ["https://portal.${var.environment}.${var.domain_name}/logout"]
   ses_email_arn           = var.ses_email_arn
   ses_from_email          = var.ses_from_email
+  # Task #23 — wire Cognito's transactional sends through the same SES
+  # configuration set that the lambda module declares
+  # (`aws_ses_configuration_set.matika_default`). Use the name string
+  # directly rather than a cross-module reference so we don't form a
+  # cycle with the existing lambda → cognito.user_pool_arn dependency.
+  # The configuration set is created by the lambda module on first apply;
+  # Cognito's email_configuration tolerates a not-yet-existent set name
+  # until the first email send (same pattern Cognito uses for not-yet-
+  # existent lambda trigger ARNs — see comment below).
+  ses_configuration_set_name = "matika-${var.environment}-default"
   domain_name             = var.domain_name
   post_confirmation_arn   = local.post_confirmation_lambda_arn
   post_authentication_arn = local.post_authentication_lambda_arn
