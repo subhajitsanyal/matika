@@ -29,9 +29,32 @@ import com.carelog.ui.theme.CareLogColors
 @Composable
 fun BloodPressureScreen(
     onNavigateBack: () -> Unit,
+    /**
+     * PR-3 nav-result bridge: invoked with a human-readable summary
+     * ("BP 128/82 mmHg") when the save succeeds. NavHost wires this to
+     * write `vital_saved=<label>` on the parent's SavedStateHandle and
+     * then popBackStack, so the patient home Scaffold can render a
+     * Snackbar. Defaults to [onNavigateBack] so callers that don't care
+     * (e.g. legacy patient_dashboard route, attendant) get the prior
+     * behaviour of just popping back on save.
+     */
+    onSaved: (label: String) -> Unit = { onNavigateBack() },
     viewModel: BloodPressureViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+
+    // PR-3 — replace the in-screen SaveAcknowledgement overlay with a
+    // result-bridge: when the save succeeds, hand the parent screen a
+    // formatted label so it can render a Snackbar (see PatientHomeScreen).
+    // Guard with a one-shot LaunchedEffect on `saved=true` so a rotation
+    // doesn't re-fire popBackStack.
+    LaunchedEffect(uiState.saved) {
+        if (uiState.saved) {
+            val systolic = uiState.systolic
+            val diastolic = uiState.diastolic
+            onSaved("BP $systolic/$diastolic mmHg")
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -146,12 +169,10 @@ fun BloodPressureScreen(
         )
     }
 
-    // Success acknowledgement overlay
-    SaveAcknowledgement(
-        visible = uiState.saved,
-        vitalName = "Blood Pressure",
-        onDismiss = onNavigateBack
-    )
+    // PR-3 — SaveAcknowledgement overlay removed: success now propagates
+    // to the parent via [onSaved] so the patient home Scaffold can show
+    // a Snackbar with the saved vital. See LaunchedEffect(uiState.saved)
+    // near the top of this function.
 }
 
 /**

@@ -98,6 +98,17 @@ class CaregiverDashboardViewModel @Inject constructor(
     }
 
     /**
+     * Silent refresh — re-fetches patients + alerts without flipping the
+     * pull-to-refresh spinner. Called from [CaregiverHomeScreen] when a
+     * child screen (Add-Patient form OR voice onboarding) signals via
+     * the `patient_added` SavedStateHandle key that the patient list
+     * went stale.
+     */
+    fun refresh() {
+        loadData()
+    }
+
+    /**
      * Pull-to-refresh handler.
      */
     fun onRefresh() {

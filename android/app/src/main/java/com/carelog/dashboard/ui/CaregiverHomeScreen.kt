@@ -71,8 +71,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.navigation.NavController
 import com.carelog.dashboard.CaregiverDashboardViewModel
 import com.carelog.network.PatientListItem
+import com.carelog.ui.NavResults
 
 /**
  * Caregiver home screen with model status banner, patient cards,
@@ -99,6 +101,14 @@ fun CaregiverHomeScreen(
     onNavigateToSettings: () -> Unit = {},
     onNavigateToThresholds: () -> Unit = {},
     onNavigateToTrends: () -> Unit = {},
+    /**
+     * PR-3 nav-result bridge: when a child screen (Add-Patient form OR
+     * voice onboarding) finishes successfully, it writes
+     * `patient_added=true` to this screen's SavedStateHandle so the
+     * dashboard auto-refreshes. Optional so older test harnesses that
+     * construct the screen directly without a NavHost still compile.
+     */
+    navController: NavController? = null,
     modifier: Modifier = Modifier,
     viewModel: CaregiverDashboardViewModel = hiltViewModel()
 ) {
@@ -110,6 +120,23 @@ fun CaregiverHomeScreen(
         uiState.errorMessage?.let { message ->
             snackbarHostState.showSnackbar(message)
             viewModel.dismissError()
+        }
+    }
+
+    // PR-3 — patient_added nav-result bridge. When the Add-Patient form
+    // or the F23 voice onboarding completes, the child writes `true` to
+    // this screen's SavedStateHandle just before popping. Refresh the
+    // patient list and clear the flag so a rotation/recompose doesn't
+    // re-trigger the refetch on the same value.
+    val currentEntry = navController?.currentBackStackEntry
+    val savedStateHandle = currentEntry?.savedStateHandle
+    val patientAdded by (savedStateHandle?.getStateFlow(NavResults.PATIENT_ADDED, false)
+        ?: remember { kotlinx.coroutines.flow.MutableStateFlow(false) })
+        .collectAsState()
+    LaunchedEffect(patientAdded) {
+        if (patientAdded) {
+            viewModel.refresh()
+            savedStateHandle?.set(NavResults.PATIENT_ADDED, false)
         }
     }
 
