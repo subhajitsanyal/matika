@@ -266,7 +266,7 @@ Backend persistence (e.g., a new `interaction_sessions.stt_offline_used` column)
 
 Staging bench against `https://3mni7nx5bf.execute-api.ap-south-1.amazonaws.com/staging` (API GW), `i-0f2acdf1a96ee24a6` (bastion), `carelog-staging` (RDS). Account: caregiver `sanyalsubhajit2010+cg@gmail.com` (John CG); test patient created `Asha Devi` / `sanyalsubhajit2010+staging-pt@gmail.com` (CL-TPUX54). Caregiver bench covered F23 voice + form fallback + dashboard; patient bench covered login + voice BP + manual BP + settings + care-team. Welcome-email end-to-end **PASS** (the FROM_EMAIL + SES_CONFIGURATION_SET fix in commit `99eb49a` is verified — CloudWatch logged the send and the user confirmed receipt in inbox; no bounce/complaint events fired).
 
-### F30 — `bedrock-router` 503s on null `ageConfidence` schema validation (NEW — staging bench 2026-05-15)
+### F30 — `bedrock-router` 503s on null `ageConfidence` schema validation (RESOLVED — verified live 2026-05-16)
 
 **Severity:** **High — blocks F23 voice patient onboarding entirely on the caregiver side.** Turn 2 of the voice onboarding flow ("the patient's name is Asha Devi") returned 503 from the router. CloudWatch shows the LLM emitted a structurally-correct response but with `"ageConfidence": null` (age was not yet known at that turn). The JSON-schema validator rejected null on this field (`Schema validation failed: data/patientProfile/ageConfidence must be number`) and the handler bailed after one retry. The conversation is stuck — the client silently sits on the last "you said" card with no error feedback (see F31).
 
@@ -278,7 +278,7 @@ Staging bench against `https://3mni7nx5bf.execute-api.ap-south-1.amazonaws.com/s
 1. Relax the zod/JSON schema for `patientProfile.ageConfidence` to accept `number | null` (preferred — `null` is the semantically correct value when `ageYears` is `null`).
 2. Strengthen the LLM system prompt to force `ageConfidence: 0` when age is unknown (less clean — couples confidence to extraction state).
 
-### F31 — F23 voice screen has no client-side error UI when router returns 503 (NEW — staging bench 2026-05-15)
+### F31 — F23 voice screen has no client-side error UI when router returns 503 (RESOLVED — verified 2026-05-16; wiring already in place, F30 fix unblocks visible symptom)
 
 **Severity:** **Medium — bad UX, hides backend failures.** When `bedrock-router` returns 503 (as in F30), the F23 voice screen renders the last "you said" card and nothing else — no toast, no error banner, no retry hint, no state badge change. The mic icon stays available but the conversation is broken. Users will think the app froze.
 
@@ -286,43 +286,43 @@ Staging bench against `https://3mni7nx5bf.execute-api.ap-south-1.amazonaws.com/s
 
 **Fix:** Surface a retry-able error toast and revert state to AWAITING_USER on non-2xx response from `/conversation/turn`. Should also reset the turn counter or mark it as failed.
 
-### F32 — F23 voice screen state badge shows `UNKNOWN` after assistant response (NEW — staging bench 2026-05-15)
+### F32 — F23 voice screen state badge shows `UNKNOWN` after assistant response (RESOLVED — verified live 2026-05-16; badge now shows `EXTRACTING_PROFILE`)
 
 **Severity:** **Low — cosmetic but misleading during debug.** On the caregiver-side F23 voice flow, the state badge in the top-left starts at `CREATED` (turn 0), correctly advances to a thinking indicator on the user turn, but renders as `UNKNOWN` once the assistant response is displayed (instead of a meaningful state like `AWAITING_USER` or `EXTRACTING_PROFILE`). Patient-side voice screen does NOT have this issue (it correctly showed `PENDING_CONFIRMATION` during the BP flow). The bug is therefore specific to the caregiver onboarding state-machine mapping.
 
 **Owner:** `android` (`MatikaConversationViewModel` state-name mapping).
 
-### F33 — Caregiver dashboard does not auto-refresh after Add Patient returns (NEW — staging bench 2026-05-15)
+### F33 — Caregiver dashboard does not auto-refresh after Add Patient returns (RESOLVED — verified live 2026-05-16; "Priya Nair" appeared without pull-to-refresh)
 
 **Severity:** **Medium — confusing UX.** After completing the form-based Add Patient flow and being returned to the caregiver home, the newly-created patient does not appear in "Your Patients" until the user performs a manual pull-to-refresh gesture. The lambda log confirmed the patient was created and linked, but the dashboard's GET /patients call is cached.
 
 **Owner:** `android` (caregiver home `ViewModel` — trigger refetch on screen resume after Add Patient route navigates back).
 
-### F34 — Patient welcome shows "Photo reading unavailable" + "Voice playback unavailable — text responses only" (NEW — staging bench 2026-05-15)
+### F34 — Patient welcome shows "Photo reading unavailable" + "Voice playback unavailable — text responses only" (RESOLVED — verified live 2026-05-16; banners gone, HealthCheckService + ModelStatusBanner ripped)
 
 **Severity:** **Medium — investigate cause; cosmetic-or-real TBD.** Fresh patient login displays two banners: "Photo reading unavailable" and "Voice playback unavailable — text responses only". The voice flow actually works end-to-end (STT captured BP correctly, LLM extracted values, session marked complete), so the "Voice playback unavailable" banner is at minimum misleading. The "Photo reading unavailable" likely points to the Bedrock vision lambda not being reachable from the freshly-onboarded account, but voice already works — needs investigation. Pure cosmetic if the device-feature-check is stale; real if the photo path is broken.
 
 **Owner:** `android` (capability-detection on first-launch / patient home).
 
-### F35 — Manual BP entry saves silently with no confirmation toast (NEW — staging bench 2026-05-15)
+### F35 — Manual BP entry saves silently with no confirmation toast (RESOLVED — verified live 2026-05-16; "Saved BP 135/88 mmHg" Snackbar on patient home)
 
 **Severity:** **Low — minor UX.** Tapping Save on the manual BP entry screen returns to home with no toast, dialog, or success indicator. Users may double-tap to verify and end up with duplicate readings.
 
 **Owner:** `android` (BP / manual-vital entry screens — add success Snackbar).
 
-### F36 — `CreateResourceCommand is not a constructor` in create-patient HealthLake path (KNOWN — re-confirmed staging 2026-05-15)
+### F36 — `CreateResourceCommand is not a constructor` in create-patient HealthLake path (RESOLVED — verified live 2026-05-16; HealthLake call ripped, log shows only "Welcome email sent" + "Patient created: CL-R18V51")
 
 **Severity:** **Low — non-fatal, patient creation succeeds.** Already noted in launch-execution-4 summary; re-observed on staging at `2026-05-16T04:44:01.220Z` in `/aws/lambda/carelog-staging-create-patient`. The HealthLake SDK import is broken (likely an aws-sdk v3 path mismatch). Patient is still created in RDS and welcome email is still sent — this fires inside a try/catch and falls through. Out-of-scope for v2 (HealthLake integration is deferred per CLAUDE.md), but should be removed or wrapped in a feature flag so the ERROR line stops scaring future ops.
 
 **Owner:** `backend` (`backend/lambdas/create-patient/index.js:239`).
 
-### F37 — App title "Matika — v2 (dev)" on staging build (NEW — staging bench 2026-05-15)
+### F37 — App title "Matika — v2 (dev)" on staging build (RESOLVED — verified live 2026-05-16; title is just "Matika")
 
 **Severity:** **Low — cosmetic.** Top-of-screen app title reads "Matika — v2 (dev)" even on the staging-pointed APK. Probably driven by BuildConfig or a string resource that's hardcoded to "(dev)" regardless of which `app/src/main/res/raw/amplifyconfiguration.json` the build picked up. Audit per `release_buildconfig_lesson.md` memory.
 
 **Owner:** `android` (BuildConfig string / app-name resource per env).
 
-### F38 — Patient settings show "CareLog Device — Connected: http://127.0.0.1:8000" (v1 leftover) (NEW — staging bench 2026-05-15)
+### F38 — Patient settings show "CareLog Device — Connected: http://127.0.0.1:8000" (v1 leftover) (RESOLVED — verified live 2026-05-16; section deleted from both personas)
 
 **Severity:** **Low — cosmetic, v1→v2 cleanup.** Patient Settings screen still shows the "CareLog Device" section with the v1 localhost URL. In v2 the Mac-mini device is out of scope (Bedrock-only). Either delete the section from the patient (and caregiver) settings or gate it behind a "v1 compat" flag.
 
