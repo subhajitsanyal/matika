@@ -3,17 +3,13 @@ package com.carelog.dashboard
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.carelog.discovery.HealthCheckService
-import com.carelog.discovery.ModelHealthStatus
 import com.carelog.network.AlertItem
 import com.carelog.network.CloudApiService
 import com.carelog.network.PatientListItem
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -39,7 +35,6 @@ data class CaregiverDashboardUiState(
 @HiltViewModel
 class CaregiverDashboardViewModel @Inject constructor(
     private val cloudApiService: CloudApiService,
-    private val healthCheckService: HealthCheckService
 ) : ViewModel() {
 
     companion object {
@@ -48,9 +43,6 @@ class CaregiverDashboardViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow(CaregiverDashboardUiState())
     val uiState: StateFlow<CaregiverDashboardUiState> = _uiState.asStateFlow()
-
-    val healthStatus: StateFlow<ModelHealthStatus> = healthCheckService.healthStatus
-        .stateIn(viewModelScope, SharingStarted.Eagerly, ModelHealthStatus.OFFLINE)
 
     init {
         loadData()

@@ -155,7 +155,7 @@ fun MatikaConversationScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Matika — v2 (dev)") },
+                title = { Text("Matika") },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")

@@ -1,7 +1,5 @@
 package com.carelog.conversation.session
 
-import com.carelog.discovery.ModelHealthStatus
-
 /**
  * UI state for the conversation screen.
  *
@@ -20,7 +18,6 @@ data class ConversationUiState(
     val isRecording: Boolean = false,
     val isProcessing: Boolean = false,
     val isPlayingAudio: Boolean = false,
-    val modelStatus: ModelHealthStatus = ModelHealthStatus.OFFLINE,
     val errorMessage: String? = null,
     val retryCount: Int = 0,
     val showTextInput: Boolean = false,

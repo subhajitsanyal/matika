@@ -314,9 +314,9 @@ data class PhotoTelemetry(
 // ── /health ────────────────────────────────────────────────────
 //
 // `Matika`-prefixed to avoid colliding with the v1 `HealthResponse` in
-// `MacMiniApiService.kt`, which the v1 `HealthCheckService` still uses.
-// The v1 type can be deleted alongside the rest of the Mac Mini surface
-// in Phase E.
+// `MacMiniApiService.kt`. The remaining v1 surface (Mac Mini Retrofit
+// + the v1 `ConversationViewModel`) is gated behind a feature flag and
+// will be deleted alongside the rest of the Mac Mini path.
 
 data class MatikaHealthResponse(
     val status: String,

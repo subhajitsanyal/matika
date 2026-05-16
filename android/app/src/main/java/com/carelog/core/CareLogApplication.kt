@@ -9,9 +9,7 @@ import com.amplifyframework.auth.cognito.AWSCognitoAuthPlugin
 import com.amplifyframework.core.Amplify
 // import com.amplifyframework.storage.s3.AWSS3StoragePlugin
 import com.carelog.BuildConfig
-import com.carelog.discovery.HealthCheckService
 import com.google.firebase.crashlytics.FirebaseCrashlytics
-import com.carelog.discovery.MacMiniDiscovery
 import com.carelog.notifications.DeviceTokenManager
 import com.carelog.sync.SyncManager
 import dagger.hilt.android.HiltAndroidApp
@@ -35,12 +33,6 @@ class CareLogApplication : Application(), Configuration.Provider {
     lateinit var syncManager: SyncManager
 
     @Inject
-    lateinit var macMiniDiscovery: MacMiniDiscovery
-
-    @Inject
-    lateinit var healthCheckService: HealthCheckService
-
-    @Inject
     lateinit var deviceTokenManager: DeviceTokenManager
 
     override val workManagerConfiguration: Configuration
@@ -55,8 +47,6 @@ class CareLogApplication : Application(), Configuration.Provider {
         initializeCrashlytics()
         initializeAmplify()
         syncManager.initialize()
-        macMiniDiscovery.startDiscovery()
-        healthCheckService.startPolling()
         // F17 — observe auth state and register FCM token on every sign-in.
         // FirebaseMessagingService.onNewToken alone is insufficient because
         // it fires once per FCM enrollment (often pre-login), so the auth

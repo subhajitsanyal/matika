@@ -16,7 +16,6 @@ import com.carelog.conversation.session.VisionReading
 import com.carelog.conversation.session.VisionResult
 import com.carelog.core.config.AppSettings
 import com.carelog.core.config.AudioMode
-import com.carelog.discovery.HealthCheckService
 import com.carelog.network.MacMiniVisionApi
 import com.carelog.network.VisionExtractResponse
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -42,7 +41,6 @@ class ConversationViewModel @Inject constructor(
     private val audioCaptureManager: AudioCaptureManager,
     private val audioPlayerManager: AudioPlayerManager,
     private val audioStreamManager: AudioStreamManager,
-    private val healthCheckService: HealthCheckService,
     private val visionApi: MacMiniVisionApi,
     private val appSettings: AppSettings,
     savedStateHandle: SavedStateHandle
@@ -65,17 +63,7 @@ class ConversationViewModel @Inject constructor(
     /** Audio playback state for UI indicators. */
     val isPlaying: StateFlow<Boolean> = audioPlayerManager.isPlaying
 
-    /** Live health status from HealthCheckService. */
-    val liveHealthStatus = healthCheckService.healthStatus
-
     init {
-        // Observe health status changes
-        viewModelScope.launch {
-            healthCheckService.healthStatus.collect { status ->
-                // Health status is part of the UI state managed by SessionManager
-            }
-        }
-
         // Observe VAD events for batch mode auto-send
         viewModelScope.launch {
             audioCaptureManager.vad.events.collect { event ->
