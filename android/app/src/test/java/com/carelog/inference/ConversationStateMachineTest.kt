@@ -34,6 +34,30 @@ class ConversationStateMachineTest {
         )
     }
 
+    // F32 regression — the three caregiver_onboarding sub-states must
+    // resolve to typed enum entries, not UNKNOWN, so the FSM badge in
+    // MatikaConversationScreen renders the actual state name.
+    @Test
+    fun `fromServer maps F23 caregiver_onboarding profile states`() {
+        assertEquals(
+            ConversationFsmState.EXTRACTING_PROFILE,
+            ConversationFsmState.fromServer("EXTRACTING_PROFILE"),
+        )
+        assertEquals(
+            ConversationFsmState.AWAITING_PROFILE_CONFIRMATION,
+            ConversationFsmState.fromServer("AWAITING_PROFILE_CONFIRMATION"),
+        )
+        assertEquals(
+            ConversationFsmState.PROFILE_CONFIRMED,
+            ConversationFsmState.fromServer("PROFILE_CONFIRMED"),
+        )
+        // And lowercase, since fromServer is case-insensitive.
+        assertEquals(
+            ConversationFsmState.EXTRACTING_PROFILE,
+            ConversationFsmState.fromServer("extracting_profile"),
+        )
+    }
+
     // ── lifecycle: start → beginTurn → applyTurnResponse ───────
 
     @Test

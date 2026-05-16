@@ -103,9 +103,9 @@
       "required": ["name"],
       "properties": {
         "name": { "type": "string" },
-        "nameConfidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "nameConfidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
         "ageYears": { "type": ["number", "null"] },
-        "ageConfidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "ageConfidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
         "dateOfBirth": { "type": ["string", "null"], "description": "ISO YYYY-MM-DD" },
         "gender": { "type": ["string", "null"], "enum": ["male", "female", "other", null] },
         "conditions": { "type": "array", "items": { "type": "string" } },

@@ -160,6 +160,63 @@ describe('parseStructuredOutput', () => {
     expect(result.stateTransition).toBe('PENDING_CONFIRMATION -> PENDING_CONFIRMATION');
   });
 
+  // F30 regression — the caregiver_onboarding flow legitimately emits
+  // null for *Confidence fields when the corresponding value is absent
+  // (e.g. age unknown → ageConfidence is undefined, encoded as null).
+  // Before this fix the AJV validator rejected null and crashed the
+  // entire turn-2 path with schema_validation, surfacing as a 503.
+  it('parses a caregiver_onboarding profile turn with null age / age-confidence', () => {
+    const block = `<output>
+{
+  "responseText": "Got it, what is your mother's name?",
+  "ttsHints": { "language": "en-IN", "spellOutNumbers": false },
+  "extractedValues": [],
+  "actions": [],
+  "stateTransition": "EXTRACTING_PROFILE -> EXTRACTING_PROFILE",
+  "escalationReason": null,
+  "patientProfile": {
+    "name": "",
+    "nameConfidence": null,
+    "ageYears": null,
+    "ageConfidence": null,
+    "dateOfBirth": null,
+    "gender": null
+  }
+}
+</output>`;
+    const result = parseStructuredOutput(block);
+    expect(result.patientProfile).toBeDefined();
+    expect(result.patientProfile?.name).toBe('');
+    expect(result.patientProfile?.nameConfidence).toBeNull();
+    expect(result.patientProfile?.ageYears).toBeNull();
+    expect(result.patientProfile?.ageConfidence).toBeNull();
+    expect(result.stateTransition).toBe('EXTRACTING_PROFILE -> EXTRACTING_PROFILE');
+  });
+
+  it('parses a profile turn with concrete numeric confidences', () => {
+    const block = `<output>
+{
+  "responseText": "Thank you. I have Asha, age seventy two. Is that right?",
+  "ttsHints": { "language": "en-IN", "spellOutNumbers": false },
+  "extractedValues": [],
+  "actions": [],
+  "stateTransition": "EXTRACTING_PROFILE -> AWAITING_PROFILE_CONFIRMATION",
+  "escalationReason": null,
+  "patientProfile": {
+    "name": "Asha",
+    "nameConfidence": 0.97,
+    "ageYears": 72,
+    "ageConfidence": 0.88,
+    "gender": "female"
+  }
+}
+</output>`;
+    const result = parseStructuredOutput(block);
+    expect(result.patientProfile?.nameConfidence).toBe(0.97);
+    expect(result.patientProfile?.ageConfidence).toBe(0.88);
+    expect(result.stateTransition).toBe('EXTRACTING_PROFILE -> AWAITING_PROFILE_CONFIRMATION');
+  });
+
   it('parses a session-completion turn with complete_session action', () => {
     const block = `<output>
 {
