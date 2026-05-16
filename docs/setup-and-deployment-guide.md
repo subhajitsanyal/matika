@@ -655,10 +655,11 @@ terraform apply staging.tfplan
 
 ```bash
 BASTION_ID=$(terraform output -raw bastion_instance_id)
-RDS_HOST=$(aws ssm get-parameters \
-  --names "/carelog/staging/rds_endpoint" \
-  --region ap-south-1 \
-  --query 'Parameters[0].Value' --output text)
+# No SSM parameter for the RDS endpoint; pull it from the RDS API
+# directly. Filter on the DBInstanceIdentifier `carelog-staging`.
+RDS_HOST=$(aws rds describe-db-instances --region ap-south-1 \
+  --db-instance-identifier carelog-staging \
+  --query 'DBInstances[0].Endpoint.Address' --output text)
 
 aws ssm start-session --target "$BASTION_ID" \
   --document-name AWS-StartPortForwardingSessionToRemoteHost \
@@ -670,11 +671,33 @@ export PGPASSWORD=$(aws secretsmanager get-secret-value \
   --secret-id carelog-staging-db-password --region ap-south-1 \
   --query SecretString --output text \
   | python3 -c "import json,sys; print(json.load(sys.stdin)['password'])")
-cd backend/database
-flyway -url="jdbc:postgresql://127.0.0.1:55433/carelog_staging" \
-       -user=carelog_staging_admin -password="$PGPASSWORD" migrate
+# Greenfield migration via psql (mirrors dev's pattern — flyway baseline
+# is fine if installed, but the script-of-record we now use is plain
+# psql since flyway isn't on every developer's path).
+cd backend/database/migrations
+for f in $(ls V*.sql | sort -V); do
+  /opt/homebrew/opt/libpq/bin/psql -h 127.0.0.1 -p 55433 \
+    -U carelog_staging_admin -d carelog_staging -v ON_ERROR_STOP=1 -f "$f"
+done
+
+# Manually create + populate flyway_schema_history so a future flyway
+# baseline doesn't try to re-apply V001..V014. Same pattern as dev's
+# V010..V013 manual-A5 reconciliation.
+/opt/homebrew/opt/libpq/bin/psql -h 127.0.0.1 -p 55433 \
+  -U carelog_staging_admin -d carelog_staging \
+  -f /Users/subhajitsanyal/Work/Projects/Matika/appdevel/matika/backend/database/flyway_history_bootstrap.sql
+
 unset PGPASSWORD
 ```
+
+**Stream H stand-up observations (first-apply, 2026-05-15):**
+- Apply landed clean: **411 to add, 0 to change, 0 to destroy** → `Apply complete! Resources: 411 added`. Final `terraform plan` returns "No changes." Drift-clean on first try.
+- Bastion EC2 instance ID: `i-0f2acdf1a96ee24a6`. Distinct from dev's `i-017956fca070240a7`. Capture for the runbook.
+- RDS endpoint: `carelog-staging.c30qocsuk0zl.ap-south-1.rds.amazonaws.com:5432`.
+- API Gateway invoke URL: `https://3mni7nx5bf.execute-api.ap-south-1.amazonaws.com/staging`. Health endpoint live: `GET /health` → 200 with `{status: "healthy", checks: {rds: up, bedrock: up, s3: up}}` (cold start ~3.3s on first invoke).
+- Cognito SES eventual-consistency race that bit the dev task #23 apply did NOT recur — fresh greenfield orders SES configuration set creation strictly before Cognito user pool create, so by the time Cognito validates the `configuration_set` field the SES set has propagated. Race only fires on UPDATE of an existing user pool when the config set is created in the same apply.
+- Monitoring module skipped this apply (`alert_email = ""` in `terraform.tfvars`). Set the value and re-apply to land the 8 CloudWatch alarms + dashboard + SNS ops topic. Do this before opening the soak window.
+- Tunnel port: `55433` (dev uses `55432`). Keep both open simultaneously for parallel work.
 
 **Post-apply Maestro smoke:** point `API_BASE_URL` at the staging API GW
 invoke URL via `scripts/update-app-config.sh staging`, install the
