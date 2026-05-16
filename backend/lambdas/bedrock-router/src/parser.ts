@@ -64,9 +64,14 @@ export interface TtsHints {
 // on them at the API layer. See spec §6.9.
 export interface PatientProfile {
   name: string;
-  nameConfidence?: number;
+  // Confidence fields permit null because the LLM legitimately emits null
+  // when the corresponding value (name, age) is absent or only partially
+  // captured — confidence is undefined without a value. The schema mirrors
+  // this via { "type": ["number", "null"] }; older builds rejected the
+  // null and crashed the caregiver_onboarding flow at turn 2 (F30).
+  nameConfidence?: number | null;
   ageYears?: number | null;
-  ageConfidence?: number;
+  ageConfidence?: number | null;
   dateOfBirth?: string | null;
   gender?: 'male' | 'female' | 'other' | null;
   conditions?: string[];

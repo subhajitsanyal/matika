@@ -30,6 +30,17 @@ enum class ConversationFsmState {
     PAUSED,
     SUSPENDED,
 
+    // ── F23 caregiver_onboarding profile-extraction sub-states ─
+    // Emitted by the server on caregiver_onboarding sessions while
+    // the LLM is capturing / confirming the patient profile (name,
+    // age, gender, conditions, …). See backend `output_schema.json`
+    // stateTransition pattern. Without these here, the F23 state
+    // badge in MatikaConversationScreen rendered the literal
+    // "UNKNOWN" for every caregiver turn.
+    EXTRACTING_PROFILE,
+    AWAITING_PROFILE_CONFIRMATION,
+    PROFILE_CONFIRMED,
+
     /** Server returned an FSM state we don't recognise. UI should fall back gracefully. */
     UNKNOWN;
 
