@@ -339,6 +339,16 @@ fun CareLogNavHost() {
             PatientOnboardingScreen(
                 onNavigateBack = { navController.popBackStack() },
                 onPatientCreated = { patientId, cognitoSub ->
+                    // PR-3 — flag the caregiver dashboard for refresh.
+                    // The dashboard observes `patient_added` on its own
+                    // SavedStateHandle. Set the flag here, BEFORE we
+                    // navigate onward, so either downstream branch
+                    // (matikaProtocolConfig or SPLASH-then-dashboard)
+                    // ends up surfacing the new patient.
+                    NavResults.setPatientAdded(
+                        navController,
+                        CareLogRoutes.CAREGIVER_DASHBOARD,
+                    )
                     // Phase C: form-based onboarding flow. After
                     // patient creation, route into the v2 caregiver
                     // protocol-config conversation when the flag is on
@@ -399,7 +409,21 @@ fun CareLogNavHost() {
 
         // ── Vital Logging Screens ───────────────────────────────
         composable(CareLogRoutes.BLOOD_PRESSURE) {
-            BloodPressureScreen(onNavigateBack = { navController.popBackStack() })
+            BloodPressureScreen(
+                onNavigateBack = { navController.popBackStack() },
+                // PR-3 — write `vital_saved=<label>` to the patient
+                // home's SavedStateHandle, then pop. PatientHomeScreen
+                // surfaces it as a Snackbar. Pulse/SpO2/Sugar/
+                // Temperature/Weight follow-up — see commit message.
+                onSaved = { label ->
+                    NavResults.setVitalSaved(
+                        navController,
+                        CareLogRoutes.PATIENT_HOME,
+                        label,
+                    )
+                    navController.popBackStack()
+                },
+            )
         }
         composable(CareLogRoutes.GLUCOSE) {
             GlucoseScreen(onNavigateBack = { navController.popBackStack() })
@@ -550,6 +574,10 @@ fun CareLogNavHost() {
                 // session), so the manual-edit card is gone.
                 onNavigateToThresholds = { navController.navigate(CareLogRoutes.THRESHOLDS) },
                 onNavigateToTrends = { navController.navigate(CareLogRoutes.TRENDS) },
+                // PR-3 — wire navController so the screen can observe
+                // its own SavedStateHandle for `patient_added` and
+                // auto-refresh after Add Patient.
+                navController = navController,
             )
         }
 
@@ -643,6 +671,16 @@ fun CareLogNavHost() {
             MatikaConversationScreen(
                 onNavigateBack = { navController.popBackStack() },
                 onSessionEnded = {
+                    // PR-3 — the form-based add-patient flow also chains
+                    // into this protocol-config conversation. Re-flag
+                    // patient_added here so the dashboard refreshes
+                    // even if the SavedStateHandle write set during
+                    // ONBOARDING was already consumed (e.g. dashboard
+                    // never recomposed between the two writes).
+                    NavResults.setPatientAdded(
+                        navController,
+                        CareLogRoutes.CAREGIVER_DASHBOARD,
+                    )
                     // After protocol setup completes, drop back to the
                     // caregiver dashboard. Pop everything in this
                     // onboarding sub-flow off the stack so the back
@@ -672,6 +710,14 @@ fun CareLogNavHost() {
             MatikaConversationScreen(
                 onNavigateBack = { navController.popBackStack() },
                 onSessionEnded = {
+                    // PR-3 — F23 voice onboarding ends with a brand-new
+                    // patient. Flag the caregiver dashboard for refresh
+                    // before popping so the new card appears without
+                    // pull-to-refresh.
+                    NavResults.setPatientAdded(
+                        navController,
+                        CareLogRoutes.CAREGIVER_DASHBOARD,
+                    )
                     // Voice patient onboarding ends with the protocol-
                     // setup phase wrapped up via the same SessionCompleteCard
                     // as the existing v2 protocol-config flow. Pop back to
@@ -845,6 +891,10 @@ fun CareLogNavHost() {
                 onNavigateToWeight = { navController.navigate(CareLogRoutes.WEIGHT) },
                 onNavigateToPulse = { navController.navigate(CareLogRoutes.PULSE) },
                 onNavigateToSpO2 = { navController.navigate(CareLogRoutes.SPO2) },
+                // PR-3 — wire navController so the screen can observe
+                // its own SavedStateHandle for `vital_saved` and surface
+                // a Snackbar after a manual-vital save.
+                navController = navController,
             )
         }
 

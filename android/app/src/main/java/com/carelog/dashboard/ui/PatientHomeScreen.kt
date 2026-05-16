@@ -39,12 +39,16 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -57,6 +61,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
+import androidx.navigation.NavController
+import com.carelog.ui.NavResults
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -74,15 +80,7 @@ data class LastSessionSummary(
 )
 
 /**
- * Patient home screen with model status banner, last session card,
- * and "Start Conversation" button.
- *
- * Features:
- * - Pull-to-refresh for health status updates
- * - Last session summary card with captured values
- * - Animated status transitions
- * - Graceful degradation messages
- * - Full accessibility support
+ * Patient home screen with last session card and "Start Conversation" button.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -95,11 +93,32 @@ fun PatientHomeScreen(
     onNavigateToWeight: () -> Unit = {},
     onNavigateToPulse: () -> Unit = {},
     onNavigateToSpO2: () -> Unit = {},
+    /**
+     * PR-3 nav-result bridge: when a manual-vital screen (currently
+     * BP only — Pulse/SpO2/Sugar/Temperature/Weight follow-up) finishes
+     * a save, it writes a `vital_saved=<label>` to this screen's
+     * SavedStateHandle just before popping. Optional so previews and
+     * tests still compile.
+     */
+    navController: NavController? = null,
     modifier: Modifier = Modifier,
     viewModel: PatientHomeViewModel = hiltViewModel()
 ) {
     val lastSession by viewModel.lastSessionSummary.collectAsState()
     val isRefreshing by viewModel.isRefreshing.collectAsState()
+
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    val savedStateHandle = navController?.currentBackStackEntry?.savedStateHandle
+    val vitalSaved by (savedStateHandle?.getStateFlow<String?>(NavResults.VITAL_SAVED, null)
+        ?: remember { kotlinx.coroutines.flow.MutableStateFlow<String?>(null) })
+        .collectAsState()
+    LaunchedEffect(vitalSaved) {
+        vitalSaved?.let { label ->
+            snackbarHostState.showSnackbar("Saved $label")
+            savedStateHandle?.set<String?>(NavResults.VITAL_SAVED, null)
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -111,7 +130,8 @@ fun PatientHomeScreen(
                     }
                 }
             )
-        }
+        },
+        snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { paddingValues ->
         PullToRefreshBox(
             isRefreshing = isRefreshing,
