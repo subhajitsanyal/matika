@@ -35,6 +35,12 @@ variable "quota_limit" {
 }
 
 # Lambda invoke ARNs
+variable "get_patients_invoke_arn" {
+  description = "Invoke ARN for get-patients lambda (GET /patients — caregiver dashboard list)"
+  type        = string
+  default     = ""
+}
+
 variable "create_patient_invoke_arn" {
   type    = string
   default = ""

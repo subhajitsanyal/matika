@@ -342,6 +342,27 @@ resource "aws_api_gateway_integration" "patients_post" {
   uri                     = var.create_patient_invoke_arn
 }
 
+# GET /patients — get-patients (caregiver dashboard list). Manually
+# CLI-deployed to dev 2026-04-27, declared in terraform 2026-05-15
+# after staging soak surfaced its absence on staging. Dev needs a
+# `terraform import` to reconcile state with the live resource.
+resource "aws_api_gateway_method" "patients_get" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.patients.id
+  http_method   = "GET"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+}
+
+resource "aws_api_gateway_integration" "patients_get" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.patients.id
+  http_method             = aws_api_gateway_method.patients_get.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = var.get_patients_invoke_arn
+}
+
 # DELETE /patients/{patientId} — wired to delete-patient Lambda
 # (was MOCK until 2026-05-12). The lambda performs the soft-delete
 # cascade (Cognito disable + persona_links + invites + patient row +

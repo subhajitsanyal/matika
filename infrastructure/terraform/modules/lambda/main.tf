@@ -428,6 +428,20 @@ data "archive_file" "create_patient" {
   output_path = "${path.module}/archives/create-patient.zip"
 }
 
+# GET /patients — caregiver dashboard list. The lambda was manually
+# CLI-deployed to dev on 2026-04-27 (memory:
+# v2_open_blockers_endofday_20260515.md) and never declared in
+# terraform until 2026-05-15 session 5 staging soak surfaced its
+# absence in staging (dashboard "Failed to load" with no patients).
+# Declaring it here so future env stand-ups include it. Dev has the
+# live resources from the manual deploy; reconcile via
+# `terraform import` in a follow-up.
+data "archive_file" "get_patients" {
+  type        = "zip"
+  source_dir  = "${var.lambdas_source_path}/get-patients"
+  output_path = "${path.module}/archives/get-patients.zip"
+}
+
 # F29 / CG-V2-16 — DPDP right-to-erasure. Soft-delete cascade on patients
 # (observations, alerts, persona_links, parameter_configs, reminders, etc.).
 # Was CLI-deployed Apr 27 and never declared in terraform; brought into
@@ -806,6 +820,33 @@ resource "aws_lambda_function" "create_patient" {
   memory_size      = 256
   filename         = data.archive_file.create_patient.output_path
   source_code_hash = data.archive_file.create_patient.output_base64sha256
+
+  vpc_config {
+    subnet_ids         = var.private_subnet_ids
+    security_group_ids = [var.lambda_security_group_id]
+  }
+
+  environment {
+    variables = merge(local.rds_env, {
+      FROM_EMAIL              = var.from_email
+      # Route the welcome email through the SES configuration set so
+      # bounce + complaint events fan out to the suppression handler
+      # (task #23). Mirrors invite-attendant / invite-doctor /
+      # create-patient-from-voice / process-pending-invites.
+      SES_CONFIGURATION_SET   = aws_sesv2_configuration_set.matika_default.configuration_set_name
+    })
+  }
+}
+
+resource "aws_lambda_function" "get_patients" {
+  function_name    = "${local.function_prefix}-get-patients"
+  role             = aws_iam_role.lambda_rds_cognito.arn
+  handler          = "index.handler"
+  runtime          = "nodejs20.x"
+  timeout          = 30
+  memory_size      = 256
+  filename         = data.archive_file.get_patients.output_path
+  source_code_hash = data.archive_file.get_patients.output_base64sha256
 
   vpc_config {
     subnet_ids         = var.private_subnet_ids
@@ -1619,6 +1660,14 @@ resource "aws_lambda_permission" "create_patient" {
   statement_id  = "AllowAPIGateway"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.create_patient.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${var.api_execution_arn}/*"
+}
+
+resource "aws_lambda_permission" "get_patients" {
+  statement_id  = "AllowAPIGateway"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.get_patients.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${var.api_execution_arn}/*"
 }

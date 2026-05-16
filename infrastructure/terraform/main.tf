@@ -122,6 +122,7 @@ module "api_gateway" {
   quota_limit           = var.environment == "prod" ? 100000 : 10000
 
   # Lambda integrations
+  get_patients_invoke_arn             = module.lambda.get_patients_invoke_arn
   create_patient_invoke_arn           = module.lambda.create_patient_invoke_arn
   sync_observation_invoke_arn         = module.lambda.sync_observation_invoke_arn
   bulk_sync_invoke_arn                = module.lambda.bulk_sync_invoke_arn

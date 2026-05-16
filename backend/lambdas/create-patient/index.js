@@ -368,6 +368,10 @@ async function sendWelcomeEmail(email, patientName, password, caregiverName) {
   await sesClient.send(
     new SendEmailCommand({
       Source: fromEmail,
+      // Route through the env's SES configuration set so Bounce +
+      // Complaint events fan out to the ses-suppression-handler.
+      // Absent env var => direct send (legacy behavior).
+      ConfigurationSetName: process.env.SES_CONFIGURATION_SET || undefined,
       Destination: { ToAddresses: [email] },
       Message: {
         Subject: {

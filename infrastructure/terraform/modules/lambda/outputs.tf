@@ -70,6 +70,14 @@ output "create_patient_invoke_arn" {
   value = aws_lambda_function.create_patient.invoke_arn
 }
 
+output "get_patients_invoke_arn" {
+  value = aws_lambda_function.get_patients.invoke_arn
+}
+
+output "get_patients_function_name" {
+  value = aws_lambda_function.get_patients.function_name
+}
+
 output "accept_invite_invoke_arn" {
   value = aws_lambda_function.accept_invite.invoke_arn
 }
@@ -266,6 +274,11 @@ output "all_function_names" {
     # at the end so alarm count-indexed mapping for the lambdas above
     # remains stable (alarm[42]).
     aws_lambda_function.ses_suppression_handler.function_name,
+    # 2026-05-15 staging soak — get-patients was CLI-deployed to dev
+    # 2026-04-27 (never declared in terraform), so staging's apply
+    # omitted it. Adding to terraform now; dev needs `terraform import`
+    # to reconcile (memory: v2_open_blockers_endofday_20260515.md).
+    aws_lambda_function.get_patients.function_name,
   ]
 }
 
