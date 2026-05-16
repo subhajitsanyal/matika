@@ -12,7 +12,11 @@
 #
 # Pre-apply checklist (see docs/setup-and-deployment-guide.md §"Prod
 # environment stand-up"):
-#   1. SES production access granted (sandbox-only blocks beta cohort).
+#   1. SES production access — DEFERRED to post-beta (decided 2026-05-15).
+#      Sandbox quotas (200 msg/day, 1 msg/sec) fit the 10-patient
+#      beta. Beta coordinator must add each recipient email as an
+#      SES verified identity before app onboarding; production access
+#      is the GA-scale gate.
 #   2. Bedrock prod quotas approved (100 RPM Haiku / 30 RPM Sonnet — 3x
 #      dev). File request 1 week before plan-apply.
 #   3. carelog-prod/fcm-service-account Secrets Manager secret

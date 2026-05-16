@@ -23,7 +23,9 @@
 
 **Critical-path gates for v2.0 (M1 + M2).**
 
-1. Cognito email-intercept testing pattern (unblocks CG-V2-01, PT-V2-23, EDGE-V2-04 — patient and caregiver registration). Owner: `devops`.
+1. Cognito email-intercept testing pattern (unblocks CG-V2-01, PT-V2-23, EDGE-V2-04 — patient and caregiver registration). Owner: `devops`. **RESOLVED 2026-05-14** — see launch-execution-3 transcript.
+
+   **SES sandbox / production-access (2026-05-15 decision):** the beta will run with SES in sandbox (200 msg/day + 1 msg/sec). Each beta participant's `To:` address must be added as an SES verified identity in ap-south-1 BEFORE app onboarding (`aws sesv2 create-email-identity --email-identity <addr> --region ap-south-1`, then participant clicks the AWS verification link). The production-access ticket is deferred to pre-GA — the bounce/complaint pipeline (task #23, commit `2b5585d`) is already wired so the ticket can cite a live config-set ARN when filed.
 2. Backend backlog: CG-V2-16 delete-patient, EDGE-V2-08 cross-region failover, EDGE-V2-09 prompt-mutation. Owner: `inference-platform`.
 3. F26b product call: reminder-config UX in v2.0 — keep manual editing, voice-only, or punt to Phase 2.
 4. DPDP compliance audit + signed DPA with AWS. Owner: legal.

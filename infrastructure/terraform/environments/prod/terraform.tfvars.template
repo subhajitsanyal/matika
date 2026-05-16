@@ -99,13 +99,25 @@ ses_from_email = ""  # TODO
 #    Targets per launch plan §7.2: 100 RPM Haiku / 30 RPM Sonnet (3x
 #    dev). 1-3 day AWS SLA.
 #
-# 3. SES production-access ticket (precondition for `ProductionAccessEnabled=true`):
-#    Draft text lives in the session-3 transcript. Task #23
+# 3. SES production-access ticket — DEFERRED to post-beta (decided
+#    2026-05-15). Sandbox's 200 msg/day + 1 msg/sec quotas comfortably
+#    cover the 10-patient beta cohort (~30 emails/day). What the
+#    sandbox DOES require: every recipient `To:` address is an
+#    SES-verified identity in ap-south-1. Beta-coordinator pre-step
+#    per participant (run once per beta signup):
+#      aws sesv2 create-email-identity \
+#        --email-identity <participant_email> \
+#        --region ap-south-1
+#    Participant then clicks the AWS verification link. After that
+#    they can self-register in the app and Cognito OTPs / welcome
+#    emails / invite emails all deliver.
+#    MUST submit the production-access ticket before GA (~1000-
+#    patient scale is unmanageable as verified identities). Task #23
 #    (commit `2b5585d`) wired the bounce/complaint handler so the
-#    ticket can now cite:
+#    ticket can cite:
 #      Configuration set ARN: arn:aws:sesv2:ap-south-1:316643066568:configuration-set/matika-dev-default
 #      SNS topic ARN: arn:aws:sns:ap-south-1:316643066568:matika-dev-ses-events
-#    File the ticket from AWS Support Console; ~24-48h SLA.
+#    File from AWS Support Console; ~24-48h SLA.
 #
 # 4. Cognito user pool config snapshot — export user pool config
 #    (custom attributes, group config, lambda triggers, email
