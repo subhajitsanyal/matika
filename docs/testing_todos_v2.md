@@ -262,6 +262,83 @@ Backend persistence (e.g., a new `interaction_sessions.stt_offline_used` column)
 
 ---
 
+## Staging bench-test gaps (2026-05-15)
+
+Staging bench against `https://3mni7nx5bf.execute-api.ap-south-1.amazonaws.com/staging` (API GW), `i-0f2acdf1a96ee24a6` (bastion), `carelog-staging` (RDS). Account: caregiver `sanyalsubhajit2010+cg@gmail.com` (John CG); test patient created `Asha Devi` / `sanyalsubhajit2010+staging-pt@gmail.com` (CL-TPUX54). Caregiver bench covered F23 voice + form fallback + dashboard; patient bench covered login + voice BP + manual BP + settings + care-team. Welcome-email end-to-end **PASS** (the FROM_EMAIL + SES_CONFIGURATION_SET fix in commit `99eb49a` is verified — CloudWatch logged the send and the user confirmed receipt in inbox; no bounce/complaint events fired).
+
+### F30 — `bedrock-router` 503s on null `ageConfidence` schema validation (NEW — staging bench 2026-05-15)
+
+**Severity:** **High — blocks F23 voice patient onboarding entirely on the caregiver side.** Turn 2 of the voice onboarding flow ("the patient's name is Asha Devi") returned 503 from the router. CloudWatch shows the LLM emitted a structurally-correct response but with `"ageConfidence": null` (age was not yet known at that turn). The JSON-schema validator rejected null on this field (`Schema validation failed: data/patientProfile/ageConfidence must be number`) and the handler bailed after one retry. The conversation is stuck — the client silently sits on the last "you said" card with no error feedback (see F31).
+
+**Owner:** `backend` (bedrock-router schema / LLM prompt).
+
+**Repro:** CG voice flow turn 2, after providing the patient's name without age. CloudWatch `/aws/lambda/matika-staging-bedrock-router` RequestId `c3e1cf70-b7e6-423c-a85e-135a7042298a` (2026-05-16T04:40:24Z) is the exact failing trace.
+
+**Fix candidates:**
+1. Relax the zod/JSON schema for `patientProfile.ageConfidence` to accept `number | null` (preferred — `null` is the semantically correct value when `ageYears` is `null`).
+2. Strengthen the LLM system prompt to force `ageConfidence: 0` when age is unknown (less clean — couples confidence to extraction state).
+
+### F31 — F23 voice screen has no client-side error UI when router returns 503 (NEW — staging bench 2026-05-15)
+
+**Severity:** **Medium — bad UX, hides backend failures.** When `bedrock-router` returns 503 (as in F30), the F23 voice screen renders the last "you said" card and nothing else — no toast, no error banner, no retry hint, no state badge change. The mic icon stays available but the conversation is broken. Users will think the app froze.
+
+**Owner:** `android` (F23 voice screen client error handling).
+
+**Fix:** Surface a retry-able error toast and revert state to AWAITING_USER on non-2xx response from `/conversation/turn`. Should also reset the turn counter or mark it as failed.
+
+### F32 — F23 voice screen state badge shows `UNKNOWN` after assistant response (NEW — staging bench 2026-05-15)
+
+**Severity:** **Low — cosmetic but misleading during debug.** On the caregiver-side F23 voice flow, the state badge in the top-left starts at `CREATED` (turn 0), correctly advances to a thinking indicator on the user turn, but renders as `UNKNOWN` once the assistant response is displayed (instead of a meaningful state like `AWAITING_USER` or `EXTRACTING_PROFILE`). Patient-side voice screen does NOT have this issue (it correctly showed `PENDING_CONFIRMATION` during the BP flow). The bug is therefore specific to the caregiver onboarding state-machine mapping.
+
+**Owner:** `android` (`MatikaConversationViewModel` state-name mapping).
+
+### F33 — Caregiver dashboard does not auto-refresh after Add Patient returns (NEW — staging bench 2026-05-15)
+
+**Severity:** **Medium — confusing UX.** After completing the form-based Add Patient flow and being returned to the caregiver home, the newly-created patient does not appear in "Your Patients" until the user performs a manual pull-to-refresh gesture. The lambda log confirmed the patient was created and linked, but the dashboard's GET /patients call is cached.
+
+**Owner:** `android` (caregiver home `ViewModel` — trigger refetch on screen resume after Add Patient route navigates back).
+
+### F34 — Patient welcome shows "Photo reading unavailable" + "Voice playback unavailable — text responses only" (NEW — staging bench 2026-05-15)
+
+**Severity:** **Medium — investigate cause; cosmetic-or-real TBD.** Fresh patient login displays two banners: "Photo reading unavailable" and "Voice playback unavailable — text responses only". The voice flow actually works end-to-end (STT captured BP correctly, LLM extracted values, session marked complete), so the "Voice playback unavailable" banner is at minimum misleading. The "Photo reading unavailable" likely points to the Bedrock vision lambda not being reachable from the freshly-onboarded account, but voice already works — needs investigation. Pure cosmetic if the device-feature-check is stale; real if the photo path is broken.
+
+**Owner:** `android` (capability-detection on first-launch / patient home).
+
+### F35 — Manual BP entry saves silently with no confirmation toast (NEW — staging bench 2026-05-15)
+
+**Severity:** **Low — minor UX.** Tapping Save on the manual BP entry screen returns to home with no toast, dialog, or success indicator. Users may double-tap to verify and end up with duplicate readings.
+
+**Owner:** `android` (BP / manual-vital entry screens — add success Snackbar).
+
+### F36 — `CreateResourceCommand is not a constructor` in create-patient HealthLake path (KNOWN — re-confirmed staging 2026-05-15)
+
+**Severity:** **Low — non-fatal, patient creation succeeds.** Already noted in launch-execution-4 summary; re-observed on staging at `2026-05-16T04:44:01.220Z` in `/aws/lambda/carelog-staging-create-patient`. The HealthLake SDK import is broken (likely an aws-sdk v3 path mismatch). Patient is still created in RDS and welcome email is still sent — this fires inside a try/catch and falls through. Out-of-scope for v2 (HealthLake integration is deferred per CLAUDE.md), but should be removed or wrapped in a feature flag so the ERROR line stops scaring future ops.
+
+**Owner:** `backend` (`backend/lambdas/create-patient/index.js:239`).
+
+### F37 — App title "Matika — v2 (dev)" on staging build (NEW — staging bench 2026-05-15)
+
+**Severity:** **Low — cosmetic.** Top-of-screen app title reads "Matika — v2 (dev)" even on the staging-pointed APK. Probably driven by BuildConfig or a string resource that's hardcoded to "(dev)" regardless of which `app/src/main/res/raw/amplifyconfiguration.json` the build picked up. Audit per `release_buildconfig_lesson.md` memory.
+
+**Owner:** `android` (BuildConfig string / app-name resource per env).
+
+### F38 — Patient settings show "CareLog Device — Connected: http://127.0.0.1:8000" (v1 leftover) (NEW — staging bench 2026-05-15)
+
+**Severity:** **Low — cosmetic, v1→v2 cleanup.** Patient Settings screen still shows the "CareLog Device" section with the v1 localhost URL. In v2 the Mac-mini device is out of scope (Bedrock-only). Either delete the section from the patient (and caregiver) settings or gate it behind a "v1 compat" flag.
+
+**Owner:** `android` (Settings screens, both personas).
+
+### Bench scope NOT covered (callouts for next session)
+
+- **Trends + Thresholds screens** (caregiver side) — patient has vitals now, can exercise.
+- **Patient — Pulse/SpO2/Sugar/Temperature/Weight manual entry tiles** — only BP was exercised; same UI shape, low-risk skip but worth one sweep.
+- **Patient — Hindi/Bengali voice flow** — language switch in settings + voice round-trip.
+- **Caregiver — Manage Care Team end-to-end** (invite attendant + accept on a second device).
+- **Voice F23 retry path** — once F30 is fixed, run the multi-turn flow to completion and verify create-patient-from-voice fires with the right payload + welcome-email lands.
+- **WorkManager sync flush** — confirm the BP recorded via voice + manual lands in S3 (`observations/{patientId}/...`) and surfaces on caregiver Trends screen after sync.
+
+---
+
 ## Why this file exists
 
 The first Standard sweep covered **6 of 79 catalog journeys** by execution; the other 73 were paper-classified. Each non-executed journey has a documented reason — but a "reason" is not a result. This file is the durable backlog of work needed to convert "blocked" / "manual" status into actual execution.
