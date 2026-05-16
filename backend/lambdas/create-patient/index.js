@@ -5,7 +5,9 @@
  * 1. Creates Cognito user for patient
  * 2. Creates patient record in RDS
  * 3. Creates persona_link between caregiver and patient
- * 4. Creates FHIR Patient resource in HealthLake
+ *
+ * HealthLake integration is deferred (see CLAUDE.md) — FHIR resources are
+ * persisted as JSON to S3 by other paths, not in this Lambda.
  *
  * HIPAA Compliance:
  * - All PHI encrypted in transit and at rest
@@ -20,10 +22,6 @@ const {
   AdminSetUserPasswordCommand,
 } = require("@aws-sdk/client-cognito-identity-provider");
 const { SESClient, SendEmailCommand } = require("@aws-sdk/client-ses");
-const {
-  HealthLakeClient,
-  CreateResourceCommand,
-} = require("@aws-sdk/client-healthlake");
 const { Client } = require("pg");
 const {
   SecretsManagerClient,
@@ -33,7 +31,6 @@ const crypto = require("crypto");
 
 const cognitoClient = new CognitoIdentityProviderClient({});
 const sesClient = new SESClient({});
-const healthLakeClient = new HealthLakeClient({});
 const secretsClient = new SecretsManagerClient({});
 
 let dbCredentials = null;
@@ -189,74 +186,6 @@ async function createCognitoUser(patientId, patientName, patientEmail) {
 
   const cognitoSub = result.User.Attributes.find((a) => a.Name === "sub")?.Value;
   return { cognitoSub, tempPassword, email };
-}
-
-/**
- * Create FHIR Patient resource in HealthLake.
- */
-async function createFHIRPatient(patientData) {
-  const fhirPatient = {
-    resourceType: "Patient",
-    identifier: [
-      {
-        system: "https://carelog.com/patient-id",
-        value: patientData.patientId,
-      },
-    ],
-    name: [
-      {
-        use: "official",
-        text: patientData.name,
-      },
-    ],
-    gender: mapGender(patientData.gender),
-    birthDate: patientData.dateOfBirth,
-  };
-
-  // Add contact if provided
-  if (patientData.emergencyContactName || patientData.emergencyContactPhone) {
-    fhirPatient.contact = [
-      {
-        relationship: [
-          {
-            coding: [
-              {
-                system: "http://terminology.hl7.org/CodeSystem/v2-0131",
-                code: "C",
-                display: "Emergency Contact",
-              },
-            ],
-          },
-        ],
-        name: { text: patientData.emergencyContactName },
-        telecom: patientData.emergencyContactPhone
-          ? [{ system: "phone", value: patientData.emergencyContactPhone }]
-          : undefined,
-      },
-    ];
-  }
-
-  const command = new CreateResourceCommand({
-    datastoreId: process.env.HEALTHLAKE_DATASTORE_ID,
-    resourceType: "Patient",
-    resourceBody: JSON.stringify(fhirPatient),
-  });
-
-  const result = await healthLakeClient.send(command);
-  return result.resourceId;
-}
-
-/**
- * Map gender string to FHIR gender code.
- */
-function mapGender(gender) {
-  const mapping = {
-    male: "male",
-    female: "female",
-    other: "other",
-    "prefer not to say": "unknown",
-  };
-  return mapping[gender?.toLowerCase()] || "unknown";
 }
 
 /**
@@ -442,23 +371,9 @@ exports.handler = async (event) => {
     const { cognitoSub, tempPassword, email: patientLoginEmail } =
       await createCognitoUser(patientId, body.name, patientEmail);
 
-    // Create FHIR Patient resource
-    let fhirPatientId = null;
-    try {
-      fhirPatientId = await createFHIRPatient({
-        patientId,
-        name: body.name,
-        gender: body.gender,
-        dateOfBirth: body.dateOfBirth,
-        emergencyContactName: body.emergencyContactName,
-        emergencyContactPhone: body.emergencyContactPhone,
-      });
-    } catch (fhirError) {
-      console.error("FHIR Patient creation failed:", fhirError);
-      // Continue - FHIR can be reconciled later
-    }
-
-    // Create RDS records
+    // Create RDS records. HealthLake integration is deferred (CLAUDE.md) —
+    // fhir_patient_id is persisted as NULL and reconciled later if/when the
+    // FHIR datastore comes online.
     dbClient = await createDbConnection();
     await createPatientRecords(
       dbClient,
@@ -474,7 +389,7 @@ exports.handler = async (event) => {
         medications: body.medications || [],
         emergencyContactName: body.emergencyContactName || (body.emergency_contact && body.emergency_contact.name) || null,
         emergencyContactPhone: body.emergencyContactPhone || (body.emergency_contact && body.emergency_contact.phone) || null,
-        fhirPatientId,
+        fhirPatientId: null,
         language: toBcp47Language(body.language),
         timezone: body.timezone || 'Asia/Kolkata',
       },
