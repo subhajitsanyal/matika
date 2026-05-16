@@ -1,7 +1,6 @@
 package com.carelog.dashboard.ui
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -39,12 +38,10 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
-import com.carelog.discovery.OverallStatus
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -60,8 +57,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
-import com.carelog.discovery.HealthCheckService
-import com.carelog.discovery.ModelHealthStatus
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -103,12 +98,8 @@ fun PatientHomeScreen(
     modifier: Modifier = Modifier,
     viewModel: PatientHomeViewModel = hiltViewModel()
 ) {
-    val healthStatus by viewModel.healthStatus.collectAsState()
     val lastSession by viewModel.lastSessionSummary.collectAsState()
     val isRefreshing by viewModel.isRefreshing.collectAsState()
-
-    val degradation = computeDegradationState(healthStatus)
-    val isOffline = healthStatus.overallStatus == OverallStatus.OFFLINE
 
     Scaffold(
         topBar = {
@@ -137,11 +128,6 @@ fun PatientHomeScreen(
                 verticalArrangement = Arrangement.Top,
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Model status banner at top (only when not offline)
-                if (!isOffline) {
-                    ModelStatusBanner(healthStatus = healthStatus)
-                }
-
                 Spacer(modifier = Modifier.height(24.dp))
 
                 // Welcome message
@@ -155,24 +141,11 @@ fun PatientHomeScreen(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Text(
-                    text = if (isOffline) {
-                        "Set up your CareLog device in Settings to start voice check-ins"
-                    } else {
-                        "Tap below to start your daily health check-in"
-                    },
+                    text = "Tap below to start your daily health check-in",
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center
                 )
-
-                if (isOffline) {
-                    Spacer(modifier = Modifier.height(16.dp))
-                    OutlinedButton(onClick = onNavigateToSettings) {
-                        Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.size(8.dp))
-                        Text("Open Settings")
-                    }
-                }
 
                 Spacer(modifier = Modifier.height(24.dp))
 
@@ -192,33 +165,23 @@ fun PatientHomeScreen(
 
                 Spacer(modifier = Modifier.height(32.dp))
 
-                // Start Conversation button with animated color
-                val buttonColor by animateColorAsState(
-                    targetValue = if (degradation.canConverse) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.surfaceVariant
-                    },
-                    label = "button_color"
-                )
-
+                // Start Conversation button. v2 always-available: Bedrock backs
+                // the conversation and on-device STT/TTS is independent of any
+                // health poller. Pre-fix this Button was gated on a v1 Mac-mini
+                // health check that always reported OFFLINE on staging/prod
+                // even though voice worked end-to-end.
                 Button(
                     onClick = onStartConversation,
-                    enabled = degradation.canConverse,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(72.dp)
                         .testTag("patient_home_start_conversation")
                         .semantics {
-                            contentDescription = if (degradation.canConverse) {
+                            contentDescription =
                                 "Start conversation. Begin your daily health check-in."
-                            } else {
-                                "Conversation unavailable. CareLog device services are not ready."
-                            }
                         },
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = buttonColor,
-                        disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant
+                        containerColor = MaterialTheme.colorScheme.primary,
                     )
                 ) {
                     Icon(
@@ -228,42 +191,8 @@ fun PatientHomeScreen(
                     )
                     Spacer(modifier = Modifier.size(12.dp))
                     Text(
-                        text = if (degradation.canConverse) {
-                            "Start Conversation"
-                        } else {
-                            "Conversation Unavailable"
-                        },
+                        text = "Start Conversation",
                         style = MaterialTheme.typography.titleMedium
-                    )
-                }
-
-                // Hint text when in text-only mode
-                AnimatedVisibility(
-                    visible = degradation.canConverse && !degradation.ttsAvailable,
-                    enter = fadeIn(),
-                    exit = fadeOut()
-                ) {
-                    Text(
-                        text = "Voice playback unavailable \u2014 text responses only",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(top = 8.dp)
-                    )
-                }
-
-                // Vision unavailable hint
-                AnimatedVisibility(
-                    visible = degradation.canConverse && !degradation.visionAvailable,
-                    enter = fadeIn(),
-                    exit = fadeOut()
-                ) {
-                    Text(
-                        text = "Photo reading unavailable",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(top = 4.dp)
                     )
                 }
 
@@ -510,11 +439,7 @@ private fun LastSessionCard(
 }
 
 @HiltViewModel
-class PatientHomeViewModel @Inject constructor(
-    private val healthCheckService: HealthCheckService
-) : ViewModel() {
-    val healthStatus = healthCheckService.healthStatus
-
+class PatientHomeViewModel @Inject constructor() : ViewModel() {
     private val _lastSessionSummary = MutableStateFlow<LastSessionSummary?>(null)
     val lastSessionSummary: StateFlow<LastSessionSummary?> = _lastSessionSummary.asStateFlow()
 
@@ -522,12 +447,11 @@ class PatientHomeViewModel @Inject constructor(
     val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
 
     /**
-     * Refresh health status and last session data.
+     * Refresh last session data.
      */
     fun onRefresh() {
         _isRefreshing.value = true
-        // Health check service auto-polls; just trigger a re-evaluation
-        // In a real implementation this would also fetch the last session from the API
+        // In a real implementation this would fetch the last session from the API
         _isRefreshing.value = false
     }
 

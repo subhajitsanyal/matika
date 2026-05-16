@@ -1,6 +1,5 @@
 package com.carelog.dashboard.ui
 
-import com.carelog.discovery.OverallStatus
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Spring
@@ -103,7 +102,6 @@ fun CaregiverHomeScreen(
     viewModel: CaregiverDashboardViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
-    val healthStatus by viewModel.healthStatus.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(uiState.errorMessage) {
@@ -184,13 +182,6 @@ fun CaregiverHomeScreen(
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // Model status banner - only show when connected or degraded, not when offline
-                if (healthStatus.overallStatus != OverallStatus.OFFLINE) {
-                    item(key = "model_status") {
-                        ModelStatusBanner(healthStatus = healthStatus)
-                    }
-                }
-
                 item(key = "header") {
                     Text(
                         text = "Your Patients",

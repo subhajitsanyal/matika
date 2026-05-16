@@ -1,10 +1,8 @@
 package com.carelog.conversation.ui
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -49,9 +47,6 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.carelog.conversation.ConversationViewModel
 import com.carelog.conversation.session.SessionPhase
-import com.carelog.dashboard.ui.DegradationSeverity
-import com.carelog.dashboard.ui.ModelStatusBanner
-import com.carelog.dashboard.ui.computeDegradationState
 
 /**
  * Main conversation screen composable.
@@ -98,11 +93,6 @@ fun ConversationScreen(
         permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
     }
 
-    // Compute degradation state from current model status
-    val degradation = remember(uiState.modelStatus) {
-        computeDegradationState(uiState.modelStatus)
-    }
-
     // Show error messages as snackbar
     LaunchedEffect(uiState.errorMessage) {
         uiState.errorMessage?.let { message ->
@@ -118,9 +108,10 @@ fun ConversationScreen(
         }
     }
 
-    // Navigate to photo capture when requested (only if vision is available)
-    LaunchedEffect(uiState.showCamera, degradation.visionAvailable) {
-        if (uiState.showCamera && degradation.visionAvailable) {
+    // Navigate to photo capture when requested.
+    // v2 removed the v1 Mac-mini health gate; vision is always available.
+    LaunchedEffect(uiState.showCamera) {
+        if (uiState.showCamera) {
             onNavigateToPhoto()
         }
     }
@@ -158,16 +149,7 @@ fun ConversationScreen(
                 .padding(paddingValues)
                 .imePadding()
         ) {
-            // 1. Model status banner - use live health, not stale uiState
-            val liveHealth by viewModel.liveHealthStatus.collectAsState()
-            if (liveHealth.overallStatus != com.carelog.discovery.OverallStatus.OFFLINE) {
-                ModelStatusBanner(
-                    healthStatus = liveHealth,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                )
-            }
-
-            // 2. Transcript view (takes available space)
+            // 1. Transcript view (takes available space)
             TranscriptView(
                 turns = uiState.conversationTurns,
                 currentTranscript = uiState.currentTranscript,
@@ -176,34 +158,14 @@ fun ConversationScreen(
                     .padding(vertical = 8.dp)
             )
 
-            // 3. Value cards section
+            // 2. Value cards section
             ValueCardsSection(
                 confirmedValues = uiState.confirmedValues,
                 pendingValues = uiState.pendingConfirmation,
                 modifier = Modifier.padding(vertical = 4.dp)
             )
 
-            // 4. Degradation message (when in degraded mode during active session)
-            AnimatedVisibility(
-                visible = degradation.message != null &&
-                    degradation.severity == DegradationSeverity.WARNING &&
-                    uiState.sessionPhase == SessionPhase.ACTIVE,
-                enter = expandVertically() + fadeIn(),
-                exit = shrinkVertically() + fadeOut()
-            ) {
-                degradation.message?.let { message ->
-                    Text(
-                        text = message,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 4.dp)
-                    )
-                }
-            }
-
-            // 5. Text input (always shown during active session as fallback for voice)
+            // 3. Text input (always shown during active session as fallback for voice)
             val showTextBar = uiState.sessionPhase == SessionPhase.ACTIVE
 
             if (showTextBar) {
@@ -214,8 +176,8 @@ fun ConversationScreen(
                         viewModel.onTextSubmitted(textInput)
                         textInput = ""
                     },
-                    // Hide camera when vision is down
-                    showCamera = degradation.visionAvailable && uiState.modelStatus.canCapturePhoto,
+                    // v2 dropped the v1 Mac-mini vision-availability gate.
+                    showCamera = true,
                     onCameraClicked = onNavigateToPhoto,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
                 )

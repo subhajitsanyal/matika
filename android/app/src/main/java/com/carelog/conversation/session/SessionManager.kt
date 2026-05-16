@@ -2,7 +2,6 @@ package com.carelog.conversation.session
 
 import android.util.Log
 import com.carelog.conversation.ConversationRepository
-import com.carelog.discovery.HealthCheckService
 import com.carelog.network.CloudApiService
 import com.carelog.network.FhirBatchRequest
 import com.carelog.network.FhirObservationEntry
@@ -34,7 +33,6 @@ class SessionManager @Inject constructor(
     private val conversationRepository: ConversationRepository,
     private val cloudApiService: CloudApiService,
     private val llmApi: MacMiniLlmApi,
-    private val healthCheckService: HealthCheckService
 ) {
 
     companion object {
@@ -110,7 +108,6 @@ class SessionManager @Inject constructor(
                             action = "greeting"
                         )
                     ),
-                    modelStatus = healthCheckService.healthStatus.value
                 )
             }
 

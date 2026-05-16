@@ -18,8 +18,6 @@ import com.carelog.conversation.session.ConversationTurn
 import com.carelog.conversation.session.SessionPhase
 import com.carelog.conversation.ui.ConversationControls
 import com.carelog.conversation.ui.TranscriptView
-import com.carelog.dashboard.ui.ModelStatusBanner
-import com.carelog.discovery.ModelHealthStatus
 import com.carelog.onboarding.CaregiverOnboardingViewModel
 import com.carelog.onboarding.ExtractedPatientProfile
 import com.carelog.onboarding.OnboardingPhase
