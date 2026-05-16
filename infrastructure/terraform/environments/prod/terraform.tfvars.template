@@ -1,0 +1,122 @@
+# Matika prod — terraform.tfvars TEMPLATE.
+#
+# Copy this file to `prod/terraform.tfvars` (gitignored) and fill in
+# real values before running `terraform apply` in this environment.
+# This template is committed; the live file is not.
+#
+# Before applying prod for the first time, work through the pre-apply
+# checklist in `prod/main.tf` AND the launch plan §7.2. The three values
+# below are the only ones the env-wrapper currently reads, but each
+# encodes a decision that affects beta cohort delivery.
+
+# ─────────────────────────────────────────────────────────────────────
+# alert_email — operator-alerts SNS subscriber for CloudWatch alarms.
+#
+# When empty, the monitoring module is skipped entirely (count = 0,
+# per `infrastructure/terraform/main.tf:303`). This means no alarms,
+# no ops SNS topic, no dashboard. That is fine for a first dry apply
+# but is NOT acceptable once prod is open to real users.
+#
+# Set to an operations alias (e.g. `ops@matika.health`,
+# `oncall@matika.in`) NOT a personal inbox — the on-call rotation
+# (launch plan §7.4) needs durable addressability beyond any one
+# person's tenure.
+# ─────────────────────────────────────────────────────────────────────
+alert_email = ""  # TODO: replace with the ops alias
+
+# ─────────────────────────────────────────────────────────────────────
+# ses_email_arn — ARN of the SES-verified identity prod sends FROM.
+#
+# Two viable starting points:
+#   (a) Reuse the kyabla.in identity that dev + staging already share:
+#       arn:aws:ses:ap-south-1:316643066568:identity/subhajit@kyabla.in
+#       Pros: zero new verification work; SES production-access ticket
+#       already covers it.
+#       Cons: From-address goes to a personal mailbox. Beta-period
+#       support model is "WhatsApp + email" per launch plan §3.1, so
+#       this is workable for the 10-patient cohort but should NOT be
+#       the GA sender.
+#   (b) Stand up a production sender domain (e.g. matika.in or
+#       matika.health) end-to-end:
+#         1. Create domain identity in SES ap-south-1.
+#         2. Add Easy-DKIM CNAMEs to the domain's DNS.
+#         3. Wait for `VerifiedForSendingStatus=SUCCESS` (~minutes
+#            after DNS propagates).
+#         4. Optional: MAIL FROM domain (e.g. mail.matika.in) — adds
+#            MX + TXT records.
+#         5. Update this ARN to the new domain identity's ARN.
+#       Pros: proper From address (`no-reply@matika.health`),
+#       deliverability story for GA + beyond.
+#       Cons: requires domain ownership + DNS access; calendar lead
+#       time if the domain isn't already owned.
+#
+# Whichever path, the identity must be in ap-south-1 (DPDP residency)
+# AND SES must be out of sandbox (`ProductionAccessEnabled=true`) for
+# the live beta cohort to receive emails. Sandbox mode delivers only
+# to verified recipients — see `v2_stream_d_decisions_20260512.md` for
+# the dev/staging sandbox status.
+# ─────────────────────────────────────────────────────────────────────
+ses_email_arn = ""  # TODO
+
+# ─────────────────────────────────────────────────────────────────────
+# ses_from_email — the display-name + address string Cognito + the
+# email-sending lambdas use as the From header.
+#
+# MUST be in `"Display Name <addr@domain>"` form: the cognito module's
+# `reply_to_email_address` field uses regex `<([^>]+)>` to extract the
+# bare address; a non-bracketed value will crash the apply with a
+# regex error.
+#
+# Match the identity in `ses_email_arn` above.
+#   Example matching (a): "Matika <subhajit@kyabla.in>"
+#   Example matching (b): "Matika <no-reply@matika.health>"
+# ─────────────────────────────────────────────────────────────────────
+ses_from_email = ""  # TODO
+
+# ─────────────────────────────────────────────────────────────────────
+# Decisions that do NOT live in tfvars but ARE prerequisites — work
+# through these alongside filling in the three values above:
+#
+# 1. carelog-prod/fcm-service-account Secrets Manager secret.
+#    Required by the notification-sender lambda for FCM HTTP v1
+#    delivery. Either:
+#      (a) Copy the dev value (shared Firebase project `carelog-7de0c`):
+#            aws secretsmanager get-secret-value \
+#              --secret-id carelog-dev/fcm-service-account \
+#              --region ap-south-1 --query SecretString --output text \
+#              | aws secretsmanager create-secret \
+#                  --name carelog-prod/fcm-service-account \
+#                  --secret-string file:///dev/stdin \
+#                  --region ap-south-1
+#      (b) Stand up a separate prod Firebase project, download its
+#          service-account JSON, and create the secret with that
+#          value. Cleaner blast-radius but more setup.
+#    Decision (a) vs (b) shapes whether a Firebase quota incident on
+#    dev affects prod push delivery.
+#
+# 2. Bedrock prod quota request (file 1 week before apply):
+#    https://console.aws.amazon.com/servicequotas/home/services/bedrock
+#    Targets per launch plan §7.2: 100 RPM Haiku / 30 RPM Sonnet (3x
+#    dev). 1-3 day AWS SLA.
+#
+# 3. SES production-access ticket (precondition for `ProductionAccessEnabled=true`):
+#    Draft text lives in the session-3 transcript. Task #23
+#    (commit `2b5585d`) wired the bounce/complaint handler so the
+#    ticket can now cite:
+#      Configuration set ARN: arn:aws:sesv2:ap-south-1:316643066568:configuration-set/matika-dev-default
+#      SNS topic ARN: arn:aws:sns:ap-south-1:316643066568:matika-dev-ses-events
+#    File the ticket from AWS Support Console; ~24-48h SLA.
+#
+# 4. Cognito user pool config snapshot — export user pool config
+#    (custom attributes, group config, lambda triggers, email
+#    configuration) BEFORE opening prod sign-ups, so DR can recreate.
+#    `aws cognito-idp describe-user-pool --user-pool-id <id>` →
+#    archive to versioned S3.
+#
+# 5. On-call rotation (launch plan §7.4) — primary engineer per
+#    week + escalation tree, runbook at `docs/runbook_oncall_v2.md`,
+#    SNS topic → PagerDuty/Opsgenie/manual fan-out.
+#
+# 6. 1-week staging soak (launch plan §7.1) must complete with
+#    alert_email set + synthetic load before prod first-apply.
+# ─────────────────────────────────────────────────────────────────────

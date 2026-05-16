@@ -1,13 +1,28 @@
 # Matika Infrastructure — Production Environment
 #
-# Mirrors the dev/ shape with prod-appropriate sizing:
+# Mirrors the staging/ shape with prod-appropriate sizing:
 #   - VPC CIDR 10.2.0.0/16  (dev=10.0, staging=10.1, prod=10.2)
 #   - 3 AZs (HA across the full ap-south-1 region)
 #   - RDS: db.r6g.large, Multi-AZ, deletion protection on, 35-day backups
-#   - HealthLake enabled (real FHIR persistence)
+#   - HealthLake DISABLED per v2.0 launch plan §12 (deferred to v2.1).
+#     S3 + parameter_configs cover FHIR persistence today.
 #   - bedrock-router provisioned-concurrency = 0 until the Lambda
 #     concurrent-executions quota increase request lands. Bump to 5+
 #     once approved.
+#
+# Pre-apply checklist (see docs/setup-and-deployment-guide.md §"Prod
+# environment stand-up"):
+#   1. SES production access granted (sandbox-only blocks beta cohort).
+#   2. Bedrock prod quotas approved (100 RPM Haiku / 30 RPM Sonnet — 3x
+#      dev). File request 1 week before plan-apply.
+#   3. carelog-prod/fcm-service-account Secrets Manager secret
+#      provisioned (copy from dev Firebase project, or stand up a
+#      separate prod Firebase project and use its JSON).
+#   4. prod/terraform.tfvars filled in from
+#      prod/terraform.tfvars.template (gitignored target; commit-safe
+#      template).
+#   5. On-call rotation staffed (launch plan §7.4).
+#   6. Staging soak gate passed (1 week with alert_email set).
 #
 # DPDP / data-residency: all resources in ap-south-1. The `global.*`
 # Bedrock inference profiles can route across regions, however; that
@@ -62,8 +77,12 @@ module "carelog" {
   alert_email = var.alert_email
 
   # Feature flags
-  enable_healthlake = true # Real FHIR persistence in prod
-  enable_bastion    = true # Same SSM-based RDS access pattern as dev
+  # v2.0 launch plan §12: HealthLake is OUT OF SCOPE for v2.0 (deferred
+  # to v2.1). Patient observations are S3+JSON FHIR R4 already; the
+  # Phase 2 doctor portal discovery (§13) will inform whether HealthLake
+  # is worth the engineering cost. Keep `false` until then.
+  enable_healthlake = false
+  enable_bastion    = true # Same SSM-based RDS access pattern as dev/staging
 }
 
 output "vpc_id" {

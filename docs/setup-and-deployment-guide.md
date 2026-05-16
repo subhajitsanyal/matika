@@ -714,10 +714,92 @@ would land.
 
 ---
 
+## Production environment stand-up
+
+Prod can't first-apply until five external prerequisites land. The
+template `infrastructure/terraform/environments/prod/terraform.tfvars.template`
+captures all of them inline — copy it to `prod/terraform.tfvars`
+(gitignored) and work the checklist.
+
+**Pre-apply prerequisites** (see also launch plan §7.2):
+
+1. **Staging soak passed** — 1 week against staging with `alert_email`
+   set + synthetic load, no Critical alarms firing. Without the soak,
+   regression issues land directly on prod cohort.
+2. **AWS Support: SES production access** — sandbox-only sends block
+   the beta cohort cutover. Task #23 (commit `2b5585d`) wired the
+   bounce/complaint handler so the ticket can cite a live config-set
+   ARN. ~24-48h AWS SLA. Draft text lives in the session-3 transcript.
+3. **Bedrock prod quota request** — 100 RPM Haiku / 30 RPM Sonnet (3x
+   dev) via AWS Service Quotas console. File 1 week before plan-apply.
+4. **`carelog-prod/fcm-service-account` Secrets Manager secret** —
+   either copy from `carelog-dev/fcm-service-account` (shared Firebase
+   project `carelog-7de0c`) or provision a new prod Firebase project
+   and use its service-account JSON. Decision shapes whether dev
+   Firebase quota incidents affect prod push delivery.
+5. **On-call rotation** — primary engineer per week + escalation tree,
+   per launch plan §7.4. The CloudWatch alarms route to the
+   `alert_email` SNS topic; that subscriber must be a durable alias,
+   not a personal inbox.
+6. **Cognito user pool config snapshot script** — for DR (launch plan
+   §7.2). Capture custom attributes, group config, lambda triggers,
+   email configuration BEFORE opening prod sign-ups; archive to a
+   versioned S3 location.
+
+**Apply sequence** (mirrors the Staging runbook above):
+
+```bash
+cd infrastructure/terraform/environments/prod
+cp terraform.tfvars.template terraform.tfvars   # then edit values
+terraform init
+terraform plan -out=prod.tfplan
+terraform apply prod.tfplan
+
+BASTION_ID=$(terraform output -raw bastion_instance_id)
+RDS_HOST=$(aws rds describe-db-instances --region ap-south-1 \
+  --db-instance-identifier carelog-prod \
+  --query 'DBInstances[0].Endpoint.Address' --output text)
+
+aws ssm start-session --target "$BASTION_ID" \
+  --document-name AWS-StartPortForwardingSessionToRemoteHost \
+  --parameters "{\"host\":[\"$RDS_HOST\"],\"portNumber\":[\"5432\"],\"localPortNumber\":[\"55434\"]}" \
+  --region ap-south-1 &
+sleep 5
+
+export PGPASSWORD=$(aws secretsmanager get-secret-value \
+  --secret-id carelog-prod-db-password --region ap-south-1 \
+  --query SecretString --output text \
+  | python3 -c "import json,sys; print(json.load(sys.stdin)['password'])")
+cd backend/database/migrations
+for f in $(ls V*.sql | sort -V); do
+  /opt/homebrew/opt/libpq/bin/psql -h 127.0.0.1 -p 55434 \
+    -U carelog_prod_admin -d carelog_prod -v ON_ERROR_STOP=1 -f "$f"
+done
+/opt/homebrew/opt/libpq/bin/psql -h 127.0.0.1 -p 55434 \
+  -U carelog_prod_admin -d carelog_prod \
+  -f /Users/subhajitsanyal/Work/Projects/Matika/appdevel/matika/backend/database/flyway_history_bootstrap.sql
+unset PGPASSWORD
+```
+
+Tunnel port `55434` chosen so dev (55432) + staging (55433) + prod
+(55434) can all be open simultaneously during a multi-env debugging
+session.
+
+**Post-apply burn-in:** 1 week with a synthetic test patient (Jane
+clone) before opening the beta cohort.
+
+**Known v2.0 scope:** `enable_healthlake = false` per launch plan §12
+(deferred to v2.1). Patient observations are S3 + parameter_configs.
+Phase 2 discovery decides whether HealthLake is worth the engineering
+cost.
+
+---
+
 ## Changelog
 
 | Date | Changes |
 |------|---------|
+| 2026-05-15 | v3.5: Added "Production environment stand-up" section + corresponding `prod/terraform.tfvars.template`. Fixed Staging stand-up to use `aws rds describe-db-instances` instead of the non-existent `/carelog/staging/rds_endpoint` SSM parameter. Added Stream H first-apply observations (live IDs, port conventions, monitoring-module count=0 caveat). New `backend/database/flyway_history_bootstrap.sql` reconciles flyway_schema_history for greenfield envs. Fixed `prod/main.tf` `enable_healthlake = true → false` per v2.0 scope (HealthLake deferred to v2.1, launch plan §12). |
 | 2026-05-14 | v3.4: Added Staging environment stand-up runbook (Stream H). Staging files updated to mirror dev's plumbing pattern (backend uncommented, alert_email + s3_bucket_prefix plumbed). FCM secret `carelog-staging/fcm-service-account` provisioned. |
 | 2026-05-11 | v3.3: Added §6.6 SNS Platform App + FCM HTTP v1 provisioning (F17); V005–V009 migration list in §3.3; removed v1 Mac Mini architecture diagram; Lambda count corrected to 45 |
 | 2026-05-02 | v3.2: Brand rename to Matika; replaced Mac Mini section with Bedrock provisioning section |
@@ -726,4 +808,4 @@ would land.
 
 ---
 
-*Matika Setup and Deployment Guide v3.4 — May 2026*
+*Matika Setup and Deployment Guide v3.5 — May 2026*
