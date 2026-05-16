@@ -205,7 +205,14 @@ What this rewrites:
 | File | Field |
 |---|---|
 | `android/app/build.gradle.kts` | debug-variant `buildConfigField("String", "API_BASE_URL", "...")` |
-| `android/app/src/main/res/raw/amplifyconfiguration.json` | `CognitoUserPool.Default.PoolId / AppClientId / Region`, S3 bucket name |
+| `android/app/src/main/res/raw/amplifyconfiguration.json` | `CognitoUserPool.Default.PoolId / AppClientId / Region` + `Auth.Default.OAuth.WebDomain / AppClientId` |
+
+The script also tries to update `storage.plugins.awsS3StoragePlugin.bucket`
+if present — but Matika's amplifyconfiguration.json has no S3 block
+(the app uses S3 via the `presigned-url` lambda + direct uploads,
+not the Amplify Storage plugin), so that update is a silent no-op.
+A clean diff shows only the 5 Cognito/OAuth values + the
+`API_BASE_URL` line; no S3 line is expected.
 
 The script looks up live AWS state by env-name (API GW named
 `carelog-staging-api`, Cognito pool `carelog-staging-users`, S3
@@ -689,7 +696,7 @@ adb logcat -d | grep -E "rsf93ac8bd|API_BASE_URL"
 | `update-app-config.sh staging` fails with "no API GW found" or empty `API_BASE_URL` | Wrong AWS profile / wrong region / staging not applied | `aws sts get-caller-identity` should show account `316643066568`; `aws apigateway get-rest-apis --region ap-south-1 --query "items[?name=='carelog-staging-api'].id"` should return `3mni7nx5bf` |
 | `./gradlew installDebug` errors `INSTALL_FAILED_UPDATE_INCOMPATIBLE` | Existing APK on device has incompatible signing | `adb uninstall com.carelog` first |
 | `./gradlew assembleDebug` errors with `R8` OOM | Gradle JVM heap too small | Check `android/gradle.properties` has `org.gradle.jvmargs=-Xmx6144m`; do NOT downgrade — release minify OOMs at 2 GiB |
-| App opens but every screen shows "Network error" | Stale Cognito pool ID after env switch | Re-run `scripts/update-app-config.sh staging`; verify `amplifyconfiguration.json` got rewritten (`git diff` should show only PoolId/AppClientId/Region/bucket changes) |
+| App opens but every screen shows "Network error" | Stale Cognito pool ID after env switch | Re-run `scripts/update-app-config.sh staging`; verify `amplifyconfiguration.json` got rewritten (`git diff` should show only the 5 Cognito/OAuth values changing — no S3 line since Matika doesn't use Amplify's Storage plugin) |
 | Voice protocol session never completes | Bedrock model-access not approved in region | Should be fine in ap-south-1; verify via the staging `/health` endpoint's `bedrock: up` indicator |
 | `psql: error: connection refused` on port 55433 | SSM tunnel session has timed out (short idle window) | Restart the tunnel with the detached `nohup aws ssm start-session ... &` pattern |
 | Bash variable `$PSQL_ARGS` collapses to single arg | Shell word-splitting heuristic | Inline the full `psql -h ... -p ... -U ... -d ...` invocation; do NOT use a wrapper variable |
