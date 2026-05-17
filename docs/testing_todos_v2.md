@@ -328,6 +328,74 @@ Staging bench against `https://3mni7nx5bf.execute-api.ap-south-1.amazonaws.com/s
 
 **Owner:** `android` (Settings screens, both personas).
 
+### F39 — F23 voice patient onboarding: typed contact-details Submit button stays `enabled="false"` after voice conversational phase completes (NEW — 2026-05-16 post-reboot bench)
+
+**Severity:** **High — blocks CG-V2-04 end-to-end on the post-reboot bench.** F23 conversational extraction worked through 8 turns (state advanced CREATED → EXTRACTING_PROFILE; Soda captured turns 1–7 with `chars=29..70`; LLM correctly tracked name, age, conditions, no-allergies, doctor across turns). After the conversation phase Matika transitions to a typed contact-details form ("We'll send the patient their login by email and SMS. Please type their email address and phone number.") with fields `patient_credentials_email` + `patient_credentials_phone` and button `patient_credentials_submit`. With email `sanyalsubhajit2010+at@gmail.com` (valid format, fresh in Cognito) and phone `+919876543210` (valid E.164 India) typed in both fields, `patient_credentials_submit` remains `enabled="false"`. Tap is accepted at the Compose layer (`clickable="true"`) but no HTTP request fires — confirmed by:
+- API Gateway `4XXError` metric: 0 events in the relevant 30-min window
+- `/aws/lambda/carelog-staging-create-patient-from-voice`: log group does not exist (lambda never invoked)
+- `/aws/lambda/carelog-staging-create-patient`: silent in same window
+- RDS `patients` table: no Rajiv-* row created (latest 3 rows are Priya / Asha / Jane from earlier sessions)
+- `interaction_sessions` for the session at hand: ends in `PAUSED / paused` state, not `PROFILE_CONFIRMED`
+
+No error message is rendered on the form when the disabled Submit is tapped — caregiver has no way to know what's wrong. Same silent-failure pattern as F31 but on the contact-form path instead of the voice-turn path.
+
+**Owner:** `android` (F23 voice contact form — `patient_credentials_submit` enablement logic and surfacing of validation reason).
+
+**Repro:** Caregiver F23 voice flow → drive 6+ conversational turns until Matika asks for contact details → type any valid-format email + E.164 phone into the form → observe `patient_credentials_submit` `enabled="false"` in `uiautomator dump` → tap does nothing.
+
+**Fix candidates:**
+1. Audit the `enabled = …` predicate on `patient_credentials_submit` for missing/strict conditions (phone-format regex, async validation state, conversation-completion flag).
+2. Surface a visible validation reason next to whichever field is failing (toast / helper text) so a disabled Submit isn't a dead end.
+3. Add a logcat line at the Submit-tap handler so future bench runs can grep for the rejection reason.
+
+### F40 — `Type instead (fallback)` mode never hits backend — drives local UI to COMPLETE without creating an interaction_sessions row or queuing observations for sync (NEW — 2026-05-16 post-reboot bench)
+
+**Severity:** **High — invalidates text-fallback as a bench substitute when voice is unavailable.** Used as the pivot path after the Core Audio re-wedge (F41) blocked PT-V2-03 voice driving. Typed `My blood pressure is one thirty over eighty five.` into `matika_text_fallback` + tapped `matika_text_send` (which correctly enabled on text entry). UI advanced through PENDING_CONFIRMATION (BP 130 / 85 mmHg displayed) → typed `Yes, that is correct.` → tapped send → UI showed "Session complete. The readings below have been recorded." with a Done button. Tapped Done, returned to patient home. All looked clean.
+
+Backend asserts contradict the UI:
+- `interaction_sessions` (staging RDS): **zero rows** created in the last 4 h despite the full drive; the only recent patient_logging row is `44c1f27e-…` from a prior session 4+ hours earlier (same BP 130/85 — the runbook canonical value, not mine).
+- `observation_sync_log` for `CL-TPUX54` since the drive: **zero rows**.
+- S3 `s3://carelog-v2-staging-documents-316643066568/observations/CL-TPUX54/2026/05/16/`: no new `obs-*.json`.
+- `/aws/lambda/matika-staging-bedrock-router`: zero invocations in the relevant 20-min window.
+- `/aws/lambda/carelog-staging-manage-interactions`, `carelog-staging-store-interaction`, `carelog-staging-end-session`: all silent.
+- App logcat: `FhirSyncWorker` fired routinely and logged `Found 0 pending observations to sync` — nothing was queued for sync from the fallback drive.
+
+So the "Type instead (fallback)" path is either:
+1. A purely-local mock state machine that produces the same UI feedback as a real session but never POSTs (likely a debug/dev affordance that should NOT be on a staging-pointed APK), OR
+2. A real path whose HTTP call is failing silently before reaching the AGW (no Retrofit error visible in app logs either).
+
+Either way, the consequence on bench: text-fallback cannot validate Bedrock + LLM extraction + FSM + RDS persist + S3 sync. The implicit "fallback covers everything voice does, minus STT" assumption baked into the bench runbook and `journeys_non_voice.md` is wrong for this APK build.
+
+**Owner:** `android` (`MatikaConversationViewModel` / `matika_text_fallback` → `matika_text_send` wire path) + `qa-testing` (re-classify any journey that relies on text-fallback for backend asserts).
+
+**Fix candidates:**
+1. If fallback is intentionally local-only, gate it on `BuildConfig.DEBUG` AND surface a visible "(local mock — not synced)" banner. Re-classify text-fallback journeys.
+2. If fallback should POST: wire it through the same `/conversation/turn` endpoint the voice path uses; add Retrofit error toast on non-2xx.
+3. Add `Log.i(TAG, …)` at the send-text handler with the chosen path (local vs network) so bench runs can grep.
+
+**Repro:** Patient (or any) voice screen → tap `Type instead (fallback)` → type any vital utterance → tap send → observe full UI flow to "Session complete" → query `interaction_sessions WHERE started_at > now() - interval '5 minutes'` on staging RDS → returns 0 rows.
+
+### F41 — Core Audio re-wedges within ~30 min of sustained voice activity, even after fresh reboot + coreaudiod/audiomxd restart (NEW — 2026-05-16 post-reboot bench; voice-harness regression)
+
+**Severity:** **Medium — bench-harness blocker, not a product bug.** Mac mini was rebooted at session start specifically to clear the pre-existing Core Audio wedge (per `voice_harness_lessons.md` lesson 6, "reboot-only"). Pre-flight `afplay /System/Library/Sounds/Pop.aiff` returned cleanly + `AUDIO_OK`. After completing CG-V2-04 turns 1–8 via the standard pattern (acoustic `say -v Rishi` → Mac mini Speakers @ 50% → Samsung S22 mic) — **about 25 minutes of voice activity** — `afplay` again returned `AudioQueueStart failed (-66681)` and `say` processes hung indefinitely (still pending after `kill -9`).
+
+Attempted recoveries that did NOT unstick (`afplay` still -66681 after each):
+- `sudo killall coreaudiod` (twice; second one took — verified pid changed from 448 → 9235, uptime restarted)
+- `sudo killall audiomxd` (took — pid changed → 9328, uptime 1s)
+- `SwitchAudioSource -s "External Headphones"` → `-s "Mac mini Speakers"` toggle (no effect on either device)
+
+So the wedge persists below the user-space audio daemon layer (likely audio HAL / device driver state). The runbook §1 already calls out this state as "this runbook can't proceed — file as voice_harness_lessons.md regression"; this is that file-as-regression.
+
+**Trigger pattern observed today.** Continuous `say` invocations (one every ~30–45s, mixed across English Rishi and intermittent device switches via `matika-say.sh` re-asserting `External Headphones`) over ~25 min consistently reproduce. Recovery requires full Mac mini reboot.
+
+**Owner:** `qa-testing` / `voice-harness`.
+
+**Mitigations to evaluate before next bench:**
+1. **Stop using `matika-say.sh`'s `SwitchAudioSource` re-assert** if the user wants `Mac mini Speakers` as a stable output — every call switches the OS-wide output device, and the device-switch event itself may be what wedges the HAL after enough repetitions. Either keep the script's behavior (acoustically force-route to External Headphones) OR drive bare `say` with the device pre-selected once.
+2. **Time-bound bench sessions.** Schedule reboots between Phase A and Phase B so the wedge never accumulates inside a multi-journey run.
+3. **Investigate** whether the wedge is specific to alternating between built-in vs external output devices, or whether single-device runs also wedge — would isolate whether SwitchAudioSource is the trigger.
+4. Update `voice_harness_lessons.md` lesson 6 with the "rebooted-and-still-wedged-after-25-min" data point so future bench operators don't burn time on the same coreaudiod/audiomxd restart attempts.
+
 ### Bench scope NOT covered (callouts for next session)
 
 - **Trends + Thresholds screens** (caregiver side) — patient has vitals now, can exercise.
