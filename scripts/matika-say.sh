@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Speaks an utterance through the Mac's External Headphones output so
-# the Android phone (placed near the speaker) picks it up via mic.
+# Speaks an utterance through whichever Mac audio output the operator
+# has pre-selected so the Android phone (placed near the speaker, or
+# with an earbud taped to its mic) picks it up via mic.
 #
 # Synthetic audio cannot be injected into Android's SpeechRecognizer
 # over ADB, so the agentic voice harness goes acoustic: Mac speaks,
@@ -15,8 +16,25 @@
 #   bn   no native macOS voice; set MATIKA_BN_AUDIO=<path> to play a
 #        pre-recorded .aiff/.wav via afplay instead.
 #
-# Example:
-#   scripts/matika-say.sh en 175 "My blood pressure is one thirty over eighty five." 600
+# Output-device behavior (F41 mitigation, 2026-05-17):
+#   This script used to call `SwitchAudioSource -t output -s
+#   "External Headphones"` UNCONDITIONALLY on every utterance. Over a
+#   multi-turn bench (~25 min, ~30 utterances) the cumulative
+#   device-switch events are the leading hypothesis for the Core Audio
+#   wedge documented as F41 in docs/testing_todos_v2.md. New behavior:
+#     - If MATIKA_OUTPUT_DEVICE env is set, switch ONLY when the
+#       currently-selected output device doesn't already match. So
+#       turn 1 may switch; turns 2..N are no-ops as long as nothing
+#       outside the script changed the device.
+#     - If MATIKA_OUTPUT_DEVICE is unset, leave whatever the operator
+#       pre-selected (via Sound prefs or `SwitchAudioSource -s`) alone.
+#   To restore the old always-re-assert behavior, set
+#   MATIKA_OUTPUT_DEVICE="External Headphones" and additionally
+#   export MATIKA_FORCE_OUTPUT_REASSERT=1.
+#
+# Example (loud-bench, External Headphones device, switch-once):
+#   export MATIKA_OUTPUT_DEVICE="External Headphones"
+#   scripts/matika-say.sh en 175 "My BP is one thirty over eighty five." 600
 
 set -euo pipefail
 
@@ -30,10 +48,13 @@ if ! command -v SwitchAudioSource >/dev/null 2>&1; then
     exit 1
 fi
 
-# matika-say.sh always re-asserts the output device before speaking.
-# The user may switch outputs between turns (Bluetooth, AirPods,
-# screen-sharing) and we want every utterance to land on the phone.
-SwitchAudioSource -t output -s "External Headphones" >/dev/null
+TARGET_OUTPUT="${MATIKA_OUTPUT_DEVICE:-}"
+if [[ -n "$TARGET_OUTPUT" ]]; then
+    CURRENT_OUTPUT="$(SwitchAudioSource -c 2>/dev/null || true)"
+    if [[ "${MATIKA_FORCE_OUTPUT_REASSERT:-0}" == "1" || "$CURRENT_OUTPUT" != "$TARGET_OUTPUT" ]]; then
+        SwitchAudioSource -t output -s "$TARGET_OUTPUT" >/dev/null
+    fi
+fi
 
 # Floating-point sleep — bc isn't always present on a fresh macOS;
 # awk is. Skip the sleep entirely if zero.

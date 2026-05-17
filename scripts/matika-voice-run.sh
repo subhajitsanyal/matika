@@ -100,6 +100,19 @@ if [[ ! -x "$ROOT/scripts/matika-say.sh" ]]; then
     echo "ERROR: scripts/matika-say.sh missing or not executable" >&2; exit 1
 fi
 
+# F41 preflight — fast-fail if Core Audio is wedged or `say` is
+# orphaned, so we don't burn a Maestro launch (and possibly device
+# state) on a run that can't speak. Skippable via
+# MATIKA_SKIP_PREFLIGHT=1 for diagnostic re-runs against a known-bad
+# Mac; default ON.
+if [[ "${MATIKA_SKIP_PREFLIGHT:-0}" != "1" && -x "$ROOT/scripts/matika-voice-preflight.sh" ]]; then
+    if ! "$ROOT/scripts/matika-voice-preflight.sh"; then
+        PREFLIGHT_RC=$?
+        echo "ERROR: matika-voice-preflight.sh failed (rc=$PREFLIGHT_RC) — aborting voice run." >&2
+        exit "$PREFLIGHT_RC"
+    fi
+fi
+
 # Clean logcat once before launching anything so the very first turn's
 # wait can't match a stale event.
 adb logcat -c
