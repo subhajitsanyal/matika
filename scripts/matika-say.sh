@@ -32,9 +32,21 @@
 #   MATIKA_OUTPUT_DEVICE="External Headphones" and additionally
 #   export MATIKA_FORCE_OUTPUT_REASSERT=1.
 #
+# Remote-TTS mode (F41 bypass, 2026-05-17):
+#   If MATIKA_SAY_REMOTE_URL is set, POST the utterance to that URL
+#   instead of invoking the local `say` binary. The remote service
+#   (scripts/matika-tts-server.py running on a second Mac near the
+#   phone) speaks through its own audio chain, completely sidestepping
+#   the primary mac's wedged Core Audio. SwitchAudioSource is skipped
+#   entirely in this mode — output device is the remote mac's concern.
+#
 # Example (loud-bench, External Headphones device, switch-once):
 #   export MATIKA_OUTPUT_DEVICE="External Headphones"
 #   scripts/matika-say.sh en 175 "My BP is one thirty over eighty five." 600
+#
+# Example (remote-tts, F41-bypass):
+#   export MATIKA_SAY_REMOTE_URL="http://10.0.0.171:8765"
+#   scripts/matika-say.sh en 165 "Geeta Iyer" 600
 
 set -euo pipefail
 
@@ -43,6 +55,41 @@ RATE="${2:?rate (e.g. 175) required}"
 UTTER="${3:?utterance required}"
 PREDELAY_MS="${4:-0}"
 
+# --- Remote-TTS branch ------------------------------------------------
+if [[ -n "${MATIKA_SAY_REMOTE_URL:-}" ]]; then
+    if ! command -v curl >/dev/null 2>&1; then
+        echo "ERROR: curl required for MATIKA_SAY_REMOTE_URL mode" >&2
+        exit 1
+    fi
+    if [[ "$LANG_CODE" == "bn" ]]; then
+        echo "ERROR: bn not supported via remote-TTS — macOS has no Bengali say voice." >&2
+        echo "       Stage MATIKA_BN_AUDIO locally and unset MATIKA_SAY_REMOTE_URL for bn turns." >&2
+        exit 2
+    fi
+    if [[ "$PREDELAY_MS" -gt 0 ]]; then
+        sleep "$(awk "BEGIN{ print $PREDELAY_MS / 1000 }")"
+    fi
+    # Build JSON body — prefer jq for proper string escaping; fall back
+    # to a python one-liner (always present on macOS) if jq is missing.
+    if command -v jq >/dev/null 2>&1; then
+        BODY=$(jq -nc --arg lang "$LANG_CODE" --argjson rate "$RATE" --arg text "$UTTER" \
+            '{lang:$lang, rate:$rate, text:$text}')
+    else
+        BODY=$(python3 -c 'import json,sys; print(json.dumps({"lang":sys.argv[1],"rate":int(sys.argv[2]),"text":sys.argv[3]}))' \
+            "$LANG_CODE" "$RATE" "$UTTER")
+    fi
+    RESP=$(curl -sS --fail-with-body --max-time 35 -X POST "${MATIKA_SAY_REMOTE_URL%/}/say" \
+        -H 'Content-Type: application/json' --data "$BODY") || {
+        rc=$?
+        echo "ERROR: remote say failed (curl rc=$rc): $RESP" >&2
+        exit "$rc"
+    }
+    # Echo duration to stderr so the harness log captures TTS latency.
+    echo "[remote-say] $RESP" >&2
+    exit 0
+fi
+
+# --- Local-say branch (original behavior) -----------------------------
 if ! command -v SwitchAudioSource >/dev/null 2>&1; then
     echo "ERROR: SwitchAudioSource not on PATH. brew install switchaudio-osx" >&2
     exit 1

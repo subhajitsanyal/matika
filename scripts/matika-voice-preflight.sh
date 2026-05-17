@@ -30,6 +30,32 @@ PREFLIGHT_RC=0
 
 echo "▸ voice preflight starting at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
+# 0. Remote-TTS mode (F41 bypass): when MATIKA_SAY_REMOTE_URL is set,
+# the LOCAL Core Audio chain is irrelevant — the only thing that has
+# to be alive is the remote say service. Probe /health instead of
+# afplay and skip the rest of the local checks (still verify adb).
+if [[ -n "${MATIKA_SAY_REMOTE_URL:-}" ]]; then
+    echo "  ◦ remote-TTS mode: probing ${MATIKA_SAY_REMOTE_URL%/}/health"
+    if ! HEALTH=$(curl -sS --fail --max-time 3 "${MATIKA_SAY_REMOTE_URL%/}/health"); then
+        echo "ERROR: remote TTS service unreachable at $MATIKA_SAY_REMOTE_URL" >&2
+        echo "       Start it on the speaker mac with: python3 scripts/matika-tts-server.py" >&2
+        exit 2
+    fi
+    echo "  ✓ remote TTS healthy: $HEALTH"
+    if ! command -v adb >/dev/null 2>&1; then
+        echo "ERROR: adb not on PATH" >&2; exit 1
+    fi
+    DEVICE_COUNT=$(adb devices 2>/dev/null | awk 'NR>1 && /device$/ {n++} END{print n+0}')
+    if [[ "$DEVICE_COUNT" -eq 0 ]]; then
+        echo "ERROR: no adb device attached." >&2
+        exit 1
+    fi
+    DEVICE_LIST=$(adb devices 2>/dev/null | awk 'NR>1 && /device$/ {print $1}' | paste -sd, -)
+    echo "  ✓ adb device(s) attached: $DEVICE_LIST"
+    echo "▸ voice preflight done (rc=0, remote-tts)"
+    exit 0
+fi
+
 # 1. Core Audio responsive? Run afplay in the background so we can
 # timeout it — afplay on a wedged HAL hangs indefinitely past `kill`,
 # and `kill -9` doesn't always reap the audio-IO sleep.
