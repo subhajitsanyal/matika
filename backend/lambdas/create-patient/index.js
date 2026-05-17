@@ -204,14 +204,24 @@ async function createPatientRecords(dbClient, patientData, caregiverCognitoSub, 
       [caregiverCognitoSub, caregiverEmail, caregiverName]
     );
 
-    // Create user record for patient
+    // Create user record for patient.
+    // F44 (2026-05-17) — persist the actual Cognito login email here
+    // instead of synthesizing `${patientId}@patient.carelog.com`. Before
+    // this fix the caregiver typed e.g. `mom@example.com` into the
+    // form, Cognito stored it correctly, but users.email got a
+    // throwaway address — so SMS-not-applicable / email-driven flows
+    // (welcome email lookup, forgot-password by-email lookup against
+    // RDS) silently misrouted. patientLoginEmail is either the
+    // caregiver-typed address or createCognitoUser's
+    // `patient.<id>@carelog.internal` fallback when none was provided;
+    // either way it matches what Cognito stored.
     const userResult = await dbClient.query(
       `INSERT INTO users (cognito_sub, email, name, persona_type, is_active)
        VALUES ($1, $2, $3, 'patient', true)
        RETURNING id`,
       [
         patientData.cognitoSub,
-        `${patientData.patientId}@patient.carelog.com`, // Placeholder email
+        patientData.loginEmail,
         patientData.name,
       ]
     );
@@ -379,6 +389,9 @@ exports.handler = async (event) => {
       dbClient,
       {
         cognitoSub,
+        // F44 — pass the actual Cognito login email through to the
+        // RDS users.email column so it matches what Cognito stored.
+        loginEmail: patientLoginEmail,
         patientId,
         name: body.name,
         dateOfBirth: body.dateOfBirth,
