@@ -128,24 +128,34 @@ function jsonResponse(statusCode, body) {
   return { statusCode, body: JSON.stringify(body) };
 }
 
-async function createCognitoUserForPatient(shortPatientId, name, email) {
+async function createCognitoUserForPatient(shortPatientId, name, email, phone) {
   const tempPassword = generateTempPassword();
   // Username = the email actually used. For caregiver-supplied emails,
   // that's the real address (so the patient can sign in with it). For
   // the synthetic-email fallback, that's `<shortId>@patient.carelog.com`.
   const loginEmail = email || `${shortPatientId}@patient.carelog.com`;
 
+  // F43 — surface phone_number to Cognito so SMS-based flows (welcome
+  // SMS, forgot-password-via-SMS, MFA later) have it. Caller normalizes
+  // to E.164; mark verified=true to match how email_verified is handled
+  // (the caregiver typed it; we trust their input the same way).
+  const userAttributes = [
+    { Name: 'email', Value: loginEmail },
+    { Name: 'email_verified', Value: 'true' },
+    { Name: 'name', Value: name },
+    { Name: 'custom:persona_type', Value: 'patient' },
+    { Name: 'custom:linked_patient_id', Value: shortPatientId },
+  ];
+  if (phone) {
+    userAttributes.push({ Name: 'phone_number', Value: phone });
+    userAttributes.push({ Name: 'phone_number_verified', Value: 'true' });
+  }
+
   const result = await cognitoClient.send(
     new AdminCreateUserCommand({
       UserPoolId: process.env.COGNITO_USER_POOL_ID,
       Username: loginEmail,
-      UserAttributes: [
-        { Name: 'email', Value: loginEmail },
-        { Name: 'email_verified', Value: 'true' },
-        { Name: 'name', Value: name },
-        { Name: 'custom:persona_type', Value: 'patient' },
-        { Name: 'custom:linked_patient_id', Value: shortPatientId },
-      ],
+      UserAttributes: userAttributes,
       TemporaryPassword: tempPassword,
       MessageAction: 'SUPPRESS',
     })
@@ -227,11 +237,14 @@ async function persistRds({
     );
 
     // 2. Patient users-row.
+    // F43 — persist phone_number on the users row alongside email/name
+    // so the patient's own contact info isn't tucked away in
+    // emergency_contact_phone (which is semantically for a third party).
     const userResult = await dbClient.query(
-      `INSERT INTO users (cognito_sub, email, name, persona_type, is_active)
-       VALUES ($1, $2, $3, 'patient', true)
+      `INSERT INTO users (cognito_sub, email, name, phone_number, persona_type, is_active)
+       VALUES ($1, $2, $3, $4, 'patient', true)
        RETURNING id`,
-      [patient.cognitoSub, patient.loginEmail, patient.name]
+      [patient.cognitoSub, patient.loginEmail, patient.name, patient.phoneNumber || null]
     );
     const patientUserId = userResult.rows[0].id;
 
@@ -418,7 +431,12 @@ exports.handler = async (event) => {
   let tempPassword = null;
   let loginEmail = null;
   try {
-    const cog = await createCognitoUserForPatient(shortPatientId, patientName, credentials.email);
+    const cog = await createCognitoUserForPatient(
+      shortPatientId,
+      patientName,
+      credentials.email,
+      credentials.phone,
+    );
     cognitoSub = cog.cognitoSub;
     tempPassword = cog.tempPassword;
     loginEmail = cog.loginEmail;
@@ -451,13 +469,20 @@ exports.handler = async (event) => {
         shortId: shortPatientId,
         loginEmail,
         name: patientName,
+        // F43 — patient's own contact phone (caregiver-supplied via
+        // F23 form modal). Goes to users.phone_number, not
+        // emergency_contact_phone (that field is for a third-party
+        // contact, distinct from the patient).
+        phoneNumber: credentials.phone,
         dateOfBirth,
         gender: profile.gender,
         conditions: profile.conditions,
         allergies: profile.allergies,
         medications: profile.medications,
         emergencyContactName: profile.emergencyContactName,
-        emergencyContactPhone: credentials.phone, // primary phone goes to emergency_contact_phone for now
+        // emergencyContactPhone left undefined — the profile prompt
+        // doesn't capture it today (only emergencyContactName). Falls
+        // through to NULL in patients.emergency_contact_phone.
         primaryLanguage: profile.primaryLanguage,
         timezone: profile.timezone,
       },
