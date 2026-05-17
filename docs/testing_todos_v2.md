@@ -328,7 +328,7 @@ Staging bench against `https://3mni7nx5bf.execute-api.ap-south-1.amazonaws.com/s
 
 **Owner:** `android` (Settings screens, both personas).
 
-### F39 — F23 voice patient onboarding: typed contact-details Submit button stays `enabled="false"` after voice conversational phase completes (CODE FIX SHIPPED 2026-05-16; live RDS/CloudWatch re-bench gated on F41)
+### F39 — F23 voice patient onboarding: typed contact-details Submit button stays `enabled="false"` after voice conversational phase completes (RESOLVED — verified live 2026-05-17)
 
 **Severity:** **High — blocks CG-V2-04 end-to-end on the post-reboot bench.** F23 conversational extraction worked through 8 turns (state advanced CREATED → EXTRACTING_PROFILE; Soda captured turns 1–7 with `chars=29..70`; LLM correctly tracked name, age, conditions, no-allergies, doctor across turns). After the conversation phase Matika transitions to a typed contact-details form ("We'll send the patient their login by email and SMS. Please type their email address and phone number.") with fields `patient_credentials_email` + `patient_credentials_phone` and button `patient_credentials_submit`. With email `sanyalsubhajit2010+at@gmail.com` (valid format, fresh in Cognito) and phone `+919876543210` (valid E.164 India) typed in both fields, `patient_credentials_submit` remains `enabled="false"`. Tap is accepted at the Compose layer (`clickable="true"`) but no HTTP request fires — confirmed by:
 - API Gateway `4XXError` metric: 0 events in the relevant 30-min window
@@ -359,11 +359,70 @@ No error message is rendered on the form when the disabled Submit is tapped — 
 
 **Build + install evidence.** `./gradlew :app:assembleDebug` produced `app-debug.apk` (131M, 2026-05-16). Installed on `RFCT10C1GSZ` via `adb install -r` → `Success`. App launched cleanly; `topResumedActivity = com.carelog/.ui.MainActivity`; zero `AndroidRuntime:E` lines in logcat post-launch.
 
-**Live verification gap (RDS row + CloudWatch log) — DEFERRED behind F41.** F41 (Core Audio wedge) was already reproduced at the start of this session — `afplay /System/Library/Sounds/Pop.aiff` returned `AudioQueueStart failed (-66681)` before any `say` was attempted. The kickoff explicitly accommodates this: "fall back to unit/UI-test evidence on item #1 and call out the live-bench gap explicitly. Don't fabricate verification." The fix is purely client-side (per the kickoff's diagnosis) — the dialog never POSTed; it caches `submittedPatientCredentials` in the ViewModel and the next voice turn includes them in `TurnRequest`. So:
-- Items needing voice driving (RDS `patients` row insert + `carelog-staging-create-patient-from-voice` "Patient created: CL-XXXXXX" log line + matching RequestId in `matika-staging-bedrock-router`) **must be replayed once F41 is unblocked**. Best candidate: next session after a Mac mini reboot + F41 mitigation #1 (drop `matika-say.sh`'s `SwitchAudioSource` re-assert).
-- Until then, the F39 bench-evidence triad is **incomplete**. Flip the header to "(RESOLVED — verified live YYYY-MM-DD)" only after the lambda log + RDS row land.
+**Live verification (2026-05-17).** Bench driven via a new remote-TTS workaround (commit `dd9b33a` — `scripts/matika-tts-server.py` runs on a second mac next to the phone; `MATIKA_SAY_REMOTE_URL` routes `matika-say.sh` to it, bypassing Mac mini Core Audio entirely). F41 stayed wedged the whole session; F39 still verified end-to-end. Evidence triad:
+- **Device behavior** — three screenshots in `docs/voice-bench-evidence/cg-v2-04_2026-05-17/`: `01_dialog_opened.png` (Submit cyan-active with empty fields — pre-fix was grey/disabled), `02_submit_empty_validation.png` (both fields red-bordered with "Required" supportingText after empty-Submit tap — the always-tappable-with-validation behavior), `03_fields_filled.png` (typed values displayed).
+- **Logcat** — `MatikaConversationVM: patient credentials submitted (email length=31)` confirms the dialog dispatched the full 31-char `sanyalsubhajit2010+at@gmail.com` value to the ViewModel after the Submit tap.
+- **RDS** — staging `patients` row `CL-PNDN1P` (Geeta Arya) + linked `users` row with email matching the typed value (`sanyalsubhajit2010+at@gmail.com`); `interaction_sessions.fsm_state=PROFILE_CONFIRMED, status=complete`. End-to-end completion required the F42 backend fix (see entry below) to land first — F39 alone gets the form to dispatch, F42 gets the next turn to advance.
+- **CloudWatch** — `/aws/lambda/carelog-staging-create-patient-from-voice` RequestId `8eb89a67-4d77-44b2-aca1-7de93f149ab8`: `create-patient-from-voice ok { sessionId: '45028cda-…', patientShortId: 'CL-PNDN1P', patientCognitoSub: '31431d5a-…' }`.
+- **Cognito** — user `31431d5a-7001-7044-e44b-a0ed3a02e055` CONFIRMED with the typed email.
 
-**Adjacent finding for the live retest.** Per `v2_open_blockers_endofday_20260516.md` the 2026-05-16 bench saw STT mis-hear "Menon" → "Maina" — that's an LLM-tracked artifact of Soda's Indian-name handling, not a v2 blocker. When you replay, expect the freshly-created RDS patient's surname to reflect whatever Soda heard, not what was acoustically spoken.
+A second drive (post-F43 fix) created `CL-D12W5Q` (Sunita Ghosh) with the same verification path, cementing the fix.
+
+**Adjacent finding.** Soda mis-heard "Iyer" → "Arya" and "Bose" → "Ghosh" on the name-capture turn — STT artifact, not a fix regression. The LLM rolled with Soda's transcript through readback + confirm.
+
+### F42 — Backend state machine wedges in PAUSED after F23 credentials form dispatches (RESOLVED — verified live 2026-05-17)
+
+**Severity:** **High — silently blocks every CG-V2-04 end-to-end once the F39 client fix lands.** New finding from the 2026-05-17 live bench. After F39's dialog Submit cached email/phone in `MatikaConversationViewModel.submittedPatientCredentials` and attached them to the next `TurnRequest` (per `BedrockTurnClient.kt:44–67`), the next voice turn ("Yes, please continue.") returned `StateTransitionError: Transition PAUSED -> PAUSED is not in the allowed set` (bedrock-router RequestId `33b4d5b8-b9b4-44ef-b8fa-f7e5efdcbed0`). Session stayed `fsm=PAUSED`; no patient was ever created.
+
+**Owner:** `backend` (`bedrock-router/src/handler.ts`).
+
+**Root cause.** The `patientCredentials` field rides on `TurnRequest` as a structural payload (`MatikaConversationViewModel.kt:387–390`) but the LLM only sees the transcript ("yes please continue") and the rendered `fsmState=PAUSED` in the per-turn block. There's no prompt-side signal that credentials have just arrived, so Sonnet keeps proposing `PAUSED -> PAUSED` and `applyTransition` rightly rejects it (`state_machine.ts:79–91` allows PAUSED → various states, but NOT PAUSED → PAUSED).
+
+**Fix shipped 2026-05-17 (commit `c7394ac`).** In `handler.ts` `handleTurn`, immediately after `loadOrCreateTurnContext`:
+- Detect `event.patientCredentials != null && fsmState === 'PAUSED' && isCaregiverSession(...) && patientCtx.placeholder` — exactly the resume-from-credentials condition.
+- Hot-rotate `turnCtx.sessionState.fsmState` to `EXTRACTING_PROFILE` in-memory (an allowed PAUSED successor) before the LLM call.
+- Prepend a "Patient credentials just arrived" directive to the per-turn block (`turnBlockWithCredentials`) instructing the model to advance to Stage 8 readback (`EXTRACTING_PROFILE -> AWAITING_PROFILE_CONFIRMATION`) and explicitly NOT re-propose `PAUSED -> PAUSED`.
+- Telemetry: `console.info('credentials_received_auto_resume', …)`.
+
+**Tests (3 added in `handler.test.ts`, full suite 398/398 PASS):**
+- Pre-pivot turn with credentials → fsm advanced to `AWAITING_PROFILE_CONFIRMATION`, directive present in per-turn block, FSM-state line rotated to `EXTRACTING_PROFILE`.
+- Credentials present but already past PAUSED → directive NOT injected (untouched path).
+- Non-caregiver session with credentials in PAUSED → directive NOT injected (caregiver-only short-circuit).
+
+**Live verification (post-deploy):** turn 10 of session `45028cda-…` advanced `PAUSED → AWAITING_PROFILE_CONFIRMATION` (Stage 8 readback delivered); turn 11 confirm → `PROFILE_CONFIRMED`, `complete_session`, `create-patient-from-voice` RequestId `8eb89a67-…`, RDS row `CL-PNDN1P`. Second drive (Sunita Ghosh, session `e749f5d4-…`) reproduced the same path.
+
+### F43 — Voice-onboarded patient's phone dropped from Cognito + users.phone_number (RESOLVED — verified live 2026-05-17)
+
+**Severity:** **High — blocks patient SMS invite delivery for every CG-V2-04 patient.** New finding from the 2026-05-17 first successful CG-V2-04 end-to-end (Geeta Arya, `CL-PNDN1P`). The F39 dialog correctly cached `+919876543210` and the F42 fix correctly resumed the session, but after `create-patient-from-voice ok` returned, RDS `users.phone_number = NULL` and Cognito `phone_number` attribute = `None`. Email persisted correctly. The lambda was stashing `credentials.phone` in `patients.emergency_contact_phone` (semantically wrong — that field is for a third-party contact, not the patient themselves) and ignoring it on both the Cognito user and the patient's own users-row.
+
+**Owner:** `backend` (`backend/lambdas/create-patient-from-voice/index.js`).
+
+**Fix shipped 2026-05-17 (commit `b3a5308`).** Three coordinated edits in `index.js`:
+- `createCognitoUserForPatient` now takes `phone` and pushes `{Name: 'phone_number', Value: phone}` + `{Name: 'phone_number_verified', Value: 'true'}` to `UserAttributes` when present (matching how `email_verified=true` is handled — we trust caregiver input).
+- `persistRds` INSERT INTO users now includes the `phone_number` column with `patient.phoneNumber || null`.
+- Handler wires `credentials.phone` through as `patient.phoneNumber`; the stale "primary phone goes to emergency_contact_phone for now" patch is removed. `emergency_contact_phone` now falls through to NULL until the profile prompt actually captures a third-party contact.
+
+**Live verification (post-deploy).** A/B against the same RDS:
+- Pre-fix `CL-PNDN1P` (Geeta Arya): `users.phone_number = NULL`, `patients.emergency_contact_phone = +919876543210` ← misrouted, Cognito `phone_number = None`.
+- Post-fix `CL-D12W5Q` (Sunita Ghosh): `users.phone_number = +919812345678`, `patients.emergency_contact_phone = NULL`, Cognito `phone_number = +919812345678` with `phone_number_verified = true`.
+
+**Backfill (optional, out of scope for the fix).** Pre-fix patient `CL-PNDN1P` carries the wrong column populated. A one-time UPDATE could move `patients.emergency_contact_phone` → `users.phone_number` for any `users.persona_type = 'patient' AND users.phone_number IS NULL AND patients.emergency_contact_phone IS NOT NULL` row. Tracked here for posterity; not run live.
+
+### F44 — Form-onboard create-patient lambda hardcoded users.email to a synthetic placeholder regardless of typed value (RESOLVED — verified live 2026-05-17)
+
+**Severity:** **Medium — invalidates email-driven flows (welcome-email lookup, forgot-password-by-email lookup against RDS) for every patient created via the form-onboard path.** Surfaced during the 2026-05-17 CG-V2-03 drive: after typing `sanyalsubhajit2010+at3@gmail.com` into the form's `onboarding_email` field, the Cognito user got the correct email, but RDS `users.email` stored `CL-GMHA2C@patient.carelog.com` (the synthetic Cognito username fallback that's only meant to apply when no email was typed). Voice-onboard (CG-V2-04) had already been fixed by F43; this is the form-onboard equivalent of the same plumbing class.
+
+**Owner:** `backend` (`backend/lambdas/create-patient/index.js`).
+
+**Root cause.** `createPatientRecords` INSERT at L214 hardcoded `` `${patientData.patientId}@patient.carelog.com` `` regardless of what `body.patientEmail` resolved to. The handler did read `body.patientEmail` (L370) and pass it correctly to Cognito, but the RDS path threw the resolved value away.
+
+**Fix shipped 2026-05-17 (commit `26d9f7b`).** Handler now passes `patientLoginEmail` (the actual Cognito Username — either the typed email or `createCognitoUser`'s `patient.<id>@carelog.internal` fallback when none was typed) through to `createPatientRecords` as `patient.loginEmail`. The INSERT writes that value, so `users.email` matches the Cognito user 1:1.
+
+**Live verification (post-deploy).** A/B against the same staging RDS:
+- Pre-fix `CL-GMHA2C` (Lata.Verma, 22:52): `users.email = CL-GMHA2C@patient.carelog.com` ← placeholder.
+- Post-fix `CL-1RK0CD` (Meera Nair, 23:14): `users.email = sanyalsubhajit2010+at4@gmail.com` ← real, matches Cognito email attribute exactly.
+
+**Out of scope for F44.** The form-onboard UI has no patient-phone field today — only "Emergency Contact Phone", which correctly routes to `patients.emergency_contact_phone`. So `users.phone_number` legitimately stays NULL for form-onboarded patients. Filing a separate UX gap is premature; voice-onboard is the canonical path for capturing a patient's own phone.
 
 ### F40 — `Type instead (fallback)` mode never hits backend — drives local UI to COMPLETE without creating an interaction_sessions row or queuing observations for sync (NEW — 2026-05-16 post-reboot bench)
 
@@ -392,7 +451,7 @@ Either way, the consequence on bench: text-fallback cannot validate Bedrock + LL
 
 **Repro:** Patient (or any) voice screen → tap `Type instead (fallback)` → type any vital utterance → tap send → observe full UI flow to "Session complete" → query `interaction_sessions WHERE started_at > now() - interval '5 minutes'` on staging RDS → returns 0 rows.
 
-### F41 — Core Audio re-wedges within ~30 min of sustained voice activity, even after fresh reboot + coreaudiod/audiomxd restart (NEW — 2026-05-16 post-reboot bench; voice-harness regression)
+### F41 — Core Audio re-wedges within ~30 min of sustained voice activity, even after fresh reboot + coreaudiod/audiomxd restart (BYPASSED via remote-TTS workaround 2026-05-17; underlying Mac mini regression remains)
 
 **Severity:** **Medium — bench-harness blocker, not a product bug.** Mac mini was rebooted at session start specifically to clear the pre-existing Core Audio wedge (per `voice_harness_lessons.md` lesson 6, "reboot-only"). Pre-flight `afplay /System/Library/Sounds/Pop.aiff` returned cleanly + `AUDIO_OK`. After completing CG-V2-04 turns 1–8 via the standard pattern (acoustic `say -v Rishi` → Mac mini Speakers @ 50% → Samsung S22 mic) — **about 25 minutes of voice activity** — `afplay` again returned `AudioQueueStart failed (-66681)` and `say` processes hung indefinitely (still pending after `kill -9`).
 
@@ -407,11 +466,15 @@ So the wedge persists below the user-space audio daemon layer (likely audio HAL 
 
 **Owner:** `qa-testing` / `voice-harness`.
 
-**Mitigations to evaluate before next bench:**
-1. **Stop using `matika-say.sh`'s `SwitchAudioSource` re-assert** if the user wants `Mac mini Speakers` as a stable output — every call switches the OS-wide output device, and the device-switch event itself may be what wedges the HAL after enough repetitions. Either keep the script's behavior (acoustically force-route to External Headphones) OR drive bare `say` with the device pre-selected once.
-2. **Time-bound bench sessions.** Schedule reboots between Phase A and Phase B so the wedge never accumulates inside a multi-journey run.
-3. **Investigate** whether the wedge is specific to alternating between built-in vs external output devices, or whether single-device runs also wedge — would isolate whether SwitchAudioSource is the trigger.
-4. Update `voice_harness_lessons.md` lesson 6 with the "rebooted-and-still-wedged-after-25-min" data point so future bench operators don't burn time on the same coreaudiod/audiomxd restart attempts.
+**2026-05-17 update — Mitigation 1 disproven; remote-TTS workaround landed instead.**
+- The "drop SwitchAudioSource re-assert" mitigation (commit `475d654`, `matika-say.sh` made the switch idempotent + opt-in via `MATIKA_OUTPUT_DEVICE`) was shipped and verified to no longer fire `SwitchAudioSource -t output -s` per-utterance. Despite that, F41 still recurred ~36 min into the 2026-05-17 session after only ~5 successful `say` invocations and zero device-switch events. So the device-switch hypothesis is wrong (or at least incomplete). Something else still wedges Core Audio under sustained `say` load.
+- **Workaround that actually works (commits `dd9b33a` + `4484d7c` + `ab8b466`):** `scripts/matika-tts-server.py` runs on a second Mac (the MacBook Air physically next to the phone). `matika-say.sh` proxies to it when `MATIKA_SAY_REMOTE_URL` is set, bypassing the primary Mac's audio chain entirely. `scripts/matika-voice-preflight.sh` health-checks `/health` instead of doing a local `afplay` when in remote mode. Bengali (`bn`) is covered too — the server has a gTTS-via-translate_tts fallback that downloads MP3 and `afplay`s it. The 2026-05-17 bench drove Phase A (3 caregiver journeys) + Phase B (5 patient journeys) all with the Mac mini's Core Audio wedged the entire time.
+- The underlying Mac mini regression is **not fixed** — F41 still requires a reboot to drive locally. But it is no longer the critical-path blocker for the voice bench.
+
+**Mitigations to still evaluate (now nice-to-have, not blocking):**
+1. **Time-bound bench sessions** with scheduled reboots between phases, for when the operator can't or won't bring up a second mac.
+2. **Investigate** whether the wedge is specific to alternating between built-in vs external output devices, or whether single-device runs also wedge. The 2026-05-17 data point (wedge with no device switches in the session) suggests it's not device-switch alone.
+3. Update `voice_harness_lessons.md` lesson 6 with the "rebooted-and-still-wedged-after-25-min" data point + remote-TTS bypass so future bench operators don't burn time on the same coreaudiod/audiomxd restart attempts.
 
 ### Bench scope NOT covered (callouts for next session)
 
