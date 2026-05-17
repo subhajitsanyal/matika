@@ -242,7 +242,24 @@ private fun PatientCredentialsDialog(
 ) {
     var email by remember { mutableStateOf("") }
     var phone by remember { mutableStateOf("") }
-    val submitEnabled = email.isNotBlank() && phone.isNotBlank()
+    // F39 — show field errors after the first Submit tap (or after the
+    // user has typed and then cleared a field) rather than from the
+    // first render. Avoids a dialog that opens screaming "Required" at
+    // a caregiver who hasn't touched it yet.
+    var submitAttempted by remember { mutableStateOf(false) }
+
+    val emailResult = validateEmail(email)
+    val phoneResult = validatePhone(phone)
+    val emailError = when (emailResult) {
+        EmailValidation.Empty -> if (submitAttempted) "Required" else null
+        EmailValidation.BadFormat -> "Looks like a typo — check the email"
+        is EmailValidation.Ok -> null
+    }
+    val phoneError = when (phoneResult) {
+        PhoneValidation.Empty -> if (submitAttempted) "Required" else null
+        PhoneValidation.BadFormat -> "Use country code, e.g. +91…"
+        is PhoneValidation.Ok -> null
+    }
 
     AlertDialog(
         // AlertDialog renders in its own Compose Window (via Popup).
@@ -265,6 +282,15 @@ private fun PatientCredentialsDialog(
                     label = { Text("Email") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                     singleLine = true,
+                    isError = emailError != null,
+                    supportingText = emailError?.let {
+                        {
+                            Text(
+                                it,
+                                modifier = Modifier.testTag("patient_credentials_email_error"),
+                            )
+                        }
+                    },
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("patient_credentials_email"),
@@ -275,6 +301,15 @@ private fun PatientCredentialsDialog(
                     label = { Text("Phone (with country code)") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
                     singleLine = true,
+                    isError = phoneError != null,
+                    supportingText = phoneError?.let {
+                        {
+                            Text(
+                                it,
+                                modifier = Modifier.testTag("patient_credentials_phone_error"),
+                            )
+                        }
+                    },
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("patient_credentials_phone"),
@@ -282,9 +317,22 @@ private fun PatientCredentialsDialog(
             }
         },
         confirmButton = {
+            // F39 — Submit is always tappable. On tap, either submit
+            // the cleaned values (E.164-normalized phone, trimmed
+            // email) or flip submitAttempted to surface per-field
+            // helper text. The prior `enabled = email.isNotBlank() &&
+            // phone.isNotBlank()` left caregivers with a silent dead
+            // end when the soft keyboard or an autofill scroll left a
+            // field empty.
             Button(
-                onClick = { onSubmit(email, phone) },
-                enabled = submitEnabled,
+                onClick = {
+                    submitAttempted = true
+                    val emailOk = emailResult as? EmailValidation.Ok
+                    val phoneOk = phoneResult as? PhoneValidation.Ok
+                    if (emailOk != null && phoneOk != null) {
+                        onSubmit(emailOk.cleaned, phoneOk.cleaned)
+                    }
+                },
                 modifier = Modifier.testTag("patient_credentials_submit"),
             ) {
                 Text("Submit")

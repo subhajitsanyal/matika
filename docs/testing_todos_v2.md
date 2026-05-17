@@ -328,7 +328,7 @@ Staging bench against `https://3mni7nx5bf.execute-api.ap-south-1.amazonaws.com/s
 
 **Owner:** `android` (Settings screens, both personas).
 
-### F39 — F23 voice patient onboarding: typed contact-details Submit button stays `enabled="false"` after voice conversational phase completes (NEW — 2026-05-16 post-reboot bench)
+### F39 — F23 voice patient onboarding: typed contact-details Submit button stays `enabled="false"` after voice conversational phase completes (CODE FIX SHIPPED 2026-05-16; live RDS/CloudWatch re-bench gated on F41)
 
 **Severity:** **High — blocks CG-V2-04 end-to-end on the post-reboot bench.** F23 conversational extraction worked through 8 turns (state advanced CREATED → EXTRACTING_PROFILE; Soda captured turns 1–7 with `chars=29..70`; LLM correctly tracked name, age, conditions, no-allergies, doctor across turns). After the conversation phase Matika transitions to a typed contact-details form ("We'll send the patient their login by email and SMS. Please type their email address and phone number.") with fields `patient_credentials_email` + `patient_credentials_phone` and button `patient_credentials_submit`. With email `sanyalsubhajit2010+at@gmail.com` (valid format, fresh in Cognito) and phone `+919876543210` (valid E.164 India) typed in both fields, `patient_credentials_submit` remains `enabled="false"`. Tap is accepted at the Compose layer (`clickable="true"`) but no HTTP request fires — confirmed by:
 - API Gateway `4XXError` metric: 0 events in the relevant 30-min window
@@ -343,10 +343,27 @@ No error message is rendered on the form when the disabled Submit is tapped — 
 
 **Repro:** Caregiver F23 voice flow → drive 6+ conversational turns until Matika asks for contact details → type any valid-format email + E.164 phone into the form → observe `patient_credentials_submit` `enabled="false"` in `uiautomator dump` → tap does nothing.
 
-**Fix candidates:**
-1. Audit the `enabled = …` predicate on `patient_credentials_submit` for missing/strict conditions (phone-format regex, async validation state, conversation-completion flag).
-2. Surface a visible validation reason next to whichever field is failing (toast / helper text) so a disabled Submit isn't a dead end.
-3. Add a logcat line at the Submit-tap handler so future bench runs can grep for the rejection reason.
+**Root cause.** `PatientCredentialsDialog` in `MatikaConversationScreen.kt:239` gated Submit on `email.isNotBlank() && phone.isNotBlank()` only. When the on-screen soft keyboard layout-shift caused the second `adb input text` to miss the phone field (or on-device the caregiver scrolled past it, or autofill silently dropped focus), one field stayed empty → Submit stayed disabled with **no helper text, no visible reason**. Caregiver dead-end. `isNotBlank()` also accepted "foo" / "x" as valid, so any future "Submit fires but lambda 4xxs on bad format" would also have surfaced as silent UX rather than per-field reasons.
+
+**Fix shipped 2026-05-16 (commit pending push).** Two parts:
+
+1. **Extracted validators** to `android/app/src/main/java/com/carelog/inference/ui/PatientCredentialsValidation.kt` — pure JVM-testable functions: `validateEmail` (returns `Empty | BadFormat | Ok(cleaned)`), `validatePhone` (strips spaces/dashes/parens before applying E.164 `^\+\d{8,15}$`). Permissive email regex (`^[^\s@]+@[^\s@]+\.[^\s@]{2,}$`) — "catch typos that obviously aren't email," not RFC 5322.
+
+2. **Rewired `PatientCredentialsDialog`** (`MatikaConversationScreen.kt:239-323`):
+   - Each `OutlinedTextField` gains `isError` + `supportingText` driven by the validators. Helper-text testTags: `patient_credentials_email_error` + `patient_credentials_phone_error`.
+   - "Empty" only renders as "Required" **after** the first Submit tap (avoids screaming-on-open).
+   - Submit is **always tappable**. On tap, either calls `onSubmit(emailOk.cleaned, phoneOk.cleaned)` or flips `submitAttempted = true` to surface per-field errors. No more silent-disabled dead end.
+   - VM-side `.trim()` in `onPatientCredentialsSubmitted` (L441-442) left in place as a belt-and-suspenders, but the dialog now passes cleaned values.
+
+**Unit-test evidence.** `PatientCredentialsValidationTest` (7 cases) pins: empty → Empty; "foo" / "foo@" / "foo@bar" / "@bar.com" / "foo bar@baz.com" → BadFormat; valid email with surrounding whitespace → Ok(trimmed); empty/separator-only phone → Empty; non-`+`-prefixed / too-short / non-digit / too-long phone → BadFormat; `"+91 98765 43210"` → Ok(`"+919876543210"`); `" +1 (415) 555-1234 "` → Ok(`"+14155551234"`). Run: `./gradlew :app:testDebugUnitTest --tests 'com.carelog.inference.ui.PatientCredentialsValidationTest'` → 7/7 PASS (2026-05-16, BUILD SUCCESSFUL 15s).
+
+**Build + install evidence.** `./gradlew :app:assembleDebug` produced `app-debug.apk` (131M, 2026-05-16). Installed on `RFCT10C1GSZ` via `adb install -r` → `Success`. App launched cleanly; `topResumedActivity = com.carelog/.ui.MainActivity`; zero `AndroidRuntime:E` lines in logcat post-launch.
+
+**Live verification gap (RDS row + CloudWatch log) — DEFERRED behind F41.** F41 (Core Audio wedge) was already reproduced at the start of this session — `afplay /System/Library/Sounds/Pop.aiff` returned `AudioQueueStart failed (-66681)` before any `say` was attempted. The kickoff explicitly accommodates this: "fall back to unit/UI-test evidence on item #1 and call out the live-bench gap explicitly. Don't fabricate verification." The fix is purely client-side (per the kickoff's diagnosis) — the dialog never POSTed; it caches `submittedPatientCredentials` in the ViewModel and the next voice turn includes them in `TurnRequest`. So:
+- Items needing voice driving (RDS `patients` row insert + `carelog-staging-create-patient-from-voice` "Patient created: CL-XXXXXX" log line + matching RequestId in `matika-staging-bedrock-router`) **must be replayed once F41 is unblocked**. Best candidate: next session after a Mac mini reboot + F41 mitigation #1 (drop `matika-say.sh`'s `SwitchAudioSource` re-assert).
+- Until then, the F39 bench-evidence triad is **incomplete**. Flip the header to "(RESOLVED — verified live YYYY-MM-DD)" only after the lambda log + RDS row land.
+
+**Adjacent finding for the live retest.** Per `v2_open_blockers_endofday_20260516.md` the 2026-05-16 bench saw STT mis-hear "Menon" → "Maina" — that's an LLM-tracked artifact of Soda's Indian-name handling, not a v2 blocker. When you replay, expect the freshly-created RDS patient's surname to reflect whatever Soda heard, not what was acoustically spoken.
 
 ### F40 — `Type instead (fallback)` mode never hits backend — drives local UI to COMPLETE without creating an interaction_sessions row or queuing observations for sync (NEW — 2026-05-16 post-reboot bench)
 
