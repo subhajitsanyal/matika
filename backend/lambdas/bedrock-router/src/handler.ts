@@ -260,6 +260,40 @@ export async function handleTurn(event: TurnRequest, deps: HandlerDeps): Promise
   let patientCtx = await loadPatientContextOrPlaceholder(event, deps);
   const turnCtx = await loadOrCreateTurnContext(event, patientCtx, deps);
 
+  // F42 (2026-05-17): credentials-arrived auto-resume.
+  //
+  // The caregiver_onboarding profile prompt instructs the LLM to
+  // pause_session with reason='awaiting_patient_credentials' between
+  // Stages 6 and 8 — `fsmState` lands at PAUSED. The Android client
+  // surfaces a form modal, caches the credentials, and attaches them
+  // to the NEXT TurnRequest as the structural `patientCredentials`
+  // field. But the transcript on that next turn ("I'm done", "yes",
+  // "please continue") carries no signal that credentials were
+  // collected, and the LLM has no way to read the structural field,
+  // so it proposes PAUSED -> PAUSED and applyTransition rejects with
+  // StateTransitionError. Without this short-circuit the session
+  // wedges (see 2026-05-17 voice bench, RequestId
+  // 33b4d5b8-b9b4-44ef-b8fa-f7e5efdcbed0).
+  //
+  // Fix: when we see credentials on the wire AND we're sitting in
+  // PAUSED on a placeholder caregiver_onboarding session, hot-rotate
+  // fsmState to EXTRACTING_PROFILE in-memory (an allowed PAUSED
+  // successor per state_machine.ts) and prepend a directive so the
+  // LLM resumes profile collection toward the Stage 8 readback.
+  const credentialsJustArrived =
+    event.patientCredentials !== undefined &&
+    turnCtx.sessionState.fsmState === 'PAUSED' &&
+    isCaregiverSession(turnCtx.sessionState.sessionType) &&
+    (patientCtx.placeholder ?? false);
+  if (credentialsJustArrived) {
+    console.info('credentials_received_auto_resume', {
+      sessionId: event.sessionId,
+      priorFsmState: turnCtx.sessionState.fsmState,
+      hotRotatedTo: 'EXTRACTING_PROFILE',
+    });
+    turnCtx.sessionState.fsmState = 'EXTRACTING_PROFILE';
+  }
+
   // 2. Pre-model regex pass for plausibility short-circuiting.
   const preModelHints = extractPreModelHints(event.transcript);
 
@@ -281,7 +315,23 @@ export async function handleTurn(event: TurnRequest, deps: HandlerDeps): Promise
   const subprompt = routing.reason
     ? loadEscalationSubprompt(deps.config.escalationSubpromptDir, routing.reason)
     : null;
-  const perTurnBlock = subprompt ? `${subprompt}\n\n${baseTurnBlock}` : baseTurnBlock;
+  // F42 — directive when credentials just arrived. Tells the LLM the
+  // structural field is now populated and to move toward Stage 8
+  // readback. Without this the model often parrots the pause prompt.
+  const credentialsResumeDirective = credentialsJustArrived
+    ? [
+        '## Patient credentials just arrived',
+        '',
+        'The caregiver completed the email/phone form modal you triggered with `pause_session`. The structural `patientCredentials` payload is now populated. Resume profile collection where you left off:',
+        '- Do NOT propose `PAUSED -> PAUSED` and do NOT re-pause with `awaiting_patient_credentials`.',
+        '- Proceed to Stage 8 — deliver the final readback ("To confirm: <name>, <age> years, <gender>, with <conditions>. Email <email>, phone <phone>. Should I create the profile?") and propose `EXTRACTING_PROFILE -> AWAITING_PROFILE_CONFIRMATION`.',
+        '- If any required profile fields are still missing, ask for those first and stay in `EXTRACTING_PROFILE`.',
+      ].join('\n')
+    : null;
+  const turnBlockWithCredentials = credentialsResumeDirective
+    ? `${credentialsResumeDirective}\n\n${baseTurnBlock}`
+    : baseTurnBlock;
+  const perTurnBlock = subprompt ? `${subprompt}\n\n${turnBlockWithCredentials}` : turnBlockWithCredentials;
   const body = buildBedrockBody({
     systemPrompt,
     perPatientBlock,

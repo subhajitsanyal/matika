@@ -1461,6 +1461,116 @@ describe('handleTurn — caregiver session routing', () => {
     const systemPrompt = calls.invokeCalls[0].body.system[0].text;
     expect(systemPrompt).not.toContain('Stage 1');
   });
+
+  // F42 (2026-05-17) — when a placeholder caregiver_onboarding session
+  // sits in PAUSED (LLM emitted pause_session/awaiting_patient_credentials
+  // on a prior turn) and the next turn arrives with patientCredentials
+  // populated, handleTurn must short-circuit the PAUSED -> PAUSED dead-
+  // end by rotating in-memory fsmState to EXTRACTING_PROFILE and
+  // injecting a "credentials arrived" directive ahead of the per-turn
+  // block. Prior to this fix the LLM proposed PAUSED -> PAUSED and
+  // applyTransition threw StateTransitionError, wedging the session.
+  describe('F42 credentials-arrived auto-resume', () => {
+    function placeholderPatientCtx(): PatientContext {
+      return { ...basePatientCtx(), placeholder: true };
+    }
+
+    function resumeInvokeResult(): InvokeResult {
+      return makeInvokeResult({
+        responseText: `<output>
+{
+  "responseText": "To confirm: Geeta, 65 years, female, with hypertension. Email a@b.com, phone +91. Should I create the profile?",
+  "ttsHints": { "language": "en-IN", "spellOutNumbers": false },
+  "extractedValues": [],
+  "actions": [],
+  "stateTransition": "EXTRACTING_PROFILE -> AWAITING_PROFILE_CONFIRMATION",
+  "escalationReason": "caregiver_protocol_design",
+  "patientProfile": { "name": "Geeta", "ageYears": 65, "gender": "female", "conditions": ["hypertension"] }
+}
+</output>`,
+      });
+    }
+
+    it('rotates PAUSED -> EXTRACTING_PROFILE in-memory when credentials present on placeholder caregiver session', async () => {
+      const turnCtx = baseTurnCtx();
+      turnCtx.sessionState.sessionType = 'caregiver_onboarding';
+      turnCtx.sessionState.fsmState = 'PAUSED';
+      const { deps, calls } = makeDeps({
+        patientCtx: placeholderPatientCtx(),
+        turnCtx,
+        invokeResult: resumeInvokeResult(),
+      });
+      const req: TurnRequest = {
+        ...baseRequest,
+        sessionType: 'caregiver_onboarding',
+        patientCredentials: { email: 'a@b.com', phone: '+919876543210' },
+      };
+      const result = await handleTurn(req, deps);
+      expect(result.statusCode).toBe(200);
+      const body = JSON.parse(result.body);
+      // SM applied EXTRACTING_PROFILE -> AWAITING_PROFILE_CONFIRMATION
+      // (proves the in-memory rotation took effect — pre-fix applyTransition
+      // would have thrown PAUSED -> PAUSED transition_not_allowed).
+      expect(body.sessionState.fsmState).toBe('AWAITING_PROFILE_CONFIRMATION');
+      // Directive landed in the per-turn block.
+      const perTurnBlock = calls.invokeCalls[0].body.messages[0].content[1].text;
+      expect(perTurnBlock).toContain('Patient credentials just arrived');
+      expect(perTurnBlock).toContain('Do NOT propose `PAUSED -> PAUSED`');
+      // FSM-state line in the rendered block reflects the rotation.
+      expect(perTurnBlock).toContain('FSM state: EXTRACTING_PROFILE');
+    });
+
+    it('leaves fsmState untouched when credentials present but NOT in PAUSED', async () => {
+      const turnCtx = baseTurnCtx();
+      turnCtx.sessionState.sessionType = 'caregiver_onboarding';
+      turnCtx.sessionState.fsmState = 'EXTRACTING_PROFILE';
+      const { deps, calls } = makeDeps({
+        patientCtx: placeholderPatientCtx(),
+        turnCtx,
+        invokeResult: resumeInvokeResult(),
+      });
+      const req: TurnRequest = {
+        ...baseRequest,
+        sessionType: 'caregiver_onboarding',
+        patientCredentials: { email: 'a@b.com', phone: '+919876543210' },
+      };
+      await handleTurn(req, deps);
+      const perTurnBlock = calls.invokeCalls[0].body.messages[0].content[1].text;
+      expect(perTurnBlock).not.toContain('Patient credentials just arrived');
+      expect(perTurnBlock).toContain('FSM state: EXTRACTING_PROFILE');
+    });
+
+    it('does NOT short-circuit on a real (non-placeholder) patient session', async () => {
+      const turnCtx = baseTurnCtx();
+      turnCtx.sessionState.sessionType = 'patient_logging';
+      turnCtx.sessionState.fsmState = 'PAUSED';
+      const { deps, calls } = makeDeps({
+        turnCtx,
+        invokeResult: makeInvokeResult({
+          responseText: `<output>
+{
+  "responseText": "Continuing.",
+  "ttsHints": { "language": "en-IN", "spellOutNumbers": false },
+  "extractedValues": [],
+  "actions": [],
+  "stateTransition": "PAUSED -> EXTRACTING",
+  "escalationReason": null
+}
+</output>`,
+        }),
+      });
+      const req: TurnRequest = {
+        ...baseRequest,
+        patientCredentials: { email: 'a@b.com', phone: '+919876543210' },
+      };
+      await handleTurn(req, deps);
+      const perTurnBlock = calls.invokeCalls[0].body.messages[0].content[1].text;
+      expect(perTurnBlock).not.toContain('Patient credentials just arrived');
+      // Untouched: still PAUSED in the per-turn block (the LLM was free
+      // to propose any allowed PAUSED successor on its own).
+      expect(perTurnBlock).toContain('FSM state: PAUSED');
+    });
+  });
 });
 
 describe('TurnRequest.actorCognitoSub validation', () => {
