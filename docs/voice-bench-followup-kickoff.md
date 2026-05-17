@@ -19,9 +19,10 @@ that frames the scope, pacing, and stop-and-surface policy.
 
 ## State at session start (verify before touching anything)
 
-1. `git pull origin main`. Last pushed commit was `<NEW_COMMIT>` (will
-   be filled in when this kickoff itself is pushed — match `git log
-   --oneline -1`). If HEAD doesn't match, surface and stop.
+1. `git pull origin main`. The kickoff + harness changes are at
+   commit `475d654` ("Voice harness — F41 mitigation + preflight +
+   post-reboot bench kickoff"). HEAD should match that or a newer
+   commit on `main`. If HEAD is older, surface and stop.
 2. **Run the new preflight first, before anything else:**
    ```bash
    scripts/matika-voice-preflight.sh
