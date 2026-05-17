@@ -199,7 +199,10 @@ def main():
     if not shutil.which("say"):
         sys.exit("ERROR: `say` binary not found — this must run on macOS")
     bind = ("0.0.0.0", port)
-    sys.stderr.write(f"matika-tts-server listening on http://{bind[0]}:{bind[1]} (voices: {sorted(VOICES.keys())})\n")
+    sys.stderr.write(
+        f"matika-tts-server listening on http://{bind[0]}:{bind[1]} "
+        f"(native voices: {sorted(NATIVE_VOICES.keys())}, gtts langs: {sorted(GTTS_LANGS.keys())})\n"
+    )
     sys.stderr.flush()
     HTTPServer(bind, TtsHandler).serve_forever()
 
