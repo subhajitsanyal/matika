@@ -61,11 +61,9 @@ if [[ -n "${MATIKA_SAY_REMOTE_URL:-}" ]]; then
         echo "ERROR: curl required for MATIKA_SAY_REMOTE_URL mode" >&2
         exit 1
     fi
-    if [[ "$LANG_CODE" == "bn" ]]; then
-        echo "ERROR: bn not supported via remote-TTS — macOS has no Bengali say voice." >&2
-        echo "       Stage MATIKA_BN_AUDIO locally and unset MATIKA_SAY_REMOTE_URL for bn turns." >&2
-        exit 2
-    fi
+    # bn is supported via the remote server's gTTS path (matika-tts-server.py
+    # downloads MP3 from translate_tts and afplays it). No Mac mini fallback
+    # needed any more.
     if [[ "$PREDELAY_MS" -gt 0 ]]; then
         sleep "$(awk "BEGIN{ print $PREDELAY_MS / 1000 }")"
     fi
