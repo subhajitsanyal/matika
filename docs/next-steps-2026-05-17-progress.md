@@ -436,9 +436,11 @@ Six manual-entry tile flows driven against staging Jane PT (`+pt9@gmail.com` / `
 
 ---
 
-## Next bench-session kickoff — close out the 5 still-open §1 + §4 items
+## Next bench-session kickoff — close out the 5 still-open §1 + §4 items — **ALL CLOSED 2026-05-17 evening** (testing-todos-v2-phase6 session)
 
 > **Audience:** the orchestrator opening this file in a fresh session at the bench. Everything here is self-contained. **Goal: land all 5 items in one bench session.** Read this whole section before dispatching anything.
+
+**Outcome summary (testing-todos-v2-phase6 session):** all 5 items closed, with 4 PASS and 1 PARTIAL-but-acceptable. Two new F-class findings landed alongside: **F51** (language picker testTag on non-clickable Row — fixed) and **F52** (invite-attendant 3-bug stack: `'relative'` enum + short-code→UUID + SES IAM + UX false-500 — 2 of 4 sub-issues deployed live, 2 deferred). 3 backend lambdas patched in-tree (invite-attendant deployed; invite-doctor + remove-team-member code-only). 3 new Maestro flows + 5 new testTags added. Run as `f9fbc1f` → `075abb9` → `aeb4dd2` on `main`.
 
 ### What's still open (carry-over from this session)
 
