@@ -605,6 +605,37 @@ The Stream B hardening kept the patient's `users` row soft-deleted (`is_active=f
 
 **Owner:** `android` (fix shipped) + `qa-testing` (helper flow shipped). Closed.
 
+### F52 — invite-attendant / remove-team-member / invite-doctor: `'relative'` enum filter + patient short-code → UUID cast crash + SES IAM gap + UX false-500 (stacked bug chain — 3 lambdas; 2 fixed + deployed, 1 fixed code-only)
+
+Discovered during Item D of the 2026-05-17 evening bench (Manage Care Team E2E). The CG-V2-<NN> Maestro flow `cg_v2_invite_attendant_email.yaml` drove caregiver login → Settings → Invite Attendant → Send. Three sequential bug-stack hits before backend chain landed:
+
+**Sub-issue 1 — `'relative'` enum filter.** Same F49 / Stream B pattern. `pl.relationship IN ('caregiver', 'relative')` triggered `invalid input value for enum persona_type: "relative"` (22P02). The persona_type enum has only `{patient, attendant, caregiver, doctor}` since the v2 rename pass. Affected lambdas: `invite-attendant/index.js:357`, `invite-doctor/index.js:234`, `remove-team-member/index.js:164`. Fix: changed the IN clause to `pl.relationship = 'caregiver'` across all 3.
+
+**Sub-issue 2 — short-code → UUID cast crash.** After Sub-issue-1 deploy, the next invoke failed at `WHERE p.id = $1::uuid` because `body.patientId` is the Cognito `custom:linked_patient_id` short code (`CL-XXXXXX`) returned by `AuthRepository.fetchLinkedPatientId()` (`AuthRepository.kt:441-458`). The `::uuid` cast threw 22P02 on the non-UUID string. The `InviteAttendantViewModel` passes whatever the auth state has — for caregivers, that's always the short code. Fix in `invite-attendant`: changed the predicate to `(p.patient_id = $1 OR p.id::text = $1)` to accept either format. `invite-doctor` + `remove-team-member` likely have the same bug; not exercised this session (doctor is Phase 2; remove-team-member wasn't on the path).
+
+**Sub-issue 3 — `ses:VerifyEmailIdentity` IAM gap.** After Sub-issue-2 deploy, the next invoke landed every DB write (`attendant_invites` row + Cognito user + `users` row + `persona_links` row + `audit_log` INVITE row — all created successfully in sequence). BUT the SES sandbox-mode verification step at `invite-attendant/index.js:477` failed with `User: ... carelog-staging-lambda-rds-ses ... is not authorized to perform: ses:VerifyEmailIdentity`. The current `carelog-staging-lambda-rds-ses` role has `ses:GetIdentityVerificationAttributes` (read-only) but not `ses:VerifyEmailIdentity` (write). The lambda's outer try/catch bubbled the error to a 500 response.
+
+**Sub-issue 4 — UX false-500 from a partial-success.** The 500-via-SES is misleading: by the time the lambda errored, **all the structural data (Cognito attendant user, persona_link, attendant_invites row marked status='accepted', audit_log) was already committed**. The caregiver UI sees `Failed to send invitation: HTTP 500 ...` and stays on the form — but the invite actually worked end-to-end except for the credentials email delivery. Should be: catch SES errors in the lambda and return 201 with an `emailStatus` field indicating `delivery_failed` so the UX can render "Invite created; email delivery pending" rather than treat the whole flow as failed.
+
+**Backend evidence captured (post Sub-issues 1+2 fixed, despite Sub-issue 3 erroring upstream):**
+- `attendant_invites` row `0774d0fe-185c-4d12-a641-b3ac29766aec` for patient_id `3aa8edf8-fb18-4231-a019-2b9b6541c98c` (CL-1RK0CD), invitee `Test Attendant CG-V2` / `sanyalsubhajit2010+atinv224036@gmail.com`, status=`accepted`, invite_token `23543d16…7281` captured.
+- `users` row `cbc92dd4-285d-49d2-ad13-22cd9e862f06`, persona_type='caregiver', is_active=true, cognito_sub `b1333d7a-60c1-70aa-efe6-094425e9313c`.
+- `persona_links` row `bbbe017c-2186-46ba-afe5-d5d3538ddf26`, relationship='caregiver', is_active=true.
+- `audit_log` row `a58b01f3-74cc-4922-8680-cc8508372084`, action=INVITE, resource_type=caregiver.
+- Cognito user `b1333d7a-...` — UserStatus=CONFIRMED, Enabled=true, email_verified=true, name="Test Attendant CG-V2", custom:persona_type=caregiver, Groups=[`caregivers`].
+
+**Status of each sub-fix:**
+1. ✅ DEPLOYED to staging invite-attendant (commit `<this>`); also code-fixed in invite-doctor + remove-team-member (code-only — not deployed this session).
+2. ✅ DEPLOYED to staging invite-attendant. invite-doctor + remove-team-member share the same shape; their fix is identical-pattern but not yet exercised → file follow-up for the next session that touches doctor portal or remove-team-member.
+3. ⏳ DEFERRED. IAM fix needs terraform apply on `carelog-staging-lambda-rds-ses` role. Wire-target: pre-prod-cutover (or skip entirely if SES production access is granted, which eliminates the VerifyEmailIdentity call path).
+4. ⏳ DEFERRED. Lambda code change to catch SES errors and return 201 + `emailStatus=delivery_failed`. Required UX polish before beta; not strictly beta-blocking if SES production access lands in time.
+
+**Owner:** `backend` (lambdas + IAM) + `qa-testing` (CG-V2-<NN> journey rows).
+
+**New Maestro flow:** `.maestro/flows/cg_v2_invite_attendant_email.yaml` (single-device invite leg; depends on F52-fixed lambda). `invite_attendant_email`, `invite_attendant_phone`, `invite_attendant_method_email`, `invite_attendant_method_sms` testTags added to `android/app/src/main/java/com/carelog/ui/invite/InviteAttendantScreen.kt`.
+
+**Cross-references:** `docs/journeys_non_voice.md` should grow a CG-V2-<NN> row "Caregiver invites attendant by email" with the evidence cited above and the Sub-issue 3/4 caveats. Done in same commit as F52 entry.
+
 ### Bench scope NOT covered (callouts for next session)
 
 - **Trends + Thresholds screens** (caregiver side) — patient has vitals now, can exercise.

@@ -149,7 +149,9 @@ fun InviteAttendantScreen(
                     leadingIcon = if (useEmail) {
                         { Icon(Icons.Default.Check, contentDescription = null) }
                     } else null,
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("invite_attendant_method_email")
                 )
                 FilterChip(
                     selected = !useEmail,
@@ -158,7 +160,9 @@ fun InviteAttendantScreen(
                     leadingIcon = if (!useEmail) {
                         { Icon(Icons.Default.Check, contentDescription = null) }
                     } else null,
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("invite_attendant_method_sms")
                 )
             }
 
@@ -172,7 +176,9 @@ fun InviteAttendantScreen(
                     label = { Text("Email Address *") },
                     leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("invite_attendant_email"),
                     keyboardOptions = KeyboardOptions(
                         keyboardType = KeyboardType.Email,
                         imeAction = ImeAction.Done
@@ -185,7 +191,9 @@ fun InviteAttendantScreen(
                     label = { Text("Phone Number *") },
                     leadingIcon = { Icon(Icons.Default.Phone, contentDescription = null) },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("invite_attendant_phone"),
                     keyboardOptions = KeyboardOptions(
                         keyboardType = KeyboardType.Phone,
                         imeAction = ImeAction.Done

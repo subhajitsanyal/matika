@@ -346,15 +346,30 @@ exports.handler = async (event) => {
   try {
     dbClient = await createDbConnection();
 
-    // Verify caregiver has access to this patient
+    // Verify caregiver has access to this patient.
+    //
+    // F52 — two issues fixed here:
+    //   1. persona_type enum in staging has no 'relative' value (the
+    //      legacy V001 value was renamed/replaced in the v2 rename pass).
+    //      Filtering by 'relative' triggered enum_in errors (`invalid
+    //      input value for enum persona_type`) on the same shape as
+    //      F49 in delete-patient. Caregivers carry
+    //      relationship='caregiver' only.
+    //   2. body.patientId arrives as the Cognito `custom:linked_patient_id`
+    //      short code (`CL-XXXXXX`) from `authRepository.fetchLinkedPatientId()`
+    //      in `InviteAttendantViewModel`, NOT a UUID. The original
+    //      `$1::uuid` cast crashed with 22P02 invalid input for type
+    //      uuid before the SQL even saw a row. Accept BOTH formats so
+    //      the lambda works from caregiver screens (short code) and
+    //      any future UUID caller.
     const accessCheck = await dbClient.query(
       `SELECT p.id, p.patient_id, u.name as patient_name
        FROM patients p
        JOIN persona_links pl ON pl.patient_id = p.id
        JOIN users u ON u.id = p.user_id
-       WHERE p.id = $1::uuid
+       WHERE (p.patient_id = $1 OR p.id::text = $1)
          AND pl.linked_user_id = (SELECT id FROM users WHERE cognito_sub = $2)
-         AND pl.relationship IN ('caregiver', 'relative')
+         AND pl.relationship = 'caregiver'
          AND pl.is_active = true`,
       [body.patientId, caregiverCognitoSub]
     );

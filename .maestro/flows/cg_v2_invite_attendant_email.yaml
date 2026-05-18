@@ -1,0 +1,79 @@
+# Manage Care Team E2E — invite leg.
+#
+# CG-V2-NN (new journey): caregiver opens Settings → Invite Attendant,
+# fills the form (name + email + email-method-chip), taps Send. After
+# completion the SettingsScreen should reappear (popBackStack via
+# onInviteSent in `CareLogNavHost.kt:528-533`).
+#
+# This is the *invite* leg. The *accept* leg is exercised by
+# directly invoking the `carelog-staging-accept-invite` lambda with the
+# pending_invites row's invite_token — bypassing the SES sandbox + the
+# need for a second device.
+#
+# Env vars expected:
+#   MATIKA_CAREGIVER_EMAIL    — sanyalsubhajit2010+cg@gmail.com
+#   MATIKA_CAREGIVER_PASSWORD — buri123@S (post-reset)
+#   MATIKA_INVITE_ATTENDANT_EMAIL — fresh +atinvNNN@gmail.com
+#   MATIKA_INVITE_ATTENDANT_NAME  — e.g. "Test Attendant"
+#
+# Run:
+#   source ~/.matika-test-creds.env
+#   export MATIKA_INVITE_ATTENDANT_EMAIL=sanyalsubhajit2010+atinvXXX@gmail.com
+#   export MATIKA_INVITE_ATTENDANT_NAME="Test Attendant 1"
+#   scripts/maestro-run.sh --no-install cg_v2_invite_attendant_email
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+# Caregiver login
+- extendedWaitUntil: { visible: { id: login_email }, timeout: 15000 }
+- tapOn: { id: login_email }
+- inputText: ${MATIKA_CAREGIVER_EMAIL}
+- tapOn: { id: login_password }
+- inputText: ${MATIKA_CAREGIVER_PASSWORD}
+- hideKeyboard
+- tapOn: { id: login_button }
+
+# Caregiver dashboard reachable
+- extendedWaitUntil: { visible: { id: add_patient_voice_fab }, timeout: 60000 }
+
+# Settings — the IconButton has contentDescription="Open settings"
+- tapOn:
+    text: "Open settings"
+    optional: false
+
+# Settings card visible — scroll to find "Invite Attendant" action row
+- extendedWaitUntil: { visible: { id: settings_action_invite_attendant }, timeout: 15000 }
+- tapOn: { id: settings_action_invite_attendant }
+
+# Invite Attendant screen mounted
+- extendedWaitUntil: { visible: { id: invite_attendant_name }, timeout: 10000 }
+
+# Fill the form
+- tapOn: { id: invite_attendant_name }
+- inputText: ${MATIKA_INVITE_ATTENDANT_NAME}
+- hideKeyboard
+
+# Confirm email method is selected (default true, but be explicit for
+# durability — the F51 fix is local to LanguageOptionRow; FilterChip
+# has its own onClick on the chip itself).
+- tapOn: { id: invite_attendant_method_email }
+
+- tapOn: { id: invite_attendant_email }
+- inputText: ${MATIKA_INVITE_ATTENDANT_EMAIL}
+- hideKeyboard
+
+# Send
+- tapOn: { id: invite_attendant_send }
+
+# After successful send, onInviteSent in the NavHost calls popBackStack,
+# returning to Settings. The InviteSentDialog is shown by the
+# ViewModel-success-state path but the NavHost wires popBackStack on the
+# Success state, so the dialog may or may not flash. Assert we're back
+# on Settings.
+- extendedWaitUntil:
+    visible:
+      id: settings_action_invite_attendant
+    timeout: 30000
