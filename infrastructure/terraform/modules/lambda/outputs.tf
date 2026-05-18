@@ -340,3 +340,15 @@ output "photo_presign_invoke_arn" {
 output "photo_presign_function_name" {
   value = aws_lambda_function.photo_presign.function_name
 }
+
+# F47 — Cognito nightly snapshot lambda (consumed by module.eventbridge
+# for the daily trigger and by module.monitoring for the missing-snapshot
+# alarm).
+output "cognito_snapshot_arn" {
+  description = "ARN for cognito-snapshot lambda (EventBridge target for F47 nightly snapshot)"
+  value       = aws_lambda_function.cognito_snapshot.arn
+}
+
+output "cognito_snapshot_function_name" {
+  value = aws_lambda_function.cognito_snapshot.function_name
+}

@@ -315,6 +315,10 @@ module "eventbridge" {
   alert_flow_rollup_lambda_name           = module.lambda.alert_flow_rollup_function_name
   patient_engagement_rollup_lambda_arn    = module.lambda.patient_engagement_rollup_arn
   patient_engagement_rollup_lambda_name   = module.lambda.patient_engagement_rollup_function_name
+
+  # F47 — Cognito nightly snapshot (daily 02:00 UTC, DR/RPO closure)
+  cognito_snapshot_lambda_arn  = module.lambda.cognito_snapshot_arn
+  cognito_snapshot_lambda_name = module.lambda.cognito_snapshot_function_name
 }
 
 # Monitoring Module (CloudWatch alarms, SNS, dashboard)
@@ -333,6 +337,12 @@ module "monitoring" {
   sqs_queue_name                          = module.sqs.document_processing_queue_name
   dlq_queue_name                          = module.sqs.document_processing_dlq_name
   alerts_dlq_queue_name                   = module.sqs.alerts_dlq_name
+
+  # F45 T1 + F47 — dimensions for Cognito-scoped alarms (sign-in throttle
+  # rate + nightly snapshot missing). Pool ID flows from the cognito
+  # module so the alarms target the same pool terraform manages.
+  cognito_user_pool_id           = module.cognito.user_pool_id
+  cognito_snapshot_function_name = module.lambda.cognito_snapshot_function_name
 }
 
 # Bastion Module (for SSM port-forwarding to RDS)

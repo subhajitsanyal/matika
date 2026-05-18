@@ -146,3 +146,104 @@ resource "aws_cloudwatch_metric_alarm" "health_endpoint_5xx" {
     Method   = "GET"
   }
 }
+
+# ---------------------------------------------------------------------------
+# F45 T1 — Cognito sign-in throttle/error rate alarm
+#
+# Lives the runbook-promised name `carelog-${env}-cognito-signin-errors`
+# (see docs/runbook_oncall_v2.md "TARGET alarms" T1). What we actually
+# measure: AWS/Cognito Throttles / (Throttles + SignInSuccesses) * 100
+# over 5 min. Throttles is the only failure-class metric Cognito
+# publishes natively. Wrong-password / no-such-user / etc. failures
+# don't surface to CloudWatch — they fire CloudTrail events instead.
+#
+# v2.1 follow-up: extend by emitting a custom `SignInFailures` metric
+# from the post_authentication lambda (or subscribe an EventBridge rule
+# to CloudTrail userPoolEvents). Until then, this alarm catches the
+# operationally most-actionable case (rate-limit hits / WAF mass-block).
+# ---------------------------------------------------------------------------
+
+resource "aws_cloudwatch_metric_alarm" "cognito_signin_errors" {
+  count = var.cognito_user_pool_id != "" ? 1 : 0
+
+  alarm_name          = "carelog-${var.environment}-cognito-signin-errors"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  threshold           = 5
+  alarm_description   = "Cognito sign-in throttle/error rate > 5% over 5 minutes (Throttles / (Throttles + SignInSuccesses)). Auth blocks 100% of new sign-ins — SEV-1 class. F45 T1."
+  alarm_actions       = [aws_sns_topic.operator_alerts.arn]
+  ok_actions          = [aws_sns_topic.operator_alerts.arn]
+  treat_missing_data  = "notBreaching"
+
+  metric_query {
+    id          = "error_rate"
+    expression  = "(throttles / (throttles + successes + 1)) * 100"
+    label       = "Sign-in Throttle Rate %"
+    return_data = true
+  }
+
+  metric_query {
+    id = "throttles"
+    metric {
+      metric_name = "Throttles"
+      namespace   = "AWS/Cognito"
+      period      = 300
+      stat        = "Sum"
+      dimensions = {
+        UserPool = var.cognito_user_pool_id
+      }
+    }
+  }
+
+  metric_query {
+    id = "successes"
+    metric {
+      metric_name = "SignInSuccesses"
+      namespace   = "AWS/Cognito"
+      period      = 300
+      stat        = "Sum"
+      dimensions = {
+        UserPool = var.cognito_user_pool_id
+      }
+    }
+  }
+
+  tags = {
+    Environment = var.environment
+  }
+}
+
+# ---------------------------------------------------------------------------
+# F47 — Cognito snapshot missing alarm
+#
+# Fires if the nightly cognito-snapshot lambda hasn't invoked in any
+# 24-hour window (catches EventBridge rule disabled, IAM regression, or
+# lambda removal). Pair with the carelog-${env}-lambda-errors-* alarm
+# already declared by the main.tf per-function loop — that one catches
+# runtime failures of the snapshot lambda itself.
+# ---------------------------------------------------------------------------
+
+resource "aws_cloudwatch_metric_alarm" "cognito_snapshot_missing" {
+  count = var.cognito_snapshot_function_name != "" ? 1 : 0
+
+  alarm_name          = "matika-${var.environment}-cognito-snapshot-missing"
+  comparison_operator = "LessThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = "Invocations"
+  namespace           = "AWS/Lambda"
+  period              = 86400 # 24h window
+  statistic           = "Sum"
+  threshold           = 1
+  alarm_description   = "F47 — cognito-snapshot lambda did not invoke in the last 24h. EventBridge rule disabled, IAM regression, or lambda removed. RPO unbounded until next successful run."
+  alarm_actions       = [aws_sns_topic.operator_alerts.arn]
+  ok_actions          = [aws_sns_topic.operator_alerts.arn]
+  treat_missing_data  = "breaching" # zero invocations should breach — opposite of the lambda-error pattern
+
+  dimensions = {
+    FunctionName = var.cognito_snapshot_function_name
+  }
+
+  tags = {
+    Environment = var.environment
+  }
+}

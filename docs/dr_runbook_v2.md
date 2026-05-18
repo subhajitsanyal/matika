@@ -64,7 +64,7 @@ One-page summary of what's backed up, by what mechanism, where it lives, and for
   - There IS a noncurrent-version expiration. Plan capacity around the 365-day window — versions older than that are unrecoverable.
 - **Raw interactions bucket** `carelog-raw-<env>-<acct>`: versioning ON. Lifecycle (`modules/s3/main.tf:375-454`): STANDARD → STANDARD_IA at 90d → DEEP_ARCHIVE at 365d → expire at 2555d (7yr DPDP retention). Noncurrent versions: DEEP_ARCHIVE at 30d, expire at 2555d.
 - **Access logs bucket** `carelog-v2-<env>-access-logs-<acct>`: versioning ON. No lifecycle policy — every version retained indefinitely (will need cost cleanup eventually; flag as v2.1 follow-up).
-- **Replica bucket (v2.1):** `<TBD-replica-bucket>` in `<TBD-replica-region>` — not yet declared; cross-region replication design is part of the v2.1 multi-region work.
+- **Replica bucket (v2.1):** `<DEFERRED v2.1 — multi-region design pending; owner: founder + infra at v2.1 kickoff>` in `<DEFERRED v2.1 — likely ap-southeast-1 or me-south-1 pending DPDP-residency review>` — not yet declared; cross-region replication design is part of the v2.1 multi-region work, NOT in scope for v2.0 (intra-region durability via S3 versioning + DPDP residency on ap-south-1 only).
 
 ### 3. Cognito backups
 
@@ -307,7 +307,7 @@ Expected downtime: tied to AWS recovery time. AWS regional outages historically 
 
 1. **Confirm the outage.** AWS Health Dashboard event + an AWS Support case acknowledgement is the bar. Do NOT trust a single failing curl — the laptop's ISP could be the problem.
 2. **Communicate to users via the status page.** Use the customer-facing template in §6.1. Mark status as `Investigating`.
-3. **Notify the beta cohort directly via WhatsApp.** Use the template in §6.2. Send from the support phone (`<TBD>` — coordinate with comms lead). For caregivers who haven't opted into WhatsApp, fall back to SMS via the same template.
+3. **Notify the beta cohort directly via WhatsApp.** Use the template in §6.2. Send from the support phone — for v2.0 beta in solo-founder mode this is the founder's own number (until a dedicated beta-support WhatsApp number provisions per F48). For caregivers who haven't opted into WhatsApp, fall back to SMS via the same template.
 4. **Do NOT attempt to re-create infrastructure in a different region during a regional outage.** DPDP requires India residency; deploying to a non-India region would be a compliance violation. Wait for region recovery. The DPDP boundary is a launch-plan §12 hard constraint.
 5. **Engineering activity during the outage:**
    - Note the timestamp of last successful backup for each surface (RDS snapshot timestamp, S3 versioning marker, last Cognito snapshot date) — this fixes the RPO you'll be at on recovery.
@@ -398,7 +398,7 @@ We are investigating reports of <symptom> affecting the Matika app. Your data is
 - <ISO timestamp>: Mitigation in progress.
 - <ISO timestamp>: Service restored. Postmortem to follow within 7 days.
 
-If you need urgent help, please reach out to your assigned caregiver or our beta support: <TBD support phone/WhatsApp number>.
+If you need urgent help, please reach out to your assigned caregiver or our beta support: subhajit@kyabla.in (interim — beta-support WhatsApp number TO BE PROVISIONED PRE-BETA per F48).
 ```
 
 Update cadence: every 30 minutes for SEV-1, every 60 minutes for SEV-2, on state-change only for SEV-3.
@@ -412,17 +412,17 @@ Hi <Name>, this is the Matika team. We're experiencing a temporary issue with th
 
 **Hindi template:**
 ```
-<TBD — translation pending; coordinate with content team>
+<DEFERRED — Hindi translation pending; owner: founder coordinating with content team, target T-14 pre-beta. Do NOT machine-translate for outage comms — pre-approved phrasing required for trust.>
 ```
 
 **Bengali template:**
 ```
-<TBD — translation pending; coordinate with content team>
+<DEFERRED — Bengali translation pending; owner: founder coordinating with content team, target T-14 pre-beta. Do NOT machine-translate for outage comms — pre-approved phrasing required for trust.>
 ```
 
 Do NOT machine-translate the Hindi/Bengali versions for outage comms — pre-approved phrasings are required for trust. Block on the content team if needed; default to the English template only.
 
-Send from: `<TBD — beta support WhatsApp number>`. List of beta cohort numbers: see `<TBD — beta cohort roster doc>`.
+Send from: founder's own number (interim — beta-support WhatsApp number TO BE PROVISIONED PRE-BETA per F48). List of beta cohort numbers: TO BE PROVISIONED PRE-BETA — owner: founder will publish a private gdoc / encrypted Notion page once the cohort is selected (target T-7 per launch-plan §8 timeline).
 
 ### 6.3 Internal Slack incident channel kickoff message
 
@@ -450,7 +450,7 @@ Send via the same channel as the original notification (status page + WhatsApp).
 Hi <Name>, the issue we wrote about earlier is now fixed. The app is back to normal. Thank you for your patience. If you notice anything still not working, please reply to this message.
 ```
 
-**Hindi / Bengali:** `<TBD — translation pending>`.
+**Hindi / Bengali:** `<DEFERRED — translations pending; owner: founder coordinating with content team, target T-14 pre-beta.>`
 
 Within 7 days of a SEV-1 or SEV-2: publish a public postmortem in `docs/postmortems/<YYYY-MM-DD>-<slug>.md` and link from the status page entry.
 
@@ -518,7 +518,7 @@ Document each drill in `docs/dr_drill_log.md` (create on first drill).
 
 - [ ] Spin up a private Slack channel `#drill-incident-<date>`. Post the §6.3 template. Confirm rendering.
 - [ ] Send the §6.2 English WhatsApp template to ONE engineer's number (not the beta cohort). Confirm delivery.
-- [ ] Post the §6.1 status template to a staging instance of whichever status-page tool we'll use (TBD per launch plan). Confirm rendering + email subscribers receive a notification.
+- [ ] Post the §6.1 status template to a staging instance of whichever status-page tool we'll use. Status-page tooling is `<TO BE PROVISIONED PRE-BETA — owner: founder; candidates Statuspage.io vs Atlassian Statuspage vs self-hosted Cachet; decision target T-21>`. Confirm rendering + email subscribers receive a notification.
 - [ ] Log in `docs/dr_drill_log.md`.
 
 ---

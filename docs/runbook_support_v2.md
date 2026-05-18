@@ -19,7 +19,7 @@ Before deep-diving into a scenario, classify the ticket and collect the identifi
 | Tell-tale | v2.0 | v1 legacy |
 |---|---|---|
 | Hardware at patient's home | None (Android app only) | Mac Mini |
-| App install source | `<TBD Play Store beta link>` (closed beta from July 2026) | n/a — no patient phone app in v1 |
+| App install source | TO BE PROVISIONED PRE-BETA (Play Store closed-beta link — owner: founder, target T-7 per launch-plan §8 timeline) | n/a — no patient phone app in v1 |
 | Voice in Hindi/Bengali | Yes (Android NATIVE_VOICES) | No |
 | User mentions "alerts to my phone" | Yes (FCM push) | Sometimes (email-only in v1) |
 | App `versionName` | `1.4.x` or higher | n/a |
@@ -376,7 +376,7 @@ PGPASSWORD=$(aws secretsmanager get-secret-value --secret-id carelog-staging-db-
   psql -h 127.0.0.1 -p 55433 -U carelog_staging_admin -d carelog_staging
 ```
 
-**PROD:** `<TBD — prod RDS access requires named breakglass user; see infra lead before first use>`.
+**PROD:** TO BE PROVISIONED PRE-BETA — owner: founder (sole infra lead during beta). Pattern will mirror staging (`carelog_prod_admin` named breakglass user via Secrets Manager `carelog-prod-db-password`) once the prod RDS instance is stood up per `docs/v2_launch_plan.md` §4.6 "Prod environment first-apply." Until then, prod RDS access is N/A — the prod env doesn't exist yet.
 
 Always use the libpq `psql` binary, not the Homebrew one (which can have TLS quirks against RDS). Path on dev workstation: `/Applications/Postgres.app/Contents/Versions/latest/bin/psql` or whatever the local install provides.
 
@@ -467,9 +467,9 @@ DPDP Act constraints apply to every artifact a support engineer creates. Tickets
 **Escalation for PII exposure incidents:**
 
 If you've already pasted PHI somewhere you shouldn't have (Slack channel, ticket, email), do NOT delete the message yourself — that complicates the audit trail. Instead:
-1. Notify `<TBD privacy officer / DPO>` within 1 hour of discovery.
-2. Notify backend lead via Slack DM with a description (NOT the original PHI).
-3. Privacy team will determine whether deletion + re-issuance is required per DPDP §8(5) breach-notification rules.
+1. Notify the DPO within 1 hour of discovery. In solo-founder mode (v2.0 beta): the founder acts as DPO until first hire — email `subhajit@kyabla.in` with subject `DPO incident — DPDP §8(5) candidate`.
+2. Notify backend lead via the same channel (also `subhajit@kyabla.in` in solo-founder mode) with a description (NOT the original PHI).
+3. The DPO (founder, in solo mode) will determine whether deletion + re-issuance is required per DPDP §8(5) breach-notification rules. The 72-hour reporting window starts at discovery, not at decision.
 
 Reference: `docs/privacy-policy.md` for the canonical user-facing data-handling policy. The cross-region disclosure language there must match the in-app `cross_region_disclosure_scan` content.
 

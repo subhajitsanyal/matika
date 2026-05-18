@@ -55,3 +55,17 @@ variable "alerts_dlq_queue_name" {
   type        = string
   default     = ""
 }
+
+# F45 T1 — Cognito sign-in error rate alarm scoping
+variable "cognito_user_pool_id" {
+  description = "Cognito User Pool ID — dimension for AWS/Cognito alarms (sign-in throttles, etc.)"
+  type        = string
+  default     = ""
+}
+
+# F47 — Cognito snapshot lambda for the missing-snapshot alarm
+variable "cognito_snapshot_function_name" {
+  description = "Function name for the cognito-snapshot lambda — dimension for the snapshot-missing alarm"
+  type        = string
+  default     = ""
+}

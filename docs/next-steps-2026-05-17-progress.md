@@ -216,7 +216,77 @@ The kickoff is **DONE**. Per kickoff §6, this file's done-condition is satisfie
 - [x] Stream C — "Crash reporting wired" checkbox flipped to ✓
 - [x] Stream D — §6.2 table updated for all three runbooks
 
-**Recommendation for the next session:** kickoff is complete. Either rename `docs/next-steps-2026-05-17.md` → `docs/next-steps-2026-05-17-DONE.md` and start a fresh next-steps file for the M1 closed-beta cutover work, or pick up the open follow-ups F45 (4 TARGET CloudWatch alarms), F47 (Cognito nightly export), F48 (operational naming pass) that Stream D surfaced. Soak clock continues to 2026-05-22 (Stream H prod-prep target).
+---
+
+### Stream D follow-ups — F45 + F47 + F48 — **DONE 2026-05-17** (same session as Stream A)
+
+Picked up immediately after Stream A landed. Commit: `<pending>` (this commit).
+
+**Landed:**
+
+1. **F47 — Cognito nightly snapshot lambda (RESOLVED, dev + staging).**
+   - New `backend/lambdas/cognito-snapshot/` (Node.js 20, ~170 lines, AWS SDK v3). Runs `DescribeUserPool` + paginated `ListGroups` + per-group paginated `ListUsersInGroup` + paginated `ListUsers`. Writes 4 files per run (`pool.json`, `groups.json`, `users.json` (with embedded `Groups[]` per user), `manifest.json` as completion sentinel) to `s3://{documents_bucket}/cognito-snapshots/{YYYY-MM-DD}/`.
+   - New dedicated minimal-scope IAM role `carelog-{env}-lambda-cognito-snapshot` (does NOT reuse `lambda_rds_cognito` — that shared role has too many irrelevant perms; new role only grants cognito-idp:Describe/List* + s3:PutObject on cognito-snapshots/* + kms:GenerateDataKey on S3 key).
+   - No VPC config (cognito-idp + s3 internet-reachable; saves an ENI for once-a-day task).
+   - EventBridge rule `matika-cognito-snapshot-{env}` cron `0 2 * * ? *` (daily 02:00 UTC). Both envs ENABLED.
+   - CloudWatch alarm `matika-{env}-cognito-snapshot-missing` (Invocations < 1 over 24h, treat_missing_data=breaching).
+   - Dev verified: 4 files written, 5 groups + 3 users, 1590ms. Staging verified: 5 groups + 10 users.
+   - RPO for Cognito config/roster corruption now bounded at ≤24h (was unbounded).
+
+2. **F45 T1 — Cognito sign-in errors alarm (LANDED, dev + staging).**
+   - New `aws_cloudwatch_metric_alarm.cognito_signin_errors` in `modules/monitoring/alarms_v2.tf`. Metric math: `Throttles / (Throttles + SignInSuccesses + 1) * 100 > 5` over 5min, scoped to `UserPool = module.cognito.user_pool_id`. SNS fan-out to operator-alerts. Dev state OK, staging INSUFFICIENT_DATA (low traffic).
+   - Caveat documented in F45 entry: AWS/Cognito only publishes Throttles natively (not password failures / no-such-user — those go to CloudTrail). v2.1 follow-up: emit a custom SignInFailures metric from `post_authentication` lambda.
+
+3. **F45 T2 — Bedrock guardrail block-rate metric + alarm (DEFERRED).**
+   - The fix candidate (emit custom CloudWatch metric from `matika-{env}-bedrock-router` on `GuardrailIntervened`) requires touching live router lambda code. During the active soak window (clock continues to 2026-05-22), this introduces F2-class lambda-hash-drift risk on the most-used user-facing lambda. Defer to a future session already touching the router for unrelated reasons. F45 entry updated with rationale + wire-target (before any prod guardrail config bump, or pre-GA).
+
+4. **F45 T3 — WorkManager sync backlog (DEFERRED v2.1).**
+   - Per F45 entry's own original wire-target: client-side metric, no server-side surface in v2.0. Stream C Crashlytics gives partial visibility today via `FhirSyncWorker` failure forwarding.
+
+5. **F45 T4 — Cognito drift detector (DEFERRED with locked design).**
+   - Original F45 entry proposed running `terraform plan -refresh-only` from a Lambda — rejected as too heavy (terraform binary Lambda Layer ~200MB, S3 backend access + lock acquisition, slow `init` cold start, broad AWS describe perms needed).
+   - **Design locked:** config-hash variant. Scheduled lambda calls Describe/List* (same shape as F47), computes a stable SHA256 over a normalized view (excluding `LastModifiedDate`, `EstimatedNumberOfUsers`, and roster volatility), compares against baseline at `s3://{documents_bucket}/cognito-baseline/hash.txt`, alarms on diff. Structurally similar to F47's lambda — can reuse the same IAM-role pattern.
+   - Stream A baseline prerequisite satisfied 2026-05-17. Wire-target: pre-prod-cutover.
+   - Implementation deferred to next session for dedicated scope.
+
+6. **F48 — Operational TBD naming pass (RESOLVED, solo-founder mode).**
+   - All 27 `<TBD>` markers across `runbook_oncall_v2.md` + `runbook_support_v2.md` + `dr_runbook_v2.md` resolved per founder decisions:
+     - Paging tool: none for v2.0 beta — SNS → email/SMS to `subhajit@kyabla.in`. New §"Solo-founder paging mode" section in oncall runbook makes the mode explicit + reversible.
+     - On-call rotation: solo founder for every alarm class. Escalation matrix simplified.
+     - Contact placeholders: `subhajit@kyabla.in` interim; items with no current substitute tagged `TO BE PROVISIONED PRE-BETA — owner: founder, target T-{N}`.
+     - Translations: `<DEFERRED — Hindi/Bengali pending; owner: founder coordinating with content team, target T-14 pre-beta>`.
+   - `grep -nH "<TBD" docs/runbook_*.md docs/dr_runbook_v2.md` returns exactly 1 hit — the intentional meta-`<TBD>` in `runbook_oncall_v2.md:25` that explains when this resolution becomes obsolete.
+
+**Verification:**
+- ✅ Both envs `terraform plan -target=<resource>` showed exactly 10 to add, 0 to change, 0 to destroy (no F2 hash drift on unrelated lambdas).
+- ✅ Both env applies clean: `Apply complete! Resources: 10 added, 0 changed, 0 destroyed.`
+- ✅ `aws lambda invoke carelog-dev-cognito-snapshot` returned 200 + 4 S3 files; same for staging.
+- ✅ Manifest.json verified post-write (sha256, counts, durations all sensible).
+- ✅ Both EventBridge rules ENABLED for daily 02:00 UTC.
+- ✅ Both `carelog-{env}-cognito-signin-errors` + `matika-{env}-cognito-snapshot-missing` alarms live in CloudWatch (states converge over next eval cycles).
+
+**Files touched:**
+- `backend/lambdas/cognito-snapshot/` (new dir: `index.js`, `package.json`, `package-lock.json`, `node_modules/`)
+- `infrastructure/terraform/modules/lambda/main.tf` (+97 lines: archive_file + iam_role + 2 iam_role attachments + lambda + log group for cognito_snapshot)
+- `infrastructure/terraform/modules/lambda/outputs.tf` (+12 lines)
+- `infrastructure/terraform/modules/eventbridge/main.tf` (+22 lines)
+- `infrastructure/terraform/modules/eventbridge/variables.tf` (+13 lines)
+- `infrastructure/terraform/modules/monitoring/alarms_v2.tf` (+78 lines: F45 T1 alarm + F47 snapshot-missing alarm)
+- `infrastructure/terraform/modules/monitoring/variables.tf` (+12 lines)
+- `infrastructure/terraform/main.tf` (+8 lines: pass cognito_snapshot vars to eventbridge + monitoring modules)
+- `docs/runbook_oncall_v2.md` (+13 / -8 lines: solo-founder paging mode section + escalation matrix fills + how-to-wake-someone-up section update)
+- `docs/runbook_support_v2.md` (Play Store link / prod RDS / DPO TBDs filled)
+- `docs/dr_runbook_v2.md` (replica bucket / support phone / translations / cohort roster / status-page TBDs filled)
+- `docs/testing_todos_v2.md` (F45 partial-resolution rewrite, F47 RESOLVED, F48 RESOLVED with decision log)
+- `docs/v2_launch_plan.md` (§7.3 monitoring row + §7.4 on-call rotation rewrite for solo-founder mode)
+
+**Deferral budget (carry forward to next session):**
+- F45 T2 — Bedrock guardrail metric + alarm. Best done in a future session that's already touching `bedrock-router` for unrelated reasons. Locked alarm name: `matika-{env}-bedrock-guardrail-block-rate`.
+- F45 T4 — Cognito drift detector. Config-hash design locked; ~150 LOC lambda + terraform similar in shape to F47. Wire-target pre-prod-cutover.
+- F45 T3 — WorkManager backlog. v2.1, blocked on client-side telemetry pipeline design.
+- TBD provisioning items: Play Store link, beta-support WhatsApp, beta-cohort roster doc, prod RDS breakglass user, status-page tool — all tracked in runbooks with owner + target T-N.
+
+**Recommendation for the next session:** kickoff is fully done. Either start a fresh next-steps file for the M1 closed-beta cutover work (prod env first-apply per launch-plan §4.6 + DPDP audit + Bedrock quota request + the deferred F45 T2/T4), or pick up the staging soak verification as the clock approaches 2026-05-22.
 
 ---
 

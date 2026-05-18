@@ -1900,3 +1900,89 @@ resource "aws_lambda_permission" "post_authentication_cognito" {
   principal     = "cognito-idp.amazonaws.com"
   source_arn    = var.cognito_user_pool_arn
 }
+
+# ============================================================
+# F47 — Cognito nightly snapshot (DR / RPO closure)
+#
+# Standalone lambda outside the VPC: only needs cognito-idp + s3 + kms.
+# Dedicated minimal-scope IAM role (does NOT reuse lambda_rds_cognito —
+# that role is shared by ~12 lambdas and grants RDS + SNS + SES which
+# the snapshot lambda has no need for). Triggered nightly by the
+# matika-cognito-snapshot EventBridge rule (see modules/eventbridge).
+# ============================================================
+
+data "archive_file" "cognito_snapshot" {
+  type        = "zip"
+  source_dir  = "${var.lambdas_source_path}/cognito-snapshot"
+  output_path = "${path.module}/archives/cognito-snapshot.zip"
+}
+
+resource "aws_iam_role" "lambda_cognito_snapshot" {
+  name               = "${local.function_prefix}-lambda-cognito-snapshot"
+  assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
+}
+
+resource "aws_iam_role_policy_attachment" "cognito_snapshot_basic_logs" {
+  role       = aws_iam_role.lambda_cognito_snapshot.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+resource "aws_iam_role_policy" "cognito_snapshot_inline" {
+  name = "cognito-snapshot-access"
+  role = aws_iam_role.lambda_cognito_snapshot.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "cognito-idp:DescribeUserPool",
+          "cognito-idp:ListGroups",
+          "cognito-idp:ListUsers",
+          "cognito-idp:ListUsersInGroup"
+        ]
+        Resource = [var.cognito_user_pool_arn]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["s3:PutObject"]
+        Resource = ["${var.documents_bucket_arn}/cognito-snapshots/*"]
+      },
+      {
+        # S3 KMS GenerateDataKey needed because PutObject uses
+        # ServerSideEncryption=aws:kms (matches the bucket default).
+        Effect   = "Allow"
+        Action   = ["kms:GenerateDataKey", "kms:Decrypt"]
+        Resource = [var.s3_kms_key_arn]
+      }
+    ]
+  })
+}
+
+resource "aws_lambda_function" "cognito_snapshot" {
+  function_name    = "${local.function_prefix}-cognito-snapshot"
+  role             = aws_iam_role.lambda_cognito_snapshot.arn
+  handler          = "index.handler"
+  runtime          = "nodejs20.x"
+  timeout          = 300
+  memory_size      = 256
+  filename         = data.archive_file.cognito_snapshot.output_path
+  source_code_hash = data.archive_file.cognito_snapshot.output_base64sha256
+
+  # No vpc_config — cognito-idp + s3 are both internet-reachable from
+  # the default Lambda networking and we don't want to consume an ENI
+  # for a once-a-day task.
+
+  environment {
+    variables = {
+      COGNITO_USER_POOL_ID = local.cognito_user_pool_id
+      DOCUMENTS_BUCKET     = var.documents_bucket_name
+    }
+  }
+}
+
+resource "aws_cloudwatch_log_group" "cognito_snapshot" {
+  name              = "/aws/lambda/${aws_lambda_function.cognito_snapshot.function_name}"
+  retention_in_days = 30
+}

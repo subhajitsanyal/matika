@@ -13,21 +13,34 @@ For every alert below, the Alarm Name column matches the live AWS resource exact
 
 ---
 
+## Solo-founder paging mode (v2.0 closed beta — M1)
+
+For the closed beta cohort (~10 patients, July 2026 onward), Matika ops runs in **solo-founder mode**:
+
+- **Paging tool:** none. Cloudwatch alarms fan out via the `carelog-<env>-operator-alerts` SNS topic → email to `subhajit@kyabla.in` (the founder). For SEV-1-class alarms, AWS SNS additionally delivers SMS to the same identity via the email-to-SMS gateway (revisit when a dedicated SMS endpoint is provisioned). No PagerDuty / Opsgenie subscription for beta — cost + tooling overhead unjustified for one responder. Decision recorded 2026-05-17 (F48 ops naming pass).
+- **On-call rotation:** founder is sole responder for every alarm class. The escalation tree below lists `founder (solo responder)` for every cell; revisit at first ops/eng hire.
+- **Auto-escalation policy:** none. If the founder no-acks, there is no secondary tier; honest about current state. The pre-GA tooling decision (PagerDuty vs Opsgenie) is tracked under [F48 → §7.4 launch-plan beta-gate] and must land before the cohort scales past the beta size.
+- **Escalation contact for SEV-1 customer-facing > 1h:** founder's own personal phone (not in this repo; held in personal contacts). Until that's surfaced through a paging tool, the implicit assumption is the founder is reachable on the same email/SMS path the alarms already fan out to.
+
+This section becomes a `<TBD>` block again the moment Matika hires a second on-call responder. Until then, the TBDs throughout this doc resolve to the founder.
+
+---
+
 ## First 60 seconds
 
 Before any deep diagnosis, run this checklist. The goal is to be oriented enough to triage by 60s, not to fix anything yet.
 
-1. **Acknowledge the page** in `<TBD paging-system — PagerDuty/Opsgenie>` so the on-call rotation knows you have it. If you no-ack for >2 min the page auto-escalates per `<TBD escalation policy>`.
+1. **Acknowledge the page** by replying to the SNS alarm email (or, once provisioned, the paging tool of choice — see §"Solo-founder paging mode"). In solo-founder mode there is no auto-escalation; the founder is the sole responder.
 2. **Read the alarm name carefully** — the env prefix tells you blast radius:
    - `carelog-dev-*` → dev, no patient impact, lower urgency.
    - `carelog-staging-*` → staging soak; no patient impact today (closed beta starts July 2026 per `docs/v2_launch_plan.md` §0) but a staging incident may indicate a regression that would page in prod.
    - `carelog-prod-*` or `matika-prod-*` → real patient impact. Treat as SEV-1 default; downgrade only after you've confirmed scope.
 3. **Open the CloudWatch dashboard for the affected env:** `https://ap-south-1.console.aws.amazon.com/cloudwatch/home?region=ap-south-1#dashboards:name=carelog-<env>`. The dashboard is `aws_cloudwatch_dashboard.main` in `infrastructure/terraform/modules/monitoring/main.tf:307`.
 4. **Open the failing alarm directly:** `https://ap-south-1.console.aws.amazon.com/cloudwatch/home?region=ap-south-1#alarmsV2:alarm/<exact-alarm-name>`. Use the alarm name from the page verbatim.
-5. **Check if anyone is already responding:** look at `<TBD #incidents Slack channel>` for an open incident with the same alarm name in the last 30 min. If yes, DM that person and offer to pair; don't duplicate diagnosis.
+5. **Check if anyone is already responding:** in solo-founder mode (v2.0 beta) the founder is the sole responder, so this step is a no-op. Once a second responder exists, this is where to look for an open `#incidents` (or equivalent) thread for the same alarm name in the last 30 min.
 6. **Set a 5-minute "first response" timer.** If you haven't classified the alarm class (RDS / Bedrock / Lambda / API GW / SNS / Cognito) by the timer, page the backend lead — see Escalation tree below. Cognito-class alarms have a tighter 15-min total resolution budget because they affect every sign-in.
 
-If you cannot reach the AWS console (network down, MFA broken, etc.), page the infra lead via phone (`<TBD>`) immediately — you cannot triage blind.
+If you cannot reach the AWS console (network down, MFA broken, etc.), the founder is the infra lead and the contact path is the same email + SMS already routed via the operator-alerts SNS topic. In solo-founder mode there is no separate infra-lead phone tree.
 
 ---
 
@@ -187,25 +200,27 @@ The launch plan §7.3 commits to a broader alarm set than what's in `infrastruct
 
 ## Escalation tree
 
-Names are deliberately placeholders — wire `<TBD>` to actual humans before beta. Use this matrix when the "first 60 seconds" check says you can't resolve in your role.
+Solo-founder mode (v2.0 closed beta — see §"Solo-founder paging mode"): every cell resolves to the founder (`subhajit@kyabla.in`). The "Escalate after" column is meaningful even in solo mode: it sets the SLO budget within which the founder commits to resolve before escalating to the user-facing comms path (status-page update + cohort WhatsApp message — see DR runbook §6.2). Revisit this matrix at first eng/ops hire.
 
 | Alarm class | Primary on-call | Secondary | Lead | Escalate after |
 |---|---|---|---|---|
-| RDS / database | `<TBD primary>` | `<TBD secondary>` | backend lead `<TBD>` | 30 min |
-| Bedrock / inference | `<TBD>` | `<TBD>` | inference-platform owner `<TBD>` | 30 min |
-| API Gateway / Lambda | `<TBD>` | `<TBD>` | backend lead `<TBD>` | 30 min |
-| SNS / FCM push | `<TBD>` | `<TBD>` | infra lead `<TBD>` | 60 min |
-| Cognito / auth | `<TBD>` | `<TBD>` | backend lead `<TBD>` | **15 min — auth is highest priority, blocks 100% of new sign-ins** |
-| S3 / clinical data | `<TBD>` | `<TBD>` | backend lead `<TBD>` | 30 min |
-| Cost / quota / Service Quotas | `<TBD>` | `<TBD>` | infra lead `<TBD>` | next business day |
-| Crashlytics / mobile crash spike | `<TBD>` | `<TBD>` | Android lead `<TBD>` | 4 hours (not paging-grade unless crash rate >5%) |
+| RDS / database | founder (solo responder) | n/a (solo mode) | founder | 30 min |
+| Bedrock / inference | founder (solo responder) | n/a (solo mode) | founder | 30 min |
+| API Gateway / Lambda | founder (solo responder) | n/a (solo mode) | founder | 30 min |
+| SNS / FCM push | founder (solo responder) | n/a (solo mode) | founder | 60 min |
+| Cognito / auth | founder (solo responder) | n/a (solo mode) | founder | **15 min — auth is highest priority, blocks 100% of new sign-ins** |
+| S3 / clinical data | founder (solo responder) | n/a (solo mode) | founder | 30 min |
+| Cost / quota / Service Quotas | founder (solo responder) | n/a (solo mode) | founder | next business day |
+| Crashlytics / mobile crash spike | founder (solo responder) | n/a (solo mode) | founder | 4 hours (not paging-grade unless crash rate >5%) |
 
 ### How to wake someone up
 
-1. **Slack DM first.** Most reachable, lowest friction. If no reply in 5 min and the alarm is auth/Cognito-class, jump to step 2.
-2. **Phone call.** Phone numbers live in `<TBD ops directory>` (NOT in this repo — PII). Call once; if no answer in 3 rings, jump to step 3.
-3. **PagerDuty / Opsgenie escalation rule.** Triggering the escalation auto-pages whoever is the secondary on rotation. This is the right move when the alarm has been live for >15 min and the primary is unreachable.
-4. **CEO / founder escalation.** For SEV-1 customer-facing incidents lasting >1 hour, page `<TBD founder contact>` via SMS. Required for v2.0 beta because the cohort is small and direct-line support is part of the offering.
+In solo-founder mode (v2.0 beta), steps 1-3 collapse to a single fan-out: the operator-alerts SNS topic. Once a second responder exists, this section comes back into play.
+
+1. **Email + SMS via SNS.** All CloudWatch alarms publish to `arn:aws:sns:ap-south-1:316643066568:carelog-<env>-operator-alerts`; subscription is `subhajit@kyabla.in` for v2.0 beta. AWS SNS delivers email instantly and SMS via the email-to-SMS gateway for SEV-1-class alarms.
+2. **Phone fallback.** Founder's personal phone is in personal contacts (not in repo — PII). Used only when SNS appears to have failed (no email in 5 min after a known-firing alarm).
+3. **PagerDuty / Opsgenie escalation rule** — not provisioned in v2.0 beta. Wire-target: pre-GA / first hire. Tracked in F48 launch-plan beta-gate (also see [§"Solo-founder paging mode"](#solo-founder-paging-mode-v20-closed-beta--m1)).
+4. **CEO / founder escalation.** N/A in solo-founder mode — the founder IS the on-call. Once a second responder exists, this step pages `subhajit@kyabla.in` via SMS for SEV-1 customer-facing incidents lasting >1 hour; direct-line support is a core v2.0 beta offering.
 
 ---
 

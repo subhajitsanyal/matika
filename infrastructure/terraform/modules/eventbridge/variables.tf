@@ -76,3 +76,17 @@ variable "alert_flow_rollup_lambda_arn"            { type = string }
 variable "alert_flow_rollup_lambda_name"           { type = string }
 variable "patient_engagement_rollup_lambda_arn"    { type = string }
 variable "patient_engagement_rollup_lambda_name"   { type = string }
+
+# ============================================================
+# F47 — Cognito nightly snapshot (daily cron 02:00 UTC, DR/RPO closure)
+# ============================================================
+
+variable "cognito_snapshot_lambda_arn" {
+  description = "ARN of matika-<env>-cognito-snapshot Lambda (EventBridge target for nightly snapshot)"
+  type        = string
+}
+
+variable "cognito_snapshot_lambda_name" {
+  description = "Function name of matika-<env>-cognito-snapshot Lambda (for permission resource)"
+  type        = string
+}

@@ -1,0 +1,13 @@
+{
+  "name": "matika-cognito-snapshot",
+  "version": "1.0.0",
+  "description": "F47 — nightly Cognito user pool snapshot to S3 (DR / RPO closure)",
+  "main": "index.js",
+  "dependencies": {
+    "@aws-sdk/client-cognito-identity-provider": "^3.978.0",
+    "@aws-sdk/client-s3": "^3.978.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

@@ -476,25 +476,19 @@ So the wedge persists below the user-space audio daemon layer (likely audio HAL 
 2. **Investigate** whether the wedge is specific to alternating between built-in vs external output devices, or whether single-device runs also wedge. The 2026-05-17 data point (wedge with no device switches in the session) suggests it's not device-switch alone.
 3. Update `voice_harness_lessons.md` lesson 6 with the "rebooted-and-still-wedged-after-25-min" data point + remote-TTS bypass so future bench operators don't burn time on the same coreaudiod/audiomxd restart attempts.
 
-### F45 — 4 TARGET CloudWatch alarms documented in oncall runbook but not declared in terraform monitoring module (NEW — 2026-05-17 Stream D)
+### F45 — 4 TARGET CloudWatch alarms documented in oncall runbook but not declared in terraform monitoring module (PARTIAL — 2026-05-17)
 
-**Severity:** **Medium — closes a `docs/v2_launch_plan.md` §7.3 launch-plan gap.** The 2026-05-17 oncall runbook extension (commit `9d2c9dd`, `docs/runbook_oncall_v2.md` §"TARGET alarms — not yet wired") added T1-T4 placeholders to document operational expectations that have no corresponding `aws_cloudwatch_metric_alarm` in `infrastructure/terraform/modules/monitoring/`. None of the four currently page; the symptoms still need manual investigation per the inline diagnostic steps.
+**Severity:** Was Medium — partially closed in the 2026-05-17 Stream D follow-ups commit. T1 LANDED, T2 DEFER, T3 DEFER (v2.1, per original entry), T4 DEFER (design choice locked, implementation deferred).
 
-The four:
-1. **T1: `carelog-<env>-cognito-signin-errors`** — Cognito sign-in error rate > 5% over 5 min. Wire-target: Q3 2026 pre-beta. Auth issues block 100% of new sign-ins, so this is a SEV-1 class alarm.
-2. **T2: `carelog-<env>-bedrock-guardrail-block-rate`** — Bedrock Guardrails blocking > 10% of router invocations. Wire-target: before any guardrail config bump in prod.
-3. **T3: WorkManager sync backlog growing** — client-side; no server-side metric exists in v2.0. Wire-target: v2.1 — requires app-side telemetry to S3 (e.g., periodic backlog-depth ping). Stream C (Crashlytics, commit `5be33c3`) gives partial visibility via `FhirSyncWorker` failure forwarding to Crashlytics console (Firebase project `carelog-7de0c`).
-4. **T4: `carelog-<env>-cognito-drift-detector`** — scheduled lambda runs `terraform plan -target=module.cognito -refresh-only` daily, pages on diff. Hedges against `terraform_lambda_drift_pattern.md` class. Wire-target: pre-prod-cutover (Stream A — Cognito drift apply — is the prerequisite).
+The four, updated:
+1. **T1: `carelog-<env>-cognito-signin-errors`** — **LANDED 2026-05-17.** Declared in `infrastructure/terraform/modules/monitoring/alarms_v2.tf` as a metric-math alarm: `Throttles / (Throttles + SignInSuccesses + 1) * 100 > 5` over 5 min, scoped to `UserPool = module.cognito.user_pool_id`. Applied to dev (state OK) + staging (state INSUFFICIENT_DATA — low traffic). The metric covers only Cognito-emitted Throttles, NOT password-failure / no-such-user / etc. (those go to CloudTrail, not CloudWatch). v2.1 follow-up: emit a custom `SignInFailures` metric from the post_authentication lambda OR subscribe an EventBridge rule to CloudTrail userPoolEvents — until then, this alarm catches the operationally most-actionable case (rate-limit / WAF mass-block).
+2. **T2: `carelog-<env>-bedrock-guardrail-block-rate`** — **DEFERRED.** The fix candidate (emit custom metric from `matika-<env>-bedrock-router` on `GuardrailIntervened` response) requires touching live router lambda code. The bedrock-router is the most-used user-facing lambda; touching its code during the active soak window (clock continues to 2026-05-22) introduces F2-class lambda-hash-drift risk (see memory `terraform_lambda_drift_pattern.md`). Defer to a future session that's already touching the router for unrelated reasons (e.g., a prompt-tuning or model-version bump), so the metric-emit fix piggybacks on a deploy that's already validated. Wire-target: before any prod guardrail config bump, OR pre-GA, whichever first.
+3. **T3: WorkManager sync backlog growing** — **DEFERRED to v2.1 (unchanged).** Per original entry's wire-target. Stream C Crashlytics gives partial visibility today.
+4. **T4: `carelog-<env>-cognito-drift-detector`** — **DEFERRED with design choice locked.** Stream A (Cognito drift apply) prerequisite is satisfied as of 2026-05-17. The original entry proposed running `terraform plan -refresh-only` from a Lambda; rejected as too heavy (requires terraform binary Lambda Layer ~200MB, S3 backend access + lock acquisition, slow `init` cold start). **Locked design:** config-hash drift detector — scheduled lambda calls `DescribeUserPool` + `ListGroups` + `ListUsersInGroup`, computes a stable SHA256 over a normalized view (excluding `LastModifiedDate` + `EstimatedNumberOfUsers` + roster volatility), compares against a baseline hash stored at `s3://{documents_bucket}/cognito-baseline/hash.txt`, alarms on diff. Structurally similar to F47's nightly snapshot lambda — share the same IAM role pattern. Same operational signal: "something changed in Cognito since last check." Wire-target: pre-prod-cutover (before any prod env stand-up).
 
-**Owner:** `backend` (T1, T4 — schema/lambda wiring) + `infra` (T2 — Bedrock metric exposure, T3 — app telemetry pipeline) + `qa-testing` (verification once each is wired).
+**Owner:** founder (solo-founder mode v2.0 — see `docs/runbook_oncall_v2.md` §"Solo-founder paging mode").
 
-**Fix candidates:**
-- T1: declare `aws_cloudwatch_metric_alarm` against `AWS/Cognito SignInThrottles` + custom metric pumped from EventBridge user-pool-events rule (UNCONFIRMED_DEVICE etc). Tie to operator-alerts SNS topic.
-- T2: emit a custom CloudWatch metric from `matika-<env>-bedrock-router` whenever `GuardrailIntervened` appears in the response; alarm on rate.
-- T3: scoped to v2.1. Until then, monitor manually via Crashlytics + support channel.
-- T4: scheduled EventBridge rule → small Lambda runs `terraform plan -refresh-only` against cognito module, posts to operator-alerts on non-empty diff. Prerequisite: Stream A baseline.
-
-**Cross-reference:** `docs/runbook_oncall_v2.md:133-185` for the inline TARGET sections + diagnostic steps that the alarm wiring should preserve.
+**Cross-reference:** `docs/runbook_oncall_v2.md` for the inline TARGET sections + diagnostic steps that future alarm wiring should preserve.
 
 ### F46 — S3 access-logs bucket has no noncurrent-version expiration rule (NEW — 2026-05-17 Stream D)
 
@@ -506,21 +500,25 @@ The four:
 
 **Cross-reference:** `infrastructure/terraform/modules/s3/main.tf:126-191` (documents-bucket lifecycle, as the model to follow) and `:375-454` (raw-interactions lifecycle).
 
-### F47 — Cognito nightly export to S3 not automated; RPO = "since last manual snapshot" (NEW — 2026-05-17 Stream D)
+### F47 — Cognito nightly export to S3 not automated; RPO = "since last manual snapshot" (RESOLVED — 2026-05-17 Stream D follow-ups)
 
-**Severity:** **Medium — acceptable for small closed beta, blocker for GA scale.** The DR runbook §3 (commit `9d2c9dd`, `docs/dr_runbook_v2.md`) documents a manual export procedure (`aws cognito-idp describe-user-pool`, `list-users`, `list-users-in-group` to local JSON files). Cognito has no native PITR or cross-region replication. Until automation lands, the recovery point objective for a Cognito user-pool config or roster corruption event is unbounded — whatever the operator last manually exported.
+**Severity:** Was Medium. Landed 2026-05-17 in dev + staging. RPO now bounded at ≤24h via the nightly snapshot lambda.
 
-**Owner:** `backend` + `infra`.
+**What landed:**
+- New lambda `backend/lambdas/cognito-snapshot/` (Node.js 20, AWS SDK v3, ~170 lines). Runs `DescribeUserPool` + paginated `ListGroups` + per-group paginated `ListUsersInGroup` + paginated `ListUsers`. Writes 4 files per run: `pool.json` + `groups.json` + `users.json` (each user object carries `Groups[]` array for restore convenience) + `manifest.json` (file list + per-file SHA256 + counts; written LAST as the completion sentinel).
+- Output path: `s3://{documents_bucket}/cognito-snapshots/{YYYY-MM-DD}/`. Existing documents-bucket lifecycle (`prefix=""` rules at `infrastructure/terraform/modules/s3/main.tf:126-191`) auto-applies: → INTELLIGENT_TIERING at 90d, → GLACIER at 365d. No separate cognito-snapshots/ lifecycle needed.
+- Dedicated minimal-scope IAM role `carelog-{env}-lambda-cognito-snapshot` (does NOT reuse the shared `lambda_rds_cognito` role — that one carries RDS+SNS+SES the snapshot lambda doesn't need). Grants: cognito-idp:Describe/List* on the pool ARN, s3:PutObject on `cognito-snapshots/*`, kms:GenerateDataKey + kms:Decrypt on the S3 KMS key.
+- No VPC config (cognito-idp + s3 are internet-reachable; saves an ENI for a once-a-day task).
+- EventBridge rule `matika-cognito-snapshot-{env}` with cron `0 2 * * ? *` (daily 02:00 UTC). Both envs ENABLED.
+- CloudWatch alarm `matika-{env}-cognito-snapshot-missing` (Invocations < 1 over 24h, treat_missing_data=breaching, fans to operator-alerts SNS).
+- Both envs verified end-to-end via `aws lambda invoke`: dev wrote 4 files (5 groups, 3 users, 1590ms); staging wrote 4 files (5 groups, 10 users).
+- Resources added: 10 per env (lambda + IAM role + IAM policy + IAM attachment + log group + event rule + event target + lambda permission + 2 alarms — the 2nd alarm is F45 T1, also shipped in the same apply).
 
-**Fix:** EventBridge schedule (daily, 02:00 UTC) → Lambda runs the same describe/list calls + writes JSON to `s3://carelog-v2-<env>-documents-<acct>/cognito-snapshots/<YYYY-MM-DD>/`. Retain 30 days hot, transition older to GLACIER. Wire a CloudWatch alarm to fire if the daily snapshot doesn't land (catches Lambda failure mode).
+**Cross-reference:** `docs/dr_runbook_v2.md` §3 — the manual export procedure remains documented as the fallback when the lambda is broken (the alarm is what tells you to look). The lambda code can be invoked manually for ad-hoc snapshots: `aws lambda invoke --function-name carelog-{env}-cognito-snapshot --payload '{}' /tmp/out.json`.
 
-Code reference: a similar S3-archive pattern exists in `backend/lambdas/account-deletion/` — model after that.
+### F48 — Operational-readiness naming pass: 9 classes of `<TBD>` placeholders left in runbooks (RESOLVED — 2026-05-17 Stream D follow-ups, solo-founder-mode)
 
-**Wire-target:** before public GA (`docs/v2_launch_plan.md` §M2). For closed beta (M1, July 2026, ~10 patient cohort), manual snapshot every 2 weeks is operationally acceptable.
-
-### F48 — Operational-readiness naming pass: 9 classes of `<TBD>` placeholders left in runbooks (NEW — 2026-05-17 Stream D)
-
-**Severity:** **Medium — beta-gate per `docs/v2_launch_plan.md` §7.4 on-call rotation row.** The Stream D runbook extensions (commit `9d2c9dd`) intentionally used `<TBD>` placeholders for every name, phone number, channel handle, and tooling-choice that hadn't been decided yet. These need a single coordinated session to fill in before the on-call rotation actually goes live. All `<TBD>` markers across the three runbooks are listed below; sourcing each requires a decision from a different stakeholder.
+**Severity:** Was Medium beta-gate. **RESOLVED 2026-05-17** under the user's "solo-founder mode" framing for v2.0 closed beta. All 27 TBD markers across the three runbooks now resolve to either (a) the founder (sole responder for v2.0 beta), (b) explicit `TO BE PROVISIONED PRE-BETA — owner: founder` blocks with target dates, or (c) `DEFERRED v2.1 — ...` for items that are structurally future scope. The original 9 stakeholder-decision classes collapsed to 4 founder decisions logged below. Re-opens to a real `<TBD>` block again the moment Matika hires a second on-call responder (see `docs/runbook_oncall_v2.md` §"Solo-founder paging mode" — the only remaining `<TBD>` literal in the runbooks, intentionally meta).
 
 | Class | Where it appears | Decision owner |
 |---|---|---|
@@ -534,14 +532,17 @@ Code reference: a similar S3-archive pattern exists in `backend/lambdas/account-
 | Status-page tool selection | `dr_runbook_v2.md:521` (drill #5 — status template post target) | founder |
 | Founder escalation contact (SEV-1 >1h) | `runbook_oncall_v2.md:201` (CEO/founder escalation rule) | founder |
 
-**Owner:** primarily `founder` for the strategic choices (tooling, support number, channel selection), with delegation to ops/content/security for the operational fills.
+**Owner:** founder (solo-founder mode for v2.0 beta).
 
-**Fix:** one coordinated session — reads as a checklist, fills each `<TBD>` across the three runbook files with the actual value, then commits with a message like `Docs — runbook ops naming pass (F48 RESOLVED)`. The grep recipe to find every TBD in the runbooks:
-```bash
-grep -nH "<TBD" docs/runbook_*.md docs/dr_runbook_v2.md
-```
+**Decisions taken 2026-05-17:**
+1. **Paging system** — none for v2.0 beta. SNS topic `carelog-{env}-operator-alerts` → email + SMS to `subhajit@kyabla.in`. No PagerDuty/Opsgenie subscription. Revisit at first hire / pre-GA. New `docs/runbook_oncall_v2.md` §"Solo-founder paging mode" block makes the mode explicit.
+2. **On-call rotation** — solo founder for every alarm class. Matrix at `runbook_oncall_v2.md` "Escalation tree" replaced 8 rows × 3 stakeholder-cell placeholders with literal `founder (solo responder)`. SLO budgets in the "Escalate after" column retained (still meaningful in solo mode — sets when to surface user-facing comms).
+3. **Contact placeholders** — `subhajit@kyabla.in` as interim default until provisioned. Items with no current substitute (Play Store beta link, beta-support WhatsApp number, beta-cohort roster doc, prod RDS breakglass user, status-page tool) are explicitly tagged `TO BE PROVISIONED PRE-BETA — owner: founder, target T-{N}` per the launch-plan §8 timeline so they remain blocking pre-beta gates.
+4. **Hindi/Bengali translations** — `<DEFERRED — translations pending; owner: founder coordinating with content team, target T-14 pre-beta>`. Original `<TBD>` left as-is would be machine-translatable but the runbook explicitly forbids that for outage comms (trust requires pre-approved phrasing). Tag tightened, not filled.
 
-**Wire-target:** before the on-call rotation actually goes live (T-7 per `docs/v2_launch_plan.md` §8.x timeline).
+**Verification:** `grep -nH "<TBD" docs/runbook_*.md docs/dr_runbook_v2.md` returns exactly 1 hit — the intentional meta-`<TBD>` in `runbook_oncall_v2.md:25` explaining when this resolution becomes obsolete.
+
+**Wire-target for remaining `TO BE PROVISIONED PRE-BETA` items:** before the on-call rotation actually goes live (T-7 per `docs/v2_launch_plan.md` §8.x timeline). These are now individually tracked in the runbook text with owner+date, not as `<TBD>` placeholders.
 
 ### F49 — delete-patient lambda was missing `cognito-idp:AdminDisableUser` IAM grant (RESOLVED — Stream B 2026-05-17)
 

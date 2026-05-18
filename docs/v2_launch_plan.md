@@ -325,7 +325,7 @@ After staging soak. Steps mirror §7.1 but:
 
 | Surface | Current state | Target |
 |---|---|---|
-| CloudWatch alarms | 6 in dev (per setup guide §Reference) | 12+ in prod, with on-call paging |
+| CloudWatch alarms | dev: 6 v1 + 4 v2 (bedrock router/vision latency + throttles + /health 5xx) + 2 cognito (F45 T1 sign-in errors + F47 snapshot-missing — wired 2026-05-17). staging: identical. | F45 partial closure: T1 + F47 LANDED; T2 (Bedrock guardrail block-rate) DEFERRED — touches live router code, F2-class drift risk during soak; T3 (WorkManager backlog) DEFERRED v2.1 — needs app telemetry pipeline; T4 (Cognito drift detector) DEFERRED — config-hash design locked, implementation deferred to next session. F47 nightly snapshot lambda live in both envs (cron 0 2 * * ? *, dev + staging verified). |
 | Cost telemetry | `cost_telemetry` table populated, no dashboard | Grafana or Athena dashboard with daily roll-up |
 | Crash reporting | Firebase Crashlytics wired 2026-05-17 (release + debug, 4 forwarder sites) | Console dashboards bookmarked; alert rules defined post-beta |
 | App-side log forwarding | Firebase Crashlytics breadcrumbs (`SttManager.onError`) | Add breadcrumbs at TTS playback failure + WorkManager sync retry |
@@ -333,11 +333,16 @@ After staging soak. Steps mirror §7.1 but:
 
 ### 7.4 On-call rotation
 
-Define before beta. At minimum:
-- Primary: one engineer per week.
-- Escalation: backend, frontend, infra leads.
-- Runbook: see new `docs/runbook_oncall_v2.md`.
-- Off-hours expectations: best-effort for beta; defined SLA for GA.
+**v2.0 closed beta — solo-founder mode (resolved 2026-05-17 per F48).** No PagerDuty/Opsgenie subscription; alarms fan out via `carelog-{env}-operator-alerts` SNS → email + SMS to `subhajit@kyabla.in`. Escalation tree at `docs/runbook_oncall_v2.md` resolves every cell to the founder. SLO budgets per alarm class (15 min for Cognito/auth, 30 min for RDS/Lambda/Bedrock/S3, 60 min for SNS, etc.) are retained as solo-founder commitments before user-facing comms (status-page + cohort WhatsApp) trigger. Re-opens as a real beta gate at first eng/ops hire.
+
+**Items still to provision pre-beta** (tracked individually in the runbook with owner + T-N target):
+- Play Store closed-beta link (T-7)
+- Beta-support WhatsApp number (T-7)
+- Beta-cohort roster doc (T-7)
+- Prod RDS breakglass user (lands with prod env first-apply per §4.6)
+- Hindi/Bengali outage-comms translations (T-14, owner: content team)
+- Status-page tool decision (T-21)
+- Paging tooling (PagerDuty/Opsgenie) — deferred to pre-GA / first hire
 
 ---
 

@@ -168,3 +168,31 @@ resource "aws_lambda_permission" "patient_engagement_rollup_eventbridge" {
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.patient_engagement_rollup.arn
 }
+
+# ============================================================
+# Rule 8: F47 — Cognito nightly snapshot (daily 02:00 UTC)
+#
+# Closes the F47 RPO gap. Writes pool config + groups + roster to
+# s3://{documents_bucket}/cognito-snapshots/{YYYY-MM-DD}/. Pairs with
+# the monitoring module's `matika-{env}-cognito-snapshot-missing`
+# alarm which fires if invocations drop to zero in any 24h window.
+# ============================================================
+
+resource "aws_cloudwatch_event_rule" "cognito_snapshot" {
+  name                = "matika-cognito-snapshot-${var.environment}"
+  description         = "F47 — nightly Cognito user-pool snapshot to S3 for DR/RPO closure"
+  schedule_expression = "cron(0 2 * * ? *)"
+}
+
+resource "aws_cloudwatch_event_target" "cognito_snapshot" {
+  rule = aws_cloudwatch_event_rule.cognito_snapshot.name
+  arn  = var.cognito_snapshot_lambda_arn
+}
+
+resource "aws_lambda_permission" "cognito_snapshot_eventbridge" {
+  statement_id  = "AllowEventBridgeInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = var.cognito_snapshot_lambda_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.cognito_snapshot.arn
+}
