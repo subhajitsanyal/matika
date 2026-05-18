@@ -5,8 +5,18 @@
   "main": "index.js",
   "dependencies": {
     "@aws-sdk/client-cognito-identity-provider": "^3.600.0",
+    "@aws-sdk/client-s3": "^3.600.0",
     "@aws-sdk/client-ses": "^3.600.0",
     "@aws-sdk/client-secrets-manager": "^3.600.0",
     "pg": "^8.12.0"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  },
+  "scripts": {
+    "test": "jest"
+  },
+  "engines": {
+    "node": ">=20.0.0"
   }
 }

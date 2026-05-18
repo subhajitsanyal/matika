@@ -101,12 +101,74 @@ Commit: `5be33c3` (`Stream C — Crashlytics wired into Android with 4 forwarder
 
 ---
 
+### Stream B — CG-V2-16 hardening (delete-patient cascade) — **DONE 2026-05-17**
+
+Commit: `<pending>` (this commit).
+
+**What landed:**
+- `backend/database/migrations/V015__delete_patient_cascade_fk.sql` (new) — adds `ON DELETE CASCADE` to `deletion_requests.patient_id`. Applied to staging RDS via SSM tunnel + Flyway 12.3.0; `confdeltype='c'` confirmed in `pg_constraint`. Migration also documents the deliberate decision to keep `audit_log.patient_id` as RESTRICT.
+- `backend/lambdas/delete-patient/index.js` — rewritten for full DPDP cascade:
+  - New imports + S3Client.
+  - New helper `deletePatientObservations(shortCode)` — paginated ListObjectsV2 + batched DeleteObjects under `observations/{shortCode}/`. Best-effort; never throws.
+  - New helper `clearLinkedPatientAttribute(usernameOrSub)` — AdminUpdateUserAttributes setting `custom:linked_patient_id=""`. Idempotent.
+  - New in-txn steps: fetch secondary caregivers' cognito_subs (relationship='caregiver', is_active=true, sub!=deleter); explicit `DELETE FROM device_tokens` for patient's user_id + linked attendants/doctors' user_ids; defensive `DELETE FROM deletion_requests` (now redundant post-V015 but harmless).
+  - audit_log details JSON augmented with `removedDeviceTokens`, `removedDeletionRequests`, `secondaryCaregiverCount`.
+  - Post-COMMIT phase (outside the transaction): loops `clearLinkedPatientAttribute` over secondary caregivers, then S3 cascade. Failures logged to CloudWatch, do NOT roll back.
+- `backend/lambdas/delete-patient/package.json` — added `@aws-sdk/client-s3` dependency + jest devDependency + `test` script.
+- `backend/lambdas/delete-patient/__tests__/index.test.js` (new) — 3 jest cases: happy-path (verifies SQL order: device_tokens + deletion_requests before patients DELETE; correct S3 prefix; correct Cognito disable + attribute-clear counts), S3-failure-tolerance (COMMIT still runs on S3 reject), auth-failure (403, no BEGIN). All 3 pass.
+- `infrastructure/terraform/modules/lambda/main.tf` — two IAM additions: `s3:DeleteObject` on the documents bucket arn, and `cognito-idp:AdminDisableUser` on the user pool arn (the second one closed a pre-existing silent-failure — see F49). Also added `DOCUMENTS_BUCKET=var.documents_bucket_name` env var on the delete_patient function via `merge(local.rds_env, {...})`.
+- `docs/journeys_non_voice.md` — CG-V2-16 row expanded to cite the full 6-surface PASS evidence + Stream B link.
+- `docs/v2_launch_plan.md` §4.2 — CG-V2-16 row flipped from "verify" to "LANDED 2026-05-17 (Stream B)" with summary of the hardening.
+- `docs/testing_todos_v2.md` — added F49 (IAM gap RESOLVED, also documents dev follow-up) and F50 (consent_records HIPAA-vs-DPDP tension).
+
+**Live verification (staging, 2026-05-17 evening):**
+- Synthetic test patient `CL-T1IM5E` (sub `91b3fdda-f081-70dc-afbc-df75e6559e09`) created via `carelog-staging-create-patient` lambda using staging caregiver `sanyalsubhajit2010+cg@gmail.com` (sub `51134dba-0041-70c0-ea5f-5c70348c3bb4`).
+- Pre-seeded: 2 S3 observations under `observations/CL-T1IM5E/2026/05/17/`, 1 `device_tokens` row, 1 `deletion_requests` row (the latter explicitly tests V015 cascade).
+- Direct `aws lambda invoke` on `carelog-staging-delete-patient` returned 200.
+- Post-delete RDS via SSM tunnel: `patients=0, device_tokens=0, deletion_requests=0, users.is_active=false`. Audit_log shows `action=DELETE_CASCADE, resource_id=CL-T1IM5E, details={removedDeviceTokens:1, removedDeletionRequests:1, secondaryCaregiverCount:0, removedAttendants:[], removedDoctors:[]}`.
+- S3 `aws s3 ls observations/CL-T1IM5E/ --recursive` returns empty (exit 1 = no objects = PASS).
+- Cognito: patient user `Enabled=false, Status=CONFIRMED`. Caregiver `custom:linked_patient_id` returned None (cleared).
+- CloudWatch log lines confirm: `1 device tokens removed, 1 deletion_requests removed, 0 secondary caregivers to clear post-commit` and `2 S3 objects deleted (0 S3 errors)`.
+
+**Pre-existing IAM gap surfaced (F49):**
+- The first delete attempt (on test patient `CL-Y6TOW7`) hit `User: ... is not authorized to perform: cognito-idp:AdminDisableUser`. The error was caught silently by the lambda's helper (warn + continue). I patched the IAM and redeployed; the second test patient (`CL-T1IM5E`) verified the fix end-to-end. The original 2026-05-14 CG-V2-16 PASS claim "patient Cognito user disabled" was therefore wrong — the disable was failing silently for every prior run. F49 documents this and notes that dev needs the same IAM apply on its next targeted apply.
+
+**Pre-test caregiver state restored:**
+- Pre-test: `sanyalsubhajit2010+cg@gmail.com` `custom:linked_patient_id=CL-1RK0CD`.
+- Restored to `CL-1RK0CD` after the test so subsequent voice/UI tests against this caregiver behave normally.
+- The orphan Cognito user from test 1 (`c193adfa-80c1-70db-7661-68a57696f8ab`) was manually admin-disabled at cleanup.
+
+**Deployment path:**
+- Migration: SSM tunnel to staging bastion `i-0f2acdf1a96ee24a6` → flyway 12.3.0 → `migrate` from `V014` to `V015`. One migration, two `ALTER TABLE` statements (DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT … ON DELETE CASCADE). 4.5s execution time.
+- Terraform: `-target=module.carelog.module.lambda.aws_iam_role_policy.rds_cognito_inline` + `-target=module.carelog.module.lambda.aws_lambda_function.delete_patient`, with `-refresh=false`. Three targeted applies total (initial deploy, enum-fix redeploy after the 'relative' bug, IAM-fix redeploy after F49 surfaced). Each was a clean 1-2 resource in-place update.
+- The full non-targeted `terraform plan` shows pre-existing F2-class drift on 3 unrelated lambdas (bedrock_router, create_patient, create_patient_from_voice) — CLI-deployed code that doesn't match the archive_file zip. Stream B did NOT touch those; the F2 pattern from memory `terraform_lambda_drift_pattern.md` is observed and respected.
+
+**Deviation from the plan (orchestrator should know):**
+- Plan §3 SQL filtered persona_links by `relationship IN ('caregiver', 'relative')`. The first live invoke threw `invalid input value for enum persona_type: "relative"`. The persona_type enum in staging is `{patient, attendant, caregiver, doctor}` — the legacy V001 'relative' value has been renamed/replaced (v1→v2 rename pass; see memory `release_buildconfig_lesson.md` for general v2 rename context). Fixed in lambda + tests to `relationship = 'caregiver'` only.
+- F49 was not anticipated in the Stream B plan. It surfaced during live verify and was patched in-flight (one extra terraform apply). The lesson: when a lambda helper catches-and-warns, live verification is the ONLY way to know whether the underlying operation succeeded — unit tests pass with the warning-only path. The `disableCognitoUser` warn-only pattern at index.js:71-74 is the recurring failure-masking shape.
+
+**Files touched (final scope):**
+- `backend/database/migrations/V015__delete_patient_cascade_fk.sql` (new)
+- `backend/lambdas/delete-patient/index.js`
+- `backend/lambdas/delete-patient/package.json`
+- `backend/lambdas/delete-patient/package-lock.json` (npm install fallout)
+- `backend/lambdas/delete-patient/__tests__/index.test.js` (new)
+- `infrastructure/terraform/modules/lambda/main.tf`
+- `docs/journeys_non_voice.md`
+- `docs/v2_launch_plan.md`
+- `docs/testing_todos_v2.md`
+- `docs/next-steps-2026-05-17-progress.md` (this file)
+
+**Pre-existing drift left untouched** (per the kickoff "don't include pre-existing drift in commits unless directly relevant"):
+- `android/app/build.gradle.kts`, `android/app/src/main/res/raw/amplifyconfiguration.json`, `ios/CareLog/CareLog/amplifyconfiguration.json`, `docs/f39-fix-kickoff.md`, `docs/launch-execution-3-kickoff.md` — all pre-existing.
+
+---
+
 ## Streams NOT yet started
 
-- **Stream A — Cognito drift apply (`66ca57c`).** Highest risk. Recommended last.
-- **Stream B — CG-V2-16 (delete-patient + cascades).** Medium risk. Destructive on DB; needs explore subagent then (probably) plan subagent.
+- **Stream A — Cognito drift apply (`66ca57c`).** Highest risk. Last remaining stream.
 
-**Risk-ordered recommendation for the next stream:** **B**. Stream C + D are now landed. The kickoff's C → D → B → A order says B is next. Unblocks DPDP right-to-erasure (a beta gate). Begin with Stream B's Subagent 1 (Explore — delete-patient lambda + cascade inventory) per `docs/next-steps-2026-05-17.md` §2 Stream B playbook. Stream A goes last because it touches auth infra and the rest of the tree should be on a known-good baseline first.
+**Risk-ordered recommendation for the next stream:** **A**. Streams C + D + B are now landed. The kickoff's C → D → B → A order says A is next and last. The kickoff is explicit that this is the highest-risk stream (wrong move breaks auth for everyone) — re-read the playbook end-to-end before dispatching the diagnosis subagent. Note: F49 above flags that dev's `lambda_rds_cognito` IAM needs the same `cognito-idp:AdminDisableUser` add that staging now has — fold that into Stream A's plan-and-apply for dev.
 
 ---
 
@@ -119,6 +181,6 @@ Commit: `5be33c3` (`Stream C — Crashlytics wired into Android with 4 forwarder
 
 ## State of the working tree
 
-- `main` is at `5be33c3` locally and on `origin`.
+- `main` will be at the Stream B commit once committed + pushed.
 - Pre-existing drift listed above is unstaged and untouched — leave it alone unless directly relevant to the next stream.
 - Soak clock continues to **2026-05-22** (Stream H prod-prep target).

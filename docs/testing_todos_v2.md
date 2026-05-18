@@ -543,6 +543,30 @@ grep -nH "<TBD" docs/runbook_*.md docs/dr_runbook_v2.md
 
 **Wire-target:** before the on-call rotation actually goes live (T-7 per `docs/v2_launch_plan.md` §8.x timeline).
 
+### F49 — delete-patient lambda was missing `cognito-idp:AdminDisableUser` IAM grant (RESOLVED — Stream B 2026-05-17)
+
+**Severity:** Was High — silent cascade failure. The 2026-05-14 CG-V2-16 PASS evidence in `docs/journeys_non_voice.md` claimed `users.is_active=false` (true — set in SQL) but did **not** verify that the patient's Cognito user was actually disabled. Stream B's live verification on staging caught the bug: `aws cognito-idp admin-get-user` showed `Enabled=true` post-delete. CloudWatch revealed:
+```
+Could not disable Cognito user <email>:
+  User: arn:aws:sts::316643066568:assumed-role/carelog-staging-lambda-rds-cognito/carelog-staging-delete-patient
+  is not authorized to perform: cognito-idp:AdminDisableUser
+```
+The `disableCognitoUser` helper in `backend/lambdas/delete-patient/index.js` catches all errors as `console.warn`, so the cascade returned 200 without surfacing the disabled-still-Enabled state. **Bug existed since `delete-patient` was first wired** — the role's action list at `infrastructure/terraform/modules/lambda/main.tf` had `AdminAddUserToGroup/AdminCreateUser/AdminSetUserPassword/AdminGetUser/AdminUpdateUserAttributes` but no `AdminDisableUser`. Same gap applied to the linked attendant/doctor disables (also silently warn-and-continue).
+
+**Fix:** added `cognito-idp:AdminDisableUser` to the `lambda_rds_cognito` inline policy + terraform apply on staging. Re-verified end-to-end with a fresh test patient (`CL-T1IM5E`): post-delete `Enabled=false`. See journey row CG-V2-16 in `docs/journeys_non_voice.md` for the full evidence chain.
+
+**Wire-target:** RESOLVED on staging 2026-05-17. Dev needs the same IAM apply before the next `terraform apply` in dev — `terraform plan -target=module.lambda.aws_iam_role_policy.rds_cognito_inline` from `environments/dev/`. Will land alongside the Stream A Cognito drift work (kickoff next-steps-2026-05-17.md Stream A).
+
+### F50 — `consent_records` retention on patient delete: HIPAA vs DPDP tension (NEW — 2026-05-17 Stream B)
+
+**Severity:** Low — design decision documented, not a bug.
+
+The Stream B hardening kept the patient's `users` row soft-deleted (`is_active=false`) rather than hard-deleted, on the rationale that `consent_records.user_id` FK CASCADE would otherwise erase the proof-of-consent audit trail. HIPAA requires retention of the record that consent was obtained, even after the user "deletes" their account. **DPDP Act may require the consent record itself to be erasable on right-to-erasure invocation** — pending legal clarification. The lambda currently picks HIPAA over DPDP for this surface.
+
+**Owner:** `legal` (DPDP audit decision) + `backend` (implementation if needed).
+
+**Wire-target:** before public GA (M2). For closed beta (M1, ~10 patients), the current behavior is defensible — beta cohort hasn't invoked right-to-erasure formally. If DPDP audit requires deletion: add a `DELETE FROM consent_records WHERE user_id = $patient_user_id` step to `backend/lambdas/delete-patient/index.js` between steps 7b and 8 (before patients hard-delete), gated by a new request flag `dpdpFullErasure=true`. Two-tier model: HIPAA soft-delete by default; DPDP hard-delete on explicit user opt-in.
+
 ### Bench scope NOT covered (callouts for next session)
 
 - **Trends + Thresholds screens** (caregiver side) — patient has vitals now, can exercise.

@@ -65,7 +65,13 @@ resource "aws_iam_role_policy" "rds_cognito_inline" {
           "cognito-idp:AdminCreateUser",
           "cognito-idp:AdminSetUserPassword",
           "cognito-idp:AdminGetUser",
-          "cognito-idp:AdminUpdateUserAttributes"
+          "cognito-idp:AdminUpdateUserAttributes",
+          # Stream B 2026-05-17 — delete-patient soft-disables the patient
+          # Cognito user (and any linked attendant/doctor users) as part of
+          # the cascade. The action was missing pre-Stream-B, so prior
+          # CG-V2-16 runs silently warn-and-continued without actually
+          # disabling the user. Required for DPDP right-to-erasure.
+          "cognito-idp:AdminDisableUser"
         ]
         Resource = [var.cognito_user_pool_arn]
       },
@@ -73,7 +79,8 @@ resource "aws_iam_role_policy" "rds_cognito_inline" {
         Effect = "Allow"
         Action = [
           "s3:GetObject",
-          "s3:ListBucket"
+          "s3:ListBucket",
+          "s3:DeleteObject"
         ]
         Resource = [
           var.documents_bucket_arn,
@@ -1383,7 +1390,12 @@ resource "aws_lambda_function" "delete_patient" {
   }
 
   environment {
-    variables = local.rds_env
+    variables = merge(local.rds_env, {
+      # Stream B 2026-05-17 — S3 cascade for observations/{short_code}/.
+      # Empty in unprovisioned envs; lambda's deletePatientObservations
+      # helper logs a warning and returns 0-deleted without throwing.
+      DOCUMENTS_BUCKET = var.documents_bucket_name
+    })
   }
 }
 

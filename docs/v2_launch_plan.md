@@ -161,7 +161,7 @@ Streams can run in parallel; calling out dependencies inline. The web-portal str
 
 | Journey | Action |
 |---|---|
-| CG-V2-16 (delete patient) | Verify `delete-patient` Lambda + cascading deletes in observations/alerts/persona_links. Maestro flow covers Android UI; backend coverage already in tests. **Required for GDPR/DPDP right-to-erasure compliance.** |
+| CG-V2-16 (delete patient) | **LANDED 2026-05-17 (Stream B).** Hardened delete-patient lambda for full DPDP/GDPR right-to-erasure: S3 cascade under `observations/{short_code}/`, `device_tokens` hard-delete, secondary-caregiver Cognito attribute clear, V015 `deletion_requests.patient_id` ON DELETE CASCADE migration, and `cognito-idp:AdminDisableUser` IAM grant (closed a silent failure in the previous CG-V2-16 evidence). Live-verified on staging via direct lambda invoke; full evidence in `docs/journeys_non_voice.md` CG-V2-16 row. `consent_records` intentionally preserved per HIPAA proof-of-consent. Unit tests added (`backend/lambdas/delete-patient/__tests__/index.test.js`). |
 | EDGE-V2-08 (cross-region failover) | Build a fault-injection harness — Bedrock mock layer that returns 503 from primary region; assert client falls back to secondary inference profile. |
 | EDGE-V2-09 (parse failure) | Inject malformed JSON in the structured-output return path; assert graceful fallback to T3 escalation. |
 
