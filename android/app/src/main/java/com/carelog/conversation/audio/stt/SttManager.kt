@@ -7,6 +7,7 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.util.Log
+import com.google.firebase.crashlytics.FirebaseCrashlytics
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -143,6 +144,16 @@ class SttManager @Inject constructor(
 
             override fun onError(error: Int) {
                 Log.w(TAG, "RecognitionListener.onError($error) preferOffline=$preferOffline")
+                // Crashlytics breadcrumb only — STT errors are too noisy
+                // for non-fatals; the breadcrumb gives a future crash the
+                // surrounding STT context (last error code + lang) without
+                // a per-error report. runCatching keeps JVM unit tests
+                // safe (FirebaseApp uninitialized).
+                runCatching {
+                    FirebaseCrashlytics.getInstance().log(
+                        "stt onError code=$error preferOffline=$preferOffline lang=$languageTag",
+                    )
+                }
 
                 // F25 — silent online fallback. Only retry on the
                 // offline-preferred pass and only for the exact engine
@@ -164,6 +175,7 @@ class SttManager @Inject constructor(
                             rec.startListening(buildRecognitionIntent(languageTag, preferOffline = false))
                         }.onFailure {
                             Log.e(TAG, "stt online-fallback re-arm failed", it)
+                            runCatching { FirebaseCrashlytics.getInstance().recordException(it) }
                             trySend(
                                 SttResult.Error(
                                     mapAndroidErrorCode(error),

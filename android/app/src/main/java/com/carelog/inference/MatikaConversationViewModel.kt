@@ -19,6 +19,7 @@ import com.carelog.network.ProtocolResult
 import com.carelog.network.SessionType
 import com.carelog.network.TtsHints
 import com.carelog.network.TurnActionType
+import com.google.firebase.crashlytics.FirebaseCrashlytics
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -366,6 +367,7 @@ class MatikaConversationViewModel @Inject constructor(
             stateMachine.beginTurn()
         } catch (t: Throwable) {
             Log.e(TAG, "beginTurn threw — was startSession called?", t)
+            runCatching { FirebaseCrashlytics.getInstance().recordException(t) }
             stateMachine.applyTurnFailure(t)
             return
         }
@@ -424,6 +426,7 @@ class MatikaConversationViewModel @Inject constructor(
             },
             onFailure = { err ->
                 Log.e(TAG, "submitTurn failed seq=${inputs.turnSequence}", err)
+                runCatching { FirebaseCrashlytics.getInstance().recordException(err) }
                 stateMachine.applyTurnFailure(err)
             },
         )

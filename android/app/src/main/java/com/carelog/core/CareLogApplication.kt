@@ -55,9 +55,11 @@ class CareLogApplication : Application(), Configuration.Provider {
     }
 
     /**
-     * Stream D #4 — Firebase Crashlytics. Release-only; debug builds opt
-     * out so dev iteration never floods the console with stack traces from
-     * `am force-stop` / device reboots / etc.
+     * Stream D #4 — Firebase Crashlytics. Collection enabled on all
+     * variants so the debug-only smoke-test button on SettingsScreen
+     * actually reaches the console; force-stop and device reboots are
+     * not crashes that get reported, and uncaught exceptions during
+     * dev iteration are signal worth surfacing.
      *
      * PII discipline: do NOT call FirebaseCrashlytics.setUserId() with
      * cognito_sub, FirebaseCrashlytics.setCustomKey() with patientId/email,
@@ -67,9 +69,7 @@ class CareLogApplication : Application(), Configuration.Provider {
      * with patient data. Audit any Crashlytics.* call before merging.
      */
     private fun initializeCrashlytics() {
-        FirebaseCrashlytics.getInstance().setCrashlyticsCollectionEnabled(
-            !BuildConfig.DEBUG,
-        )
+        FirebaseCrashlytics.getInstance().setCrashlyticsCollectionEnabled(true)
     }
 
     private fun initializeAmplify() {

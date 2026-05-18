@@ -20,11 +20,13 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.carelog.BuildConfig
 import com.carelog.api.RelativeApiService
 import com.carelog.auth.AuthRepository
 import com.carelog.auth.CareLogUser
 import com.carelog.auth.PersonaType
 import com.carelog.core.config.AppLanguage
+import com.google.firebase.crashlytics.FirebaseCrashlytics
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -231,6 +233,29 @@ fun SettingsScreen(
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodySmall
                 )
+            }
+
+            // Stream C — Crashlytics smoke-test affordance. Debug-only;
+            // release builds never compile this branch (BuildConfig.DEBUG
+            // is the Gradle-generated constant, NOT a hand-written one —
+            // see memory release_buildconfig_lesson.md). The throw is
+            // uncaught on purpose so Crashlytics' install-time handler
+            // captures the stack on the next process start.
+            if (BuildConfig.DEBUG) {
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = {
+                        FirebaseCrashlytics.getInstance().log(
+                            "Stream C smoke test fired from SettingsScreen",
+                        )
+                        throw RuntimeException("crashlytics-smoke-test")
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("settings_test_crash"),
+                ) {
+                    Text("Force test crash (debug only)")
+                }
             }
 
             Spacer(modifier = Modifier.height(32.dp))

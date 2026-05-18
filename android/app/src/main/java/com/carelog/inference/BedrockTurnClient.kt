@@ -5,6 +5,8 @@ import com.carelog.network.MatikaCloudApi
 import com.carelog.network.PatientCredentials
 import com.carelog.network.TurnRequest
 import com.carelog.network.TurnResponse
+import com.google.firebase.crashlytics.FirebaseCrashlytics
+import retrofit2.HttpException
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -65,5 +67,16 @@ class BedrockTurnClient @Inject constructor(
                 patientCredentials = patientCredentials,
             ),
         )
+    }.onFailure { t ->
+        // runCatching wrap keeps JVM unit tests (where FirebaseApp is
+        // uninitialized and Android stubs throw on Process.myPid()) from
+        // turning a Result.failure into an unhandled crash. Production
+        // behaviour is unchanged.
+        runCatching {
+            if (t is HttpException) {
+                FirebaseCrashlytics.getInstance().setCustomKey("last_lambda_status", t.code())
+            }
+            FirebaseCrashlytics.getInstance().recordException(t)
+        }
     }
 }

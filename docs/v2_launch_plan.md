@@ -116,7 +116,7 @@ Plus **organic-run E2E pushes** (CG-V2-08/09 + E2E-V2-02/03/06): transport unblo
 - [ ] **Penetration test passed** with no Critical or High findings open.
 - [ ] **On-call rotation staffed** with a real human and an escalation tree.
 - [ ] **Support tooling ready:** runbook for "patient can't log in / log a vital", access to RDS through bastion documented for support engineers, CloudWatch dashboard bookmarked.
-- [ ] **Crash reporting wired** (Sentry or Firebase Crashlytics). Currently neither is configured — this is a real gap, not a checkbox.
+- [x] **Crash reporting wired** — Firebase Crashlytics (project `carelog-7de0c`, same Firebase project as FCM). Collection enabled on all variants; release builds upload de-obfuscated stack traces via the gradle `uploadCrashlyticsMappingFile*` task. Forwarders at `BedrockTurnClient` (incl. `last_lambda_status` custom key on HttpException), `MatikaConversationViewModel.beginTurn`/`submitTurn` failures, and `SttManager` (breadcrumb on `onError`, recordException on online-fallback re-arm failure). Debug-only `Force test crash` button on `SettingsScreen` for smoke verification. PII discipline per `CareLogApplication.kt` docstring: no `setUserId(cognito_sub)`, no `setCustomKey(patientId/email)`, no transcripts in breadcrumbs. Wired 2026-05-17.
 - [ ] **Cognito drift from `66ca57c` resolved** before any non-targeted `terraform apply`.
 - [ ] **Data telemetry plan in place** — see §13. Without baseline data flowing in, Phase 2 doctor-portal product work cannot start. Define which metrics and aggregations get logged from day 1 of beta.
 
@@ -327,8 +327,8 @@ After staging soak. Steps mirror §7.1 but:
 |---|---|---|
 | CloudWatch alarms | 6 in dev (per setup guide §Reference) | 12+ in prod, with on-call paging |
 | Cost telemetry | `cost_telemetry` table populated, no dashboard | Grafana or Athena dashboard with daily roll-up |
-| Crash reporting | None | Sentry or Crashlytics (decide once during stream §4.1) |
-| App-side log forwarding | `adb logcat` only | Firebase Crashlytics + breadcrumbs |
+| Crash reporting | Firebase Crashlytics wired 2026-05-17 (release + debug, 4 forwarder sites) | Console dashboards bookmarked; alert rules defined post-beta |
+| App-side log forwarding | Firebase Crashlytics breadcrumbs (`SttManager.onError`) | Add breadcrumbs at TTS playback failure + WorkManager sync retry |
 | Performance | None | Bedrock latency p50/p95/p99 dashboards; Android cold-start time |
 
 ### 7.4 On-call rotation
@@ -431,7 +431,7 @@ These need product/leadership decisions before plan execution:
 2. **Beta cohort size:** 10 is the target — flex to 5 or 20?
 3. ~~**F26b reminder UX:** keep manual editing in v2.0, make voice-only, or skip reminders for beta?~~ **RESOLVED 2026-05-15 → voice-only.** Manual UI removed; caregiver_onboarding voice protocol is the canonical reminder-config surface (handler.ts T-V2-302 → protocol_persister UPSERT on parameter_configs).
 4. **PT-V2-22 (patient Care Team view):** ship a caregiver-only view in v2.0, or defer to Phase 2 with the doctor portal? Recommend defer — Care Team without a doctor isn't a complete experience.
-5. **Crash reporting tool:** Sentry or Firebase Crashlytics?
+5. ~~**Crash reporting tool:** Sentry or Firebase Crashlytics?~~ **RESOLVED 2026-05-12 → Firebase Crashlytics.** Wired into the Android app 2026-05-17 (see §3.1).
 6. **Final sender domain for SES:** `no-reply@matika.health`? `support@matika.in`?
 7. **iOS in v2.1:** firm commit, or revisit based on beta signal?
 8. ~~**Phase 2 trigger:** what specific data signals open the doctor-portal discovery window?~~ **RESOLVED 2026-05-11: GA + 8 weeks.** See §13 entry criterion.
