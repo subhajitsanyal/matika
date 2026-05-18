@@ -476,6 +476,73 @@ So the wedge persists below the user-space audio daemon layer (likely audio HAL 
 2. **Investigate** whether the wedge is specific to alternating between built-in vs external output devices, or whether single-device runs also wedge. The 2026-05-17 data point (wedge with no device switches in the session) suggests it's not device-switch alone.
 3. Update `voice_harness_lessons.md` lesson 6 with the "rebooted-and-still-wedged-after-25-min" data point + remote-TTS bypass so future bench operators don't burn time on the same coreaudiod/audiomxd restart attempts.
 
+### F45 — 4 TARGET CloudWatch alarms documented in oncall runbook but not declared in terraform monitoring module (NEW — 2026-05-17 Stream D)
+
+**Severity:** **Medium — closes a `docs/v2_launch_plan.md` §7.3 launch-plan gap.** The 2026-05-17 oncall runbook extension (commit `9d2c9dd`, `docs/runbook_oncall_v2.md` §"TARGET alarms — not yet wired") added T1-T4 placeholders to document operational expectations that have no corresponding `aws_cloudwatch_metric_alarm` in `infrastructure/terraform/modules/monitoring/`. None of the four currently page; the symptoms still need manual investigation per the inline diagnostic steps.
+
+The four:
+1. **T1: `carelog-<env>-cognito-signin-errors`** — Cognito sign-in error rate > 5% over 5 min. Wire-target: Q3 2026 pre-beta. Auth issues block 100% of new sign-ins, so this is a SEV-1 class alarm.
+2. **T2: `carelog-<env>-bedrock-guardrail-block-rate`** — Bedrock Guardrails blocking > 10% of router invocations. Wire-target: before any guardrail config bump in prod.
+3. **T3: WorkManager sync backlog growing** — client-side; no server-side metric exists in v2.0. Wire-target: v2.1 — requires app-side telemetry to S3 (e.g., periodic backlog-depth ping). Stream C (Crashlytics, commit `5be33c3`) gives partial visibility via `FhirSyncWorker` failure forwarding to Crashlytics console (Firebase project `carelog-7de0c`).
+4. **T4: `carelog-<env>-cognito-drift-detector`** — scheduled lambda runs `terraform plan -target=module.cognito -refresh-only` daily, pages on diff. Hedges against `terraform_lambda_drift_pattern.md` class. Wire-target: pre-prod-cutover (Stream A — Cognito drift apply — is the prerequisite).
+
+**Owner:** `backend` (T1, T4 — schema/lambda wiring) + `infra` (T2 — Bedrock metric exposure, T3 — app telemetry pipeline) + `qa-testing` (verification once each is wired).
+
+**Fix candidates:**
+- T1: declare `aws_cloudwatch_metric_alarm` against `AWS/Cognito SignInThrottles` + custom metric pumped from EventBridge user-pool-events rule (UNCONFIRMED_DEVICE etc). Tie to operator-alerts SNS topic.
+- T2: emit a custom CloudWatch metric from `matika-<env>-bedrock-router` whenever `GuardrailIntervened` appears in the response; alarm on rate.
+- T3: scoped to v2.1. Until then, monitor manually via Crashlytics + support channel.
+- T4: scheduled EventBridge rule → small Lambda runs `terraform plan -refresh-only` against cognito module, posts to operator-alerts on non-empty diff. Prerequisite: Stream A baseline.
+
+**Cross-reference:** `docs/runbook_oncall_v2.md:133-185` for the inline TARGET sections + diagnostic steps that the alarm wiring should preserve.
+
+### F46 — S3 access-logs bucket has no noncurrent-version expiration rule (NEW — 2026-05-17 Stream D)
+
+**Severity:** **Low — cost cleanup, no functional impact today.** The DR runbook backup-arch overview (commit `9d2c9dd`, `docs/dr_runbook_v2.md` §"S3 backups") surfaced the gap during terraform verification. Other buckets (`carelog-v2-<env>-documents-<acct>`, `carelog-raw-<env>-<acct>`) have proper noncurrent-version lifecycle policies declared in `infrastructure/terraform/modules/s3/main.tf`. The access-logs bucket (`carelog-v2-<env>-access-logs-<acct>`) is versioned but has no lifecycle rule — every version retained indefinitely. Will accumulate cost over time, especially as access-log volume scales with beta + GA traffic.
+
+**Owner:** `infra`.
+
+**Fix:** add `aws_s3_bucket_lifecycle_configuration` to the access-logs bucket in `infrastructure/terraform/modules/s3/main.tf`. Suggested rule: noncurrent versions transition to GLACIER at 30d, expire at 365d (consistent with documents-bucket pattern). Current-version retention: confirm with security/compliance — access logs may need to be retained for the 7-year DPDP window like raw interactions, in which case transition to DEEP_ARCHIVE rather than expire.
+
+**Cross-reference:** `infrastructure/terraform/modules/s3/main.tf:126-191` (documents-bucket lifecycle, as the model to follow) and `:375-454` (raw-interactions lifecycle).
+
+### F47 — Cognito nightly export to S3 not automated; RPO = "since last manual snapshot" (NEW — 2026-05-17 Stream D)
+
+**Severity:** **Medium — acceptable for small closed beta, blocker for GA scale.** The DR runbook §3 (commit `9d2c9dd`, `docs/dr_runbook_v2.md`) documents a manual export procedure (`aws cognito-idp describe-user-pool`, `list-users`, `list-users-in-group` to local JSON files). Cognito has no native PITR or cross-region replication. Until automation lands, the recovery point objective for a Cognito user-pool config or roster corruption event is unbounded — whatever the operator last manually exported.
+
+**Owner:** `backend` + `infra`.
+
+**Fix:** EventBridge schedule (daily, 02:00 UTC) → Lambda runs the same describe/list calls + writes JSON to `s3://carelog-v2-<env>-documents-<acct>/cognito-snapshots/<YYYY-MM-DD>/`. Retain 30 days hot, transition older to GLACIER. Wire a CloudWatch alarm to fire if the daily snapshot doesn't land (catches Lambda failure mode).
+
+Code reference: a similar S3-archive pattern exists in `backend/lambdas/account-deletion/` — model after that.
+
+**Wire-target:** before public GA (`docs/v2_launch_plan.md` §M2). For closed beta (M1, July 2026, ~10 patient cohort), manual snapshot every 2 weeks is operationally acceptable.
+
+### F48 — Operational-readiness naming pass: 9 classes of `<TBD>` placeholders left in runbooks (NEW — 2026-05-17 Stream D)
+
+**Severity:** **Medium — beta-gate per `docs/v2_launch_plan.md` §7.4 on-call rotation row.** The Stream D runbook extensions (commit `9d2c9dd`) intentionally used `<TBD>` placeholders for every name, phone number, channel handle, and tooling-choice that hadn't been decided yet. These need a single coordinated session to fill in before the on-call rotation actually goes live. All `<TBD>` markers across the three runbooks are listed below; sourcing each requires a decision from a different stakeholder.
+
+| Class | Where it appears | Decision owner |
+|---|---|---|
+| PagerDuty/Opsgenie tooling choice | `runbook_oncall_v2.md:20,30` (paging system + escalation policy) | founder + infra |
+| On-call rotation names + phones | `runbook_oncall_v2.md:194-201` (escalation tree primary/secondary/lead per alarm class) | engineering manager |
+| `#incidents` Slack channel handle | `runbook_oncall_v2.md:27` | founder |
+| Beta support phone/WhatsApp number | `runbook_support_v2.md` triage section + `dr_runbook_v2.md:401,425` (status page + cohort comms) | founder + ops |
+| Beta cohort roster doc | `dr_runbook_v2.md:425` | founder |
+| Prod RDS breakglass user | `runbook_support_v2.md` RDS access section ("PROD: TBD") | backend lead + security |
+| Hindi/Bengali outage-comms translations | `dr_runbook_v2.md:414-421,453` (WhatsApp + post-incident templates) | content team |
+| Status-page tool selection | `dr_runbook_v2.md:521` (drill #5 — status template post target) | founder |
+| Founder escalation contact (SEV-1 >1h) | `runbook_oncall_v2.md:201` (CEO/founder escalation rule) | founder |
+
+**Owner:** primarily `founder` for the strategic choices (tooling, support number, channel selection), with delegation to ops/content/security for the operational fills.
+
+**Fix:** one coordinated session — reads as a checklist, fills each `<TBD>` across the three runbook files with the actual value, then commits with a message like `Docs — runbook ops naming pass (F48 RESOLVED)`. The grep recipe to find every TBD in the runbooks:
+```bash
+grep -nH "<TBD" docs/runbook_*.md docs/dr_runbook_v2.md
+```
+
+**Wire-target:** before the on-call rotation actually goes live (T-7 per `docs/v2_launch_plan.md` §8.x timeline).
+
 ### Bench scope NOT covered (callouts for next session)
 
 - **Trends + Thresholds screens** (caregiver side) — patient has vitals now, can exercise.

@@ -35,11 +35,11 @@ Commit: `<pending>` (this commit). Pushed to `origin/main` at end of session.
 - Bedrock cross-region inference DROPPED in v2.0 (2026-05-02 design decision, `modules/bedrock/main.tf:6-9`). DR runbook now reflects in-region direct invocation. The DPDP residency caveat on the lambda env-var swap is documented explicitly.
 - Android `ConversationStateMachine.applyTurnFailure:125-130` passes raw SDK exception messages to UI — no friendly wrapper for Bedrock errors. Flagged as UX polish follow-up in DR §5.4.
 
-**Outstanding follow-ups surfaced (not in scope for Stream D):**
-- 4 TARGET alarms documented in oncall but NOT wired in terraform. Each carries a wire-target window (e.g., "pre-prod-cutover", "before beta", "before any guardrail config bump"). Will need a future stream to actually wire them; tracking on this isn't yet in `testing_todos_v2.md`.
-- S3 access-logs bucket has no noncurrent-version expiration rule — every version retained forever. Flagged in DR backup-arch overview as v2.1 cost cleanup.
-- Cognito nightly export to S3 is `TARGET — NOT WIRED`. Until automated, RPO for Cognito = "since last manual snapshot" (potentially unbounded).
-- `<TBD>` placeholders left for: PagerDuty/Opsgenie tooling choice, on-call rotation names + phone numbers, #incidents Slack channel handle, beta support phone/WhatsApp number, beta cohort roster doc, prod RDS breakglass user, Hindi/Bengali outage-comms translations, status-page tool selection, founder escalation contact. These need a separate "ops naming pass" before beta.
+**Outstanding follow-ups surfaced (tracked as F45–F48 in `docs/testing_todos_v2.md`):**
+- **F45** — 4 TARGET CloudWatch alarms (Cognito sign-in errors, Bedrock guardrail block rate, WorkManager backlog, Cognito drift detector) documented in oncall but NOT declared in `infrastructure/terraform/modules/monitoring/`. Per-alarm wire-target windows captured (pre-prod-cutover, before beta, v2.1, etc.).
+- **F46** — S3 access-logs bucket missing noncurrent-version lifecycle policy. Cost cleanup, no functional impact today.
+- **F47** — Cognito nightly export to S3 not automated. RPO unbounded until wired. Acceptable for closed beta, blocker for GA.
+- **F48** — Operational-readiness naming pass: 9 classes of `<TBD>` placeholders across the three runbooks (PagerDuty/Opsgenie tooling, on-call rotation, Slack channel, beta support number, cohort roster doc, prod RDS breakglass user, Hindi/Bengali translations, status-page tool, founder escalation). All listed with decision owner + grep recipe in the F48 entry.
 
 **Deviation from kickoff playbook:**
 - Kickoff assumed all 3 docs would be written from scratch via 3 parallel subagents. In reality, Stream G (2026-05-14) had already produced v1.0 drafts of all three. User confirmed (in this session): extend existing rather than rewrite. Two of three subagents got Edit-denied by the permission system mid-task; they completed all research and surfaced the column-name + Bedrock corrections above, which I then applied via direct Edit. DR subagent's Edit permission was granted; it produced 300+ lines of new content directly. Net: same outcome, different distribution of work.
