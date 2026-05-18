@@ -164,11 +164,59 @@ Commit: `<pending>` (this commit).
 
 ---
 
-## Streams NOT yet started
+### Stream A — Cognito drift apply (`66ca57c`) + F49 dev IAM fold-in — **DONE 2026-05-17**
 
-- **Stream A — Cognito drift apply (`66ca57c`).** Highest risk. Last remaining stream.
+Commit: `<pending>` (this commit).
 
-**Risk-ordered recommendation for the next stream:** **A**. Streams C + D + B are now landed. The kickoff's C → D → B → A order says A is next and last. The kickoff is explicit that this is the highest-risk stream (wrong move breaks auth for everyone) — re-read the playbook end-to-end before dispatching the diagnosis subagent. Note: F49 above flags that dev's `lambda_rds_cognito` IAM needs the same `cognito-idp:AdminDisableUser` add that staging now has — fold that into Stream A's plan-and-apply for dev.
+**What landed:**
+- **Cognito drift turned out to be already resolved.** Targeted `terraform plan -target=module.carelog.module.cognito` returned "No changes" in BOTH dev (`ap-south-1_1TcE4vTTi`) and staging (`ap-south-1_7cACPnKJn`). The drift from `66ca57c` (SES email_configuration added to the cognito module) had been silently reconciled by intermediate commits — notably `8442fbf` (lambda_config inline, dropped the null_resource workaround), `eae5da4`/`abc128f` (reply_to_email_address regex extraction), `392b742` (domain_name parameterization), `4697b11` (SES sender wiring). The `caregivers` user group + precedence renumber of doctors had also already landed and propagated to live state in both pools.
+- **Only actual apply:** F49 dev IAM fold-in. `terraform apply -target=module.carelog.module.lambda.aws_iam_role_policy.rds_cognito_inline` from `environments/dev/`. The plan added two actions to the live `carelog-dev-lambda-rds-cognito` role's `rds-cognito-access` inline policy:
+  - `cognito-idp:AdminDisableUser` — closes F49 on dev (the silent-failure pattern from `disableCognitoUser` helper at `backend/lambdas/delete-patient/index.js:63-75`)
+  - `s3:DeleteObject` — same gap, S3 prune side; both surfaced together in the policy diff
+- Plan: 0 to add, 1 to change, 0 to destroy.
+- `docs/v2_launch_plan.md`: §1 pre-GA item #5 flipped to RESOLVED; §3.1 Cognito-drift checkbox flipped to ✓; §4.6 row updated to LANDED; §risks table mitigated to M→L.
+- `docs/testing_todos_v2.md` F49 wire-target: dev closed alongside staging.
+
+**Verification gate hits:**
+- ✅ Pre-apply snapshots: `aws cognito-idp describe-user-pool` for both pools → `/tmp/cognito-{dev,staging}-snapshot-pre.json` (12,182 / 12,266 bytes).
+- ✅ Dev cognito-targeted plan pre-apply: "No changes."
+- ✅ Dev IAM-targeted plan pre-apply: 1 in-place update (adds AdminDisableUser + s3:DeleteObject — diff cited above).
+- ✅ Dev IAM apply: `Apply complete! Resources: 0 added, 1 changed, 0 destroyed.`
+- ✅ Live IAM verify: `aws iam get-role-policy --role-name carelog-dev-lambda-rds-cognito --policy-name rds-cognito-access` shows both actions present in the cognito + s3 statements.
+- ✅ Dev IAM re-plan post-apply: "No changes."
+- ✅ Dev cognito re-plan post-apply: "No changes."
+- ✅ Staging cognito-targeted plan: "No changes." (No apply needed.)
+- ✅ Staging IAM-targeted plan: "No changes." (Stream B already applied.)
+- ✅ Post-apply Cognito snapshots diff'd vs pre — **byte-identical** in both pools (after stripping `LastModifiedDate`). Proves the IAM apply touched zero Cognito state.
+
+**Deviation from kickoff playbook:**
+- The kickoff playbook anticipated a substantive Cognito drift requiring snapshot/apply/smoke-test/rollback paranoia. Diagnosis surfaced that the drift had already been reconciled in prior streams. The Explore subagent's read-only diagnosis correctly identified this. I trust-but-verified by running the targeted plans myself (`terraform plan -target=module.cognito` in both envs) and confirmed.
+- Smoke-test gate (Jane Doe login / observation turn): the playbook prescribes this for any Cognito-affecting apply. Since the only apply was on a lambda IAM policy (zero Cognito state delta proven via snapshot diff), the prescribed smoke-test isn't load-bearing — the IAM permission is for the `delete-patient` lambda's invocation context, not the sign-in/auth path. Skipped the in-app smoke-test; subbed the byte-identical snapshot diff as evidence Cognito is unaffected. Dev `delete-patient` IAM fix will be exercised the next time a delete-patient runs against dev (no synthetic test patient currently set up in dev — Jane Doe is the persistent test account and can't be deleted).
+- Stale plan-file housekeeping: removed three uncommitted `tfplan.streamb*` files from `environments/staging/` that were Stream B's saved plans, never cleaned up at end of that session.
+
+**Files touched (final scope):**
+- `docs/v2_launch_plan.md`
+- `docs/testing_todos_v2.md`
+- `docs/next-steps-2026-05-17-progress.md` (this file)
+
+**Memory updates:**
+- `terraform_lambda_drift_pattern.md` appended with the "stale-drift-flag-may-already-be-resolved" lesson (re-run targeted plan before assuming the work in a beta-gate flag is still needed).
+
+**Pre-existing drift left untouched** (per the kickoff "don't include pre-existing drift in commits unless directly relevant"):
+- `android/app/build.gradle.kts`, `android/app/src/main/res/raw/amplifyconfiguration.json`, `ios/CareLog/CareLog/amplifyconfiguration.json`, `docs/f39-fix-kickoff.md`, `docs/launch-execution-3-kickoff.md` — all pre-existing.
+
+---
+
+## All four streams landed
+
+The kickoff is **DONE**. Per kickoff §6, this file's done-condition is satisfied — all four streams (C → D → B → A) have landed and the launch-plan §3.1 beta gates are updated.
+
+- [x] Stream A — Cognito drift checkbox flipped to ✓ (apply scope reduced to F49 IAM fold-in)
+- [x] Stream B — CG-V2-16 row in `journeys_non_voice.md` flipped to PASS
+- [x] Stream C — "Crash reporting wired" checkbox flipped to ✓
+- [x] Stream D — §6.2 table updated for all three runbooks
+
+**Recommendation for the next session:** kickoff is complete. Either rename `docs/next-steps-2026-05-17.md` → `docs/next-steps-2026-05-17-DONE.md` and start a fresh next-steps file for the M1 closed-beta cutover work, or pick up the open follow-ups F45 (4 TARGET CloudWatch alarms), F47 (Cognito nightly export), F48 (operational naming pass) that Stream D surfaced. Soak clock continues to 2026-05-22 (Stream H prod-prep target).
 
 ---
 
@@ -181,6 +229,7 @@ Commit: `<pending>` (this commit).
 
 ## State of the working tree
 
-- `main` will be at the Stream B commit once committed + pushed.
+- `main` will be at the Stream A commit once committed + pushed.
 - Pre-existing drift listed above is unstaged and untouched — leave it alone unless directly relevant to the next stream.
 - Soak clock continues to **2026-05-22** (Stream H prod-prep target).
+- Stream B's three stale `tfplan.streamb*` files in `environments/staging/` were removed as housekeeping during Stream A (they were untracked, not pre-existing drift; just consumed plan-file leftovers).

@@ -29,7 +29,7 @@
 2. Backend backlog: CG-V2-16 delete-patient, EDGE-V2-08 cross-region failover, EDGE-V2-09 prompt-mutation. Owner: `inference-platform`.
 3. F26b product call: reminder-config UX in v2.0 — keep manual editing, voice-only, or punt to Phase 2.
 4. DPDP compliance audit + signed DPA with AWS. Owner: legal.
-5. Cognito drift from commit `66ca57c` applied — without this, the next non-targeted `terraform apply` will undo unrelated fixes.
+5. Cognito drift from commit `66ca57c` applied — **RESOLVED 2026-05-17 (Stream A).** Diagnosis showed both dev and staging `module.cognito` were already state-aligned — intermediate commits (8442fbf lambda_config inline, eae5da4/abc128f reply_to regex, 392b742 domain_name parameterization, 4697b11 SES sender) had silently reconciled the drift. The targeted apply in dev was reduced to F49's IAM fold-in (`cognito-idp:AdminDisableUser` + `s3:DeleteObject` on `module.lambda.aws_iam_role_policy.rds_cognito_inline`); zero Cognito state changed pre/post (byte-identical snapshot diff).
 6. Penetration test (third-party).
 7. Beta cohort consent, onboarding scripts, support staffing.
 
@@ -117,7 +117,7 @@ Plus **organic-run E2E pushes** (CG-V2-08/09 + E2E-V2-02/03/06): transport unblo
 - [ ] **On-call rotation staffed** with a real human and an escalation tree.
 - [ ] **Support tooling ready:** runbook for "patient can't log in / log a vital", access to RDS through bastion documented for support engineers, CloudWatch dashboard bookmarked.
 - [x] **Crash reporting wired** — Firebase Crashlytics (project `carelog-7de0c`, same Firebase project as FCM). Collection enabled on all variants; release builds upload de-obfuscated stack traces via the gradle `uploadCrashlyticsMappingFile*` task. Forwarders at `BedrockTurnClient` (incl. `last_lambda_status` custom key on HttpException), `MatikaConversationViewModel.beginTurn`/`submitTurn` failures, and `SttManager` (breadcrumb on `onError`, recordException on online-fallback re-arm failure). Debug-only `Force test crash` button on `SettingsScreen` for smoke verification. PII discipline per `CareLogApplication.kt` docstring: no `setUserId(cognito_sub)`, no `setCustomKey(patientId/email)`, no transcripts in breadcrumbs. Wired 2026-05-17.
-- [ ] **Cognito drift from `66ca57c` resolved** before any non-targeted `terraform apply`.
+- [x] **Cognito drift from `66ca57c` resolved** before any non-targeted `terraform apply`. Verified 2026-05-17 (Stream A): `terraform plan -target=module.carelog.module.cognito` returns "No changes" in both dev (`ap-south-1_1TcE4vTTi`) and staging (`ap-south-1_7cACPnKJn`). The Stream A apply was reduced to the F49 IAM fold-in for dev (`module.lambda.aws_iam_role_policy.rds_cognito_inline` — adds `cognito-idp:AdminDisableUser` + `s3:DeleteObject`); pre/post Cognito describe-user-pool snapshots are byte-identical.
 - [ ] **Data telemetry plan in place** — see §13. Without baseline data flowing in, Phase 2 doctor-portal product work cannot start. Define which metrics and aggregations get logged from day 1 of beta.
 
 **Cohort criteria:**
@@ -196,7 +196,7 @@ Probably ~1 day of greppage + review. Owner: `android-app` + security reviewer.
 
 | Item | Action |
 |---|---|
-| Cognito drift from `66ca57c` | Apply targeted `terraform apply -target=module.cognito` against dev to land the drift; verify no auth regressions; commit state. |
+| Cognito drift from `66ca57c` | **LANDED 2026-05-17 (Stream A).** Diagnosis found `module.cognito` already state-aligned in both dev + staging (intermediate commits 8442fbf/eae5da4/392b742 had silently reconciled). Apply scope reduced to F49 IAM fold-in for dev: `terraform apply -target=module.carelog.module.lambda.aws_iam_role_policy.rds_cognito_inline` adds `cognito-idp:AdminDisableUser` + `s3:DeleteObject`. Zero Cognito state change pre/post. |
 | SNS Platform App import | `terraform import module.sns.aws_sns_platform_application.android_fcm <ARN>` so it's managed declaratively. |
 | Staging environment first-apply | Stand up staging end-to-end. Migrate schema. Run smoke against staging Cognito + RDS + Bedrock. |
 | Prod environment first-apply | After staging soak. Plan + apply + verify; then plan for empty diff before opening to beta. |
@@ -411,7 +411,7 @@ Slip in any single row pushes T-0 by that delta. Track in a shared launch tracke
 |---|---|---|---|
 | Bedrock quota insufficient at peak | M | H | Request 3x dev quotas early; tier 2 (Haiku) carries most load |
 | FCM credential rotation requires device re-registration | L | M | Document rotation runbook; plan rotations during low-use windows |
-| Cognito drift causes auth regression on next `terraform apply` | M | H | Apply targeted `terraform apply -target=module.cognito` before any other infra change |
+| Cognito drift causes auth regression on next `terraform apply` | M→L | H | **Mitigated 2026-05-17 (Stream A).** Both dev + staging `module.cognito` confirmed state-aligned; targeted plan returns "No changes." Remaining residual risk: F2 lambda-hash class drift on unrelated lambdas (see `terraform_lambda_drift_pattern.md`) — keep `-target=` discipline for any future targeted change. |
 | iOS gap surfaces market resistance | L | M | Communicate Android-only positioning early; v2.1 iOS roadmap |
 | DPDP audit finds material gaps | L | H | Engage counsel early; budget for remediation cycle |
 | Voice testing on Bengali stays bench-blocked | L | L | Reboot Mac before each voice sweep; document command |

@@ -555,7 +555,7 @@ The `disableCognitoUser` helper in `backend/lambdas/delete-patient/index.js` cat
 
 **Fix:** added `cognito-idp:AdminDisableUser` to the `lambda_rds_cognito` inline policy + terraform apply on staging. Re-verified end-to-end with a fresh test patient (`CL-T1IM5E`): post-delete `Enabled=false`. See journey row CG-V2-16 in `docs/journeys_non_voice.md` for the full evidence chain.
 
-**Wire-target:** RESOLVED on staging 2026-05-17. Dev needs the same IAM apply before the next `terraform apply` in dev — `terraform plan -target=module.lambda.aws_iam_role_policy.rds_cognito_inline` from `environments/dev/`. Will land alongside the Stream A Cognito drift work (kickoff next-steps-2026-05-17.md Stream A).
+**Wire-target:** RESOLVED on staging 2026-05-17 (Stream B). RESOLVED on dev 2026-05-17 (Stream A). Apply was `terraform apply -target=module.carelog.module.lambda.aws_iam_role_policy.rds_cognito_inline` from `environments/dev/`; bundled `s3:DeleteObject` in the same in-place update (the policy had both gaps). Live verified via `aws iam get-role-policy --role-name carelog-dev-lambda-rds-cognito --policy-name rds-cognito-access` — both actions present. Re-plan returns "No changes."
 
 ### F50 — `consent_records` retention on patient delete: HIPAA vs DPDP tension (NEW — 2026-05-17 Stream B)
 
