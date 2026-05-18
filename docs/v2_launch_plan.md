@@ -280,9 +280,9 @@ Not part of the catalog; add a phase:
 | `docs/matika_implementation_plan_v2.md` | Mark all F-number tasks complete; add the launch-plan §4 streams; mark all doctor-portal items as Phase 2. |
 | `docs/matika_v2_migration.md` | Add a v1→v2 migration checklist for downstream operators (delete Mac Mini code paths, what to remove). |
 | `docs/privacy-policy.md` | Update for Bedrock cross-region inference disclosure; verify the in-app `cross_region_disclosure_scan` content matches the policy text. |
-| **NEW** `docs/runbook_oncall_v2.md` | On-call playbook: top-10 alerts and their first 3 diagnostic steps. |
-| **NEW** `docs/runbook_support_v2.md` | Support-engineer-facing runbook: common "patient can't X" / "caregiver can't X" scenarios + remediation. |
-| **NEW** `docs/dr_runbook_v2.md` | Disaster recovery plan: RDS PITR, S3 replication, Cognito export. |
+| ~~**NEW** `docs/runbook_oncall_v2.md`~~ | ~~On-call playbook: top-10 alerts and their first 3 diagnostic steps.~~ **LANDED 2026-05-17** (v1.1 — first-60s playbook, 4 TARGET alarms, escalation tree, glossary). v1.0 baseline 2026-05-14 (Stream G). |
+| ~~**NEW** `docs/runbook_support_v2.md`~~ | ~~Support-engineer-facing runbook: common "patient can't X" / "caregiver can't X" scenarios + remediation.~~ **LANDED 2026-05-17** (v1.1 — triage flow, 3 added scenarios, SSM/RDS access, data-fix scripts, PII handling). v1.0 baseline 2026-05-14 (Stream G). |
+| ~~**NEW** `docs/dr_runbook_v2.md`~~ | ~~Disaster recovery plan: RDS PITR, S3 replication, Cognito export.~~ **LANDED 2026-05-17** (v1.1 — backup-arch overview, regional-outage procedure, comms templates, drill checklist). v1.0 baseline 2026-05-14 (Stream G). |
 | **NEW** `docs/phase2_discovery_brief.md` | Captures the discovery questions for doctor onboarding (§13). Updated as data flows in during beta and GA. |
 | `docs/journeys_non_voice.md` | Each in-scope row gets evidence cited as we drive to 52/52. Doctor-related rows annotated "Phase 2". |
 | `docs/setup-and-deployment-guide.md` | Add a `Staging` and `Production` deployment section paralleling §3.x dev. |

@@ -10,6 +10,53 @@ Every check that hits the database assumes the dev/staging RDS tunnel pattern fr
 
 ---
 
+## Triage flow — do this first on every ticket
+
+Before deep-diving into a scenario, classify the ticket and collect the identifiers you'll need.
+
+### Step 1 — Is this Matika v2.0 or v1 legacy?
+
+| Tell-tale | v2.0 | v1 legacy |
+|---|---|---|
+| Hardware at patient's home | None (Android app only) | Mac Mini |
+| App install source | `<TBD Play Store beta link>` (closed beta from July 2026) | n/a — no patient phone app in v1 |
+| Voice in Hindi/Bengali | Yes (Android NATIVE_VOICES) | No |
+| User mentions "alerts to my phone" | Yes (FCM push) | Sometimes (email-only in v1) |
+| App `versionName` | `1.4.x` or higher | n/a |
+
+If v1 legacy, redirect to the legacy on-call rotation. This runbook is v2.0 only.
+
+### Step 2 — Which persona is reporting?
+
+Ask: "Do you log your own vitals (patient), or someone else's (caregiver/family)?"
+
+Cross-check via Cognito:
+```bash
+aws cognito-idp admin-get-user --user-pool-id ap-south-1_<pool-id> \
+  --username "<user-email>" --region ap-south-1 \
+  --query 'UserAttributes[?Name==`custom:persona_type`].Value|[0]' --output text
+```
+
+Returns one of: `patient` / `caregiver` / `relative`. **No `doctor`** — that's Phase 2 (see `CLAUDE.md` + `docs/v2_launch_plan.md` §13). If you see `doctor`, that's v1 legacy data or a Phase 2 dev-branch leak — flag to backend lead.
+
+### Step 3 — Extract the identifiers you'll need
+
+These three identifiers unlock every downstream query. Collect all three before opening a SQL session.
+
+| Identifier | Format | How to get it |
+|---|---|---|
+| **Cognito sub** | UUID (e.g., `abc12345-...`) | From `aws cognito-idp admin-get-user` — the `Username` field IS the sub. |
+| **patient_id short code** | `CL-XXXXXX` | From the app's Patient Profile screen, or via SQL: `SELECT p.patient_id FROM patients p JOIN users u ON u.id = p.user_id WHERE u.email = '<email>';` (for patient-persona users). For caregivers managing a patient, go through `persona_links`: `SELECT p.patient_id FROM patients p JOIN persona_links pl ON pl.patient_id = p.id JOIN users u ON u.id = pl.linked_user_id WHERE u.email = '<caregiver-email>' AND pl.is_active = true;` |
+| **session_id** | UUID | Only relevant for voice-flow issues. User won't have it — fetch from `interaction_sessions` by recent `created_at` + `user_id`. |
+
+Test pair for verifying queries (dev only): Jane Doe (patient) + John CG (caregiver) — see memory `jane_dev_test_account.md` for the UUIDs.
+
+### Step 4 — Audit-log the ticket before any remediation
+
+Open every ticket by writing an `audit_log` row noting the support session start. See "PII handling" below for what's safe to put in `details`.
+
+---
+
 ## "I can't sign in"
 
 ### Symptom
@@ -208,6 +255,180 @@ If 0 rows → there's no active caregiver link. Check the create-patient lambda'
 
 ---
 
+## "App is speaking the wrong language (English when I want Hindi/Bengali, or vice-versa)"
+
+Language preference is sticky in two places: the device's DataStore (Android) AND the RDS `patients.language` column. Mismatch can happen if the user signed out (which clears DataStore per `voice_harness_lessons.md` lesson on `clearState`).
+
+### Check 1 — RDS source of truth
+```sql
+SELECT patient_id, language
+FROM patients
+WHERE patient_id = '<CL-XXXXXX>';
+```
+Acceptable values per V005 CHECK constraint: `'en-IN'`, `'hi-IN'`, `'bn-IN'`. (Column was added in V004 as `preferred_language`, renamed to `language` and typed to BCP-47 in V005.)
+
+### Check 2 — Did the user re-select language in Settings?
+Ask the user to: open Settings → Language → reselect their preferred language. The app re-persists into DataStore.
+
+If that doesn't stick: force-stop the app from Android Settings → Apps → Matika → Force Stop, then reopen. DataStore reloads on cold start.
+
+### Check 3 — Server-side fix (last resort)
+```sql
+UPDATE patients SET language = 'hi-IN'
+WHERE patient_id = '<CL-XXXXXX>';
+```
+Then tell the user to sign out and back in — forces re-fetch into DataStore.
+
+---
+
+## "Caregiver onboarded the wrong patient name (typo)"
+
+v2.0 onboarding has no self-serve patient-name edit screen. Fix is support-side.
+
+### Step 1 — Find the patient and confirm
+```sql
+SELECT id, patient_id, name FROM patients WHERE patient_id = '<CL-XXXXXX>';
+```
+
+### Step 2 — Update RDS
+```sql
+UPDATE patients SET name = '<corrected>' WHERE patient_id = '<CL-XXXXXX>';
+```
+
+### Step 3 — Update Cognito if the patient user exists separately
+Some patient users are created in Cognito with the patient name as `name` attribute (form-onboard flow). Check + update:
+```bash
+aws cognito-idp admin-update-user-attributes --user-pool-id ap-south-1_<pool-id> \
+  --username "<patient-email>" \
+  --user-attributes Name=name,Value='<corrected>' --region ap-south-1
+```
+
+### Step 4 — Audit-log the change
+```sql
+INSERT INTO audit_log (action, resource_type, resource_id, user_id, details, created_at)
+VALUES (
+  'UPDATE_PATIENT_NAME',
+  'patient',
+  '<patient-uuid>',
+  '<support-engineer-user-uuid>',
+  '{"reason":"support-side typo fix","ticket_id":"<ticket-ref>"}'::jsonb,
+  NOW()
+);
+```
+Reconstructibility is a DPDP requirement. Always log the support engineer's `user_id` (NOT the patient's). Do NOT put PHI in `details`.
+
+---
+
+## "Patient/caregiver gets stuck at the credentials form (can't progress past email/password)"
+
+Two known sub-causes — both fixed 2026-05-17 but may regress on older app versions.
+
+### Sub-cause 1 — F39 class (form-submit doesn't POST)
+
+Pre-fix, the form's Save button could fail to dispatch the create-patient or signup call. Check:
+- Android logcat for `submitCredentials` or equivalent log line at the moment of Save tap.
+- CloudWatch: `aws logs filter-log-events --log-group-name /aws/lambda/carelog-<env>-create-patient --start-time $(($(date +%s) * 1000 - 600000)) --max-items 5 --region ap-south-1` — if no invocation, the app dispatch failed.
+
+Resolution: ask user's app `versionName`. Must be ≥1.4.0 (F39 fix). Older = unfixed; ask them to update.
+
+### Sub-cause 2 — F44 class (email validation rejecting valid emails)
+
+Pre-fix, certain valid emails (especially `+` aliases or unusual TLDs) were rejected by client-side validation. Same `versionName ≥ 1.4.0` rule.
+
+### Operational fix (any sub-cause)
+
+If app is wedged and user can't update, create the user server-side, skipping the broken form:
+```bash
+cd /Users/subhajitsanyal/Work/Projects/Matika/appdevel/matika/test-automation/scripts
+./cognito-test-harness.sh harness_create_user "<email>" "<temp-password>" "<persona>"
+```
+Then tell the user to sign in with the temp password (they'll be in `FORCE_CHANGE_PASSWORD` state — app handles via NewPasswordScreen since EDGE-V2-04).
+
+Reference: `docs/testing_todos_v2.md` F39 + F44 entries for full incident history.
+
+---
+
+## RDS access via SSM bastion
+
+Cross-references the canonical `docs/setup-and-deployment-guide.md` + memory `dev_rds_ssm_tunnel.md`. Quick-reference below.
+
+**DEV:**
+```bash
+aws ssm start-session --target i-017956fca070240a7 \
+  --document-name AWS-StartPortForwardingSessionToRemoteHost \
+  --parameters '{"host":["carelog-dev.c30qocsuk0zl.ap-south-1.rds.amazonaws.com"],"portNumber":["5432"],"localPortNumber":["55432"]}' \
+  --region ap-south-1 &
+
+PGPASSWORD=$(aws secretsmanager get-secret-value --secret-id carelog-dev-db-password \
+  --query SecretString --output text --region ap-south-1 | jq -r .password) \
+  psql -h 127.0.0.1 -p 55432 -U carelog_dev_admin -d carelog_dev
+```
+
+**STAGING:**
+```bash
+aws ssm start-session --target i-0f2acdf1a96ee24a6 \
+  --document-name AWS-StartPortForwardingSessionToRemoteHost \
+  --parameters '{"host":["carelog-staging.c30qocsuk0zl.ap-south-1.rds.amazonaws.com"],"portNumber":["5432"],"localPortNumber":["55433"]}' \
+  --region ap-south-1 &
+
+PGPASSWORD=$(aws secretsmanager get-secret-value --secret-id carelog-staging-db-password \
+  --query SecretString --output text --region ap-south-1 | jq -r .password) \
+  psql -h 127.0.0.1 -p 55433 -U carelog_staging_admin -d carelog_staging
+```
+
+**PROD:** `<TBD — prod RDS access requires named breakglass user; see infra lead before first use>`.
+
+Always use the libpq `psql` binary, not the Homebrew one (which can have TLS quirks against RDS). Path on dev workstation: `/Applications/Postgres.app/Contents/Versions/latest/bin/psql` or whatever the local install provides.
+
+---
+
+## Common data-fix scripts
+
+Three copy-paste-ready snippets for the most common support-side fixes.
+
+### 1. Update a parameter_configs threshold for a patient
+
+`parameter_configs.threshold_max` is **NUMERIC[] (array)**, not scalar — so writes need `ARRAY[...]::numeric[]`. The unique key is `(patient_id, parameter_name)`. Acceptable `parameter_name` values follow the v2 enum form (e.g., `blood_pressure_systolic`, `blood_pressure_diastolic`, `weight_kg`, `heart_rate_bpm`) — check the row to confirm before editing.
+
+```sql
+-- e.g., raise systolic high-threshold from 140 to 160 for a patient
+UPDATE parameter_configs
+SET threshold_max = ARRAY[160]::numeric[]
+WHERE patient_id = (SELECT id FROM patients WHERE patient_id = '<CL-XXXXXX>')
+  AND parameter_name = 'blood_pressure_systolic';
+```
+
+Verify the change took:
+```sql
+SELECT parameter_name, threshold_min, threshold_max
+FROM parameter_configs
+WHERE patient_id = (SELECT id FROM patients WHERE patient_id = '<CL-XXXXXX>')
+  AND parameter_name = 'blood_pressure_systolic';
+```
+
+### 2. Cognito password reset
+
+```bash
+aws cognito-idp admin-set-user-password \
+  --user-pool-id ap-south-1_<pool-id> \
+  --username "<email>" \
+  --password "<temp-password-with-symbols-and-mixed-case>" \
+  --no-permanent --region ap-south-1
+```
+
+`--no-permanent` forces a `FORCE_CHANGE_PASSWORD` state on next login. App handles via NewPasswordScreen (since EDGE-V2-04, commit `c4c574f`).
+
+### 3. Language reset (override what the app thinks the language is)
+
+```sql
+UPDATE patients SET language = 'hi-IN'
+WHERE patient_id = '<CL-XXXXXX>';
+```
+
+Acceptable values per V005 CHECK: `'en-IN'`, `'hi-IN'`, `'bn-IN'`. Tell the user to sign out and back in (forces re-fetch into DataStore — clearState wipes DataStore per `voice_harness_lessons.md`).
+
+---
+
 ## Escalation matrix
 
 | Class of issue | First responder |
@@ -222,4 +443,36 @@ Always file a `audit_log` lookup for the affected user before any remediation, s
 
 ---
 
-*Runbook v1.0 — 2026-05-14 (Stream G).*
+## PII handling — what NOT to put in tickets
+
+DPDP Act constraints apply to every artifact a support engineer creates. Tickets, Slack threads, screenshots, exported CSVs — all are potential PII spillage points.
+
+**Never copy these into a ticket / Slack / wiki / any non-RDS artifact:**
+
+- **Vital values** (BP readings, weight, heart rate, glucose). Use referential phrasing: "patient's most recent systolic reading" or "today's weight measurement."
+- **Patient full name** — use `patient_id` short-code (`CL-XXXXXX`) instead. If you must reference a name, redact to first-name-only.
+- **Date of birth, address, phone number** — never.
+- **Cognito sub UUIDs** in any external-facing artifact. Internal Slack DMs only, with the recipient explicitly told why.
+- **Raw transcript text** from `interaction_sessions.transcript` or any column derived from it. Transcripts are PHI under DPDP — even if redacted, the act of copying out of RDS triggers the data-residency boundary.
+- **Email addresses** in public channels. Redact to first-3-chars + domain: `sub***@gmail.com`.
+- **FHIR JSON bodies** from S3 (`s3://carelog-v2-<env>-documents-<acct>/observations/...`). They contain the same vital values as RDS plus FHIR metadata.
+
+**Always do these:**
+
+- **Audit-log every support action** in `audit_log` with `action`, `resource_type`, `resource_id`, and `user_id` set to the support engineer's `users.id` (NOT the patient's). `details JSONB` may contain a non-PHI reason string and a ticket reference, nothing else.
+- **Use the `patient_id` short-code** in every ticket — it's the only PII-safe stable identifier for a patient.
+- **Screenshot the Cognito console with email redacted** if you need to attach UI to a ticket — use the macOS preview's redaction tool.
+- **Clear local clipboard** after pasting any PHI-bearing string. RDS query output → clipboard → paste-and-forget is a common spillage vector.
+
+**Escalation for PII exposure incidents:**
+
+If you've already pasted PHI somewhere you shouldn't have (Slack channel, ticket, email), do NOT delete the message yourself — that complicates the audit trail. Instead:
+1. Notify `<TBD privacy officer / DPO>` within 1 hour of discovery.
+2. Notify backend lead via Slack DM with a description (NOT the original PHI).
+3. Privacy team will determine whether deletion + re-issuance is required per DPDP §8(5) breach-notification rules.
+
+Reference: `docs/privacy-policy.md` for the canonical user-facing data-handling policy. The cross-region disclosure language there must match the in-app `cross_region_disclosure_scan` content.
+
+---
+
+*Runbook v1.1 — 2026-05-17 (extended with triage flow, 3 scenarios, RDS access, data-fix scripts, PII handling). v1.0 baseline: 2026-05-14 (Stream G).*
