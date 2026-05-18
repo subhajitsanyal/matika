@@ -417,7 +417,7 @@ Six manual-entry tile flows driven against staging Jane PT (`+pt9@gmail.com` / `
 - **Maestro flow staleness pattern.** BP's flow was marked PASS on 2026-05-10 dev but was structurally broken against the current build because BloodPressureScreen migrated to the PR-3 Snackbar pattern post-flow-authoring. Other 5 vital screens still use the `SaveAcknowledgement` overlay. If/when those migrate, their flows will also bit-rot the same way. Add to `maestro_lessons.md` (TODO).
 - **`clearState: true` racing the sync.** Each Maestro flow opens with `launchApp: clearState: true`, which wipes Room DB. The 8 observations landed in S3 ONLY because WorkManager fired between flows (foreground-trigger via `SyncManager` on app start). On a tight back-to-back run, clearState could wipe before sync — risk for future, low for current bench cadence.
 
-**§4 rows still open (deferred to next bench session):**
+**§4 rows still open (deferred to next bench session — see kickoff at bottom of file):**
 - **Hindi voice flow + Bengali voice flow** — Maestro flows exist (`patient_voice_bp_hi_single_turn.yaml`, `patient_voice_bp_bn_single_turn.yaml`); needs Mac mini voice harness (or remote-TTS workaround per `voice_harness_lessons.md` lesson 7) + Mac mini reboot for Bengali.
 - **Manage Care Team E2E** (multi-device invite-then-accept) — no existing Maestro flow; needs hand-driven on two devices.
 - **Voice F23 retry path** — `f23_voice_patient_onboarding.yaml` exists; needs full bench voice drive.
@@ -433,3 +433,315 @@ Six manual-entry tile flows driven against staging Jane PT (`+pt9@gmail.com` / `
 - `~/.matika-test-creds.env` — `MATIKA_PATIENT_EMAIL` swapped from `+pt@gmail.com` (dev) to `+pt9@gmail.com` (staging). Not in the repo (no .env files are tracked).
 - Staging Cognito user `01f35daa-20c1-7074-1879-31fccc56806d` (Jane PT) — password reset to `buri123@S` to align with dev. Side effect on any automation that previously used the old staging password.
 - Staging RDS / S3 — 8 synthetic observations against `CL-012W6M`. Not destructive; cluttering Jane's history.
+
+---
+
+## Next bench-session kickoff — close out the 5 still-open §1 + §4 items
+
+> **Audience:** the orchestrator opening this file in a fresh session at the bench. Everything here is self-contained. **Goal: land all 5 items in one bench session.** Read this whole section before dispatching anything.
+
+### What's still open (carry-over from this session)
+
+| # | Item | Effort | Notes |
+|---|---|---|---|
+| **A** | **F40** — text-fallback bench re-verify | 10 min | Observability hook landed (commit `6c18a43`). Drive one text-fallback turn on staging → grep logcat → query RDS. Branches: close as misobserved, or reopen with a real reproducer. |
+| **B** | **Caregiver staging password reset** | 2 min | Prereq for items D + (optionally) E. Same shape as the Jane PT reset done this session. |
+| **C** | **PT-V2-05 Hindi voice** + **PT-V2-06 Bengali voice** | 30 min | Maestro flows exist; needs voice harness + DataStore language-pb seeding + (Bengali) pre-recorded MP3 already at `test-automation/audio/bn-IN-bp-130-85.mp3`. Mac mini reboot before kickoff per F41 / `voice_harness_lessons.md` lesson 6, OR drive via remote-TTS workaround. |
+| **D** | **Manage Care Team E2E** | 60-90 min | No existing flow. Two-device drive: caregiver invites attendant from one device, attendant signs up + sees patient on the second. Multi-account, multi-device. Add invite-screen testTags first OR drive by text/contentDescription. |
+| **E** | **Voice F23 retry path** | 20 min | `f23_voice_patient_onboarding.yaml` exists with 4 turns scripted. Tests caregiver voice-onboarding flow end-to-end including the credentials-form pivot at turn 3. Verify F23/F42/F43 fix wave still holds. |
+
+**Risk-ordered recommended sequence:** A → B → E → C-Hindi → C-Bengali → D. Reasoning:
+- **A first** — no voice harness needed, fast, settles the M1 §1 classification question while bench is fresh.
+- **B second** — unblocks D + makes E's "caregiver creates patient" verification queryable without an admin override.
+- **E before C** — F23 retry exercises caregiver voice onboarding (where most of the F39/F42/F43/F44 wave landed); proves the wave still holds before getting into language-specific voice rabbit-holes.
+- **C-Hindi before C-Bengali** — Bengali needs Mac reboot first (F41) which interrupts the voice harness; do Hindi first while harness is warm.
+- **D last** — most fragile, longest, biggest blast radius (creates an active attendant linkage in staging Cognito + RDS). If time runs short, defer D rather than the others.
+
+### 0. Pre-flight (do these ONCE at the start of the session)
+
+```
+# Bench device check
+/opt/homebrew/bin/adb devices                  # expect: RFCT10C1GSZ device
+test -f ~/.matika-test-creds.env && echo OK
+maestro --version                              # expect: 2.5.x
+
+# Build + install the current commit's debug APK so F40 observability is live
+cd android && ./gradlew :app:assembleDebug --quiet
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+
+# If items C/E require voice harness, the Mac mini path:
+#   per voice_harness_lessons.md lesson 6: REBOOT the Mac mini first (F41).
+#   afplay /System/Library/Sounds/Pop.aiff  → AUDIO_OK then proceed.
+# OR remote-TTS workaround (per lesson 7):
+#   On MacBook Air next to phone: python3 scripts/matika-tts-server.py
+#   export MATIKA_SAY_REMOTE_URL=http://<air-ip>:8080
+#   scripts/matika-voice-preflight.sh         → expect AUDIO_OK (remote)
+
+# SSM tunnel to staging RDS (for verification queries)
+#   bastion: i-0f2acdf1a96ee24a6
+#   host: carelog-staging.c30qocsuk0zl.ap-south-1.rds.amazonaws.com
+#   db: carelog_staging  user: carelog_staging_admin  port-forward: localhost:55433
+# Recipe in memory dev_rds_ssm_tunnel.md (substitute staging IDs above).
+```
+
+**Stop-and-surface conditions for pre-flight:**
+- `adb devices` shows `offline` or no device → reseat USB, restart adb daemon. If still wedged, surface to user before starting.
+- `assembleDebug` fails → surface; do not proceed.
+
+### A. F40 bench re-verify (10 min, do first)
+
+**Goal:** decide F40's final classification. Drive ONE text-fallback turn on staging; grep logcat for the new observability lines; query staging RDS for the resulting `interaction_sessions` row.
+
+**Driver checklist:**
+1. Open app, sign in as Jane PT (`sanyalsubhajit2010+pt9@gmail.com` / `buri123@S` — creds already in `~/.matika-test-creds.env`).
+2. Tap "Start Conversation" → conversation screen mounts.
+3. Open one terminal: `adb logcat -c && adb logcat | grep -E "MatikaConversationVM|submitTurn|onTextSubmitted"`.
+4. Type `My blood pressure is one thirty over eighty five.` into `matika_text_fallback` and tap `matika_text_send`.
+5. Watch logcat for **exactly one** of three lines:
+   - **(a) `MatikaConversationVM: onTextSubmitted chars=NN; submitting turn`** — path was taken. Continue to step 6.
+   - **(b) `MatikaConversationVM: onTextSubmitted ignored — blank text`** — UI didn't capture the text. UX regression.
+   - **(c) `MatikaConversationVM: onTextSubmitted ignored — prior turn still in flight`** — stuck `isProcessingTurn` flag. State machine bug.
+   - **(d) No matching log line** — Compose wiring regression (`matika_text_send` isn't calling `viewModelScope.onTextSubmitted`).
+6. If (a) — also watch for a `submitTurn ok` or `submitTurn failed` line. Wait ~5s after the send-tap.
+7. Query staging RDS for the session row (replace `<jane-pt-sub>` with `01f35daa-20c1-7074-1879-31fccc56806d`):
+   ```sql
+   SELECT session_id, fsm_state, started_at, status
+   FROM interaction_sessions
+   WHERE actor_cognito_sub = '<jane-pt-sub>'
+     AND started_at > now() - interval '5 minutes'
+   ORDER BY started_at DESC LIMIT 3;
+   ```
+
+**Verification gate (exactly one branch closes F40):**
+- [ ] **(a) + log-success + RDS row** → flip F40 to RESOLVED-misobserved in `docs/testing_todos_v2.md`. Update `journeys_voice.md` / `journeys_non_voice.md` if any row references F40.
+- [ ] **(a) + log-failure or RDS-no-row** → F40 is real; capture the failure mode (auth, 5xx, etc.) and re-file as a concrete bug. Reopen severity High.
+- [ ] **(b)/(c)/(d)** → F40 was real but with a different surface than the 2026-05-16 narrative claimed. File the specific surface; reopen.
+
+**Files to edit on close:** `docs/testing_todos_v2.md` F40 entry; `docs/v2_launch_plan.md` §3.1 if F40 was beta-blocking; this progress doc § "Next bench-session kickoff".
+
+### B. Caregiver staging password reset (2 min, do before D and E)
+
+**Goal:** align `sanyalsubhajit2010+cg@gmail.com` staging password with the dev value `buri123@S`, mirroring this session's Jane PT reset. Without this, items D + E (caregiver-driven) will fail at the login step.
+
+**Driver checklist:**
+1. Confirm the mismatch is still real:
+   ```
+   aws cognito-idp initiate-auth --region ap-south-1 \
+     --client-id 2ftnillsoguru5u2em58t6pllk --auth-flow USER_PASSWORD_AUTH \
+     --auth-parameters USERNAME=sanyalsubhajit2010+cg@gmail.com,PASSWORD='buri123@S'
+   ```
+   Expected: `NotAuthorizedException: Incorrect username or password` (per 2026-05-17 evening probe). If it returns `AuthenticationResult` instead — skip the reset; password already aligned.
+2. **Get user authorisation first** — reset is destructive to any automation using the old password. Surface a one-liner: "About to reset `+cg@gmail.com` staging Cognito password to `buri123@S` — OK to proceed?"
+3. Reset:
+   ```
+   aws cognito-idp admin-set-user-password --region ap-south-1 \
+     --user-pool-id ap-south-1_7cACPnKJn \
+     --username 51134dba-0041-70c0-ea5f-5c70348c3bb4 \
+     --password 'buri123@S' --permanent
+   ```
+4. Verify auth succeeds: re-run the `initiate-auth` from step 1; expect `AuthenticationResult` block.
+
+**Verification gate:**
+- [ ] `initiate-auth` returns `AuthenticationResult` (not `NotAuthorizedException`).
+- [ ] `~/.matika-test-creds.env` `MATIKA_CAREGIVER_PASSWORD` already matches `buri123@S` — no creds-file edit needed.
+
+**Stop-and-surface:** if `+cg@gmail.com` is also linked to a real caregiver-relationship row in staging RDS that other automation depends on (check `persona_links` for active rows), reconsider — but the bench account is canonical test data, so unlikely.
+
+### C. PT-V2-05 Hindi voice + PT-V2-06 Bengali voice (30 min combined)
+
+**Goal:** prove the voice pipeline handles `hi-IN` and `bn-IN` Soda STT + Bedrock multilingual extraction + TTS playback end-to-end on the current build.
+
+**Pre-read (mandatory):**
+- `.maestro/flows/patient_voice_bp_hi_single_turn.yaml` — header has the run recipe + F22 DataStore-seed workaround.
+- `.maestro/flows/patient_voice_bp_bn_single_turn.yaml` — same plus `MATIKA_BN_AUDIO` env-var path.
+- Memory `voice_harness_lessons.md` lessons 1, 3, 6, 7 — Samsung-vs-Pixel logcat trigger, DataStore language-override pattern, F41 reboot expectation, remote-TTS fallback.
+- `scripts/matika-voice-run.sh` — the wrapper that orchestrates `say` + Maestro per turn-spec.
+- `scripts/matika-say.sh` — `MATIKA_SAY_REMOTE_URL` and `MATIKA_OUTPUT_DEVICE` env-var handling.
+- `test-automation/audio/bn-IN-bp-130-85.mp3` — pre-generated Bengali utterance (verified present 2026-05-17).
+
+**Driver checklist (Hindi first):**
+1. Generate the DataStore preferences `.pb` for `language=hi`. If a known-good one isn't on disk, the quickest path is to drive Settings → Language → Hindi in the app once on a debug-write build, then `adb pull /data/user/0/com.carelog/files/datastore/carelog_settings.preferences_pb /tmp/lang-hi.pb`. Cache the file under `test-automation/datastore/lang-hi.pb` for re-use.
+2. Force-stop + seed + restart:
+   ```
+   adb shell am force-stop com.carelog
+   adb shell "run-as com.carelog sh -c 'cat > /data/user/0/com.carelog/files/datastore/carelog_settings.preferences_pb'" < test-automation/datastore/lang-hi.pb
+   ```
+3. Run the flow:
+   ```
+   source ~/.matika-test-creds.env
+   scripts/matika-voice-run.sh patient_voice_bp_hi_single_turn --no-install \
+     --turn "hi|165|मेरा रक्तचाप एक सौ चालीस बटा नब्बे है।|600"
+   ```
+4. Watch for Maestro `COMPLETED` + Bedrock response card.
+5. Verify backend on staging RDS:
+   ```sql
+   SELECT s.id, s.fsm_state, s.started_at, jsonb_array_length(s.captured_this_session::jsonb) AS captured
+   FROM interaction_sessions s
+   WHERE s.actor_cognito_sub = '01f35daa-20c1-7074-1879-31fccc56806d'
+     AND s.started_at > now() - interval '10 minutes'
+   ORDER BY s.started_at DESC LIMIT 1;
+   ```
+   Expected: one row with `captured >= 2` (systolic + diastolic) and `language='hi-IN'`.
+6. Verify S3 obs landed in `s3://carelog-v2-staging-documents-316643066568/observations/CL-012W6M/<UTC-yyyy>/<MM>/<DD>/`.
+
+**Driver checklist (Bengali — only after Hindi PASSes):**
+1. **Reboot Mac mini OR confirm remote-TTS is wired** — F41 is latent; if Hindi was driven locally, the mini may have wedged. If wedged: switch to remote-TTS workaround per pre-flight, do NOT chase coreaudiod restarts.
+2. Re-seed DataStore for `language=bn` (same pull-once-and-cache pattern as Hindi; cache as `test-automation/datastore/lang-bn.pb`).
+3. Run the flow:
+   ```
+   export MATIKA_BN_AUDIO="$PWD/test-automation/audio/bn-IN-bp-130-85.mp3"
+   scripts/matika-voice-run.sh patient_voice_bp_bn_single_turn --no-install \
+     --turn "bn|0|placeholder|800"
+   ```
+4. Same RDS + S3 verification as Hindi, expecting `language='bn-IN'`.
+
+**Verification gate (both languages):**
+- [ ] Maestro flow ends `COMPLETED` (no FAILED step).
+- [ ] Staging RDS `interaction_sessions` has a fresh row with `language='hi-IN'` / `'bn-IN'`, `fsm_state` past EXTRACTING (PENDING_CONFIRMATION or COMPLETE), `captured_this_session` non-empty.
+- [ ] Staging S3 has a fresh `obs-*.json` for `CL-012W6M`.
+- [ ] CloudWatch `/aws/lambda/matika-staging-bedrock-router` shows the turn invocation with `language=hi-IN` / `bn-IN` in the log.
+
+**Stop-and-surface:**
+- DataStore-seed step fails with `Permission denied` → app is release-built (no `run-as` access). Re-build debug and re-install.
+- Bengali audio file missing from `test-automation/audio/` → re-generate via gTTS: `python3 -c "from gtts import gTTS; gTTS('আমার রক্তচাপ এক শো ত্রিশ বাই পঁচাশি।', lang='bn').save('test-automation/audio/bn-IN-bp-130-85.mp3')"`.
+- F41 recurs mid-Bengali → stop, switch to remote-TTS, do not reboot mid-test (loses Hindi pass evidence in the same session).
+
+**On PASS:** flip `docs/journeys_voice.md` PT-V2-05 + PT-V2-06 rows to PASS-staging-2026-MM-DD with RDS + S3 evidence cited.
+
+### D. Manage Care Team E2E — invite + accept on second device (60-90 min)
+
+**Goal:** prove the caregiver-invites-attendant flow works end-to-end including a real second device receiving the invite + the new attendant appearing in the patient's care team. Required §13 launch-plan beta gate.
+
+**Architectural background (read before driving):**
+- Caregiver → Settings → "Invite Attendant" → `InviteAttendantScreen` (`android/app/src/main/java/com/carelog/ui/invite/InviteAttendantScreen.kt`).
+- POST to `backend/lambdas/invite-attendant/` writes `pending_invites` row + sends invite email/SMS via SES + SNS.
+- Invitee taps email link or follows the manual-code path → sign-up screen → `backend/lambdas/accept-invite/` consumes the invite token, creates `users` row, creates `persona_links` row connecting attendant to the patient.
+- Patient sees the new attendant via `PatientCareTeamScreen` (read-only); caregiver sees the new attendant via `CareTeamScreen` (`android/app/src/main/java/com/carelog/ui/relative/CareTeamScreen.kt`).
+
+**Pre-read (mandatory):**
+- `android/app/src/main/java/com/carelog/ui/invite/InviteAttendantScreen.kt` — only has 2 testTags today (`invite_attendant_name` + `invite_attendant_send`). Email/phone fields + radio method-toggle have NO testTags. **Add them as a prerequisite** if writing a Maestro flow.
+- `backend/lambdas/invite-attendant/index.js` + `backend/lambdas/accept-invite/index.js` — to know what RDS rows + Cognito users to expect.
+- `.maestro/flows/pt_v2_22_patient_care_team.yaml` — the read-only patient-side view; reuse its login + nav pattern for the post-invite verification side.
+
+**Two execution modes — pick one:**
+
+**Mode 1 — fully manual (faster to PASS, harder to repro):**
+1. Bench: caregiver device = current Galaxy `RFCT10C1GSZ` logged in as `+cg@gmail.com`. Second device = your personal Android (or a tablet, or even a separate APK install on the same device with different package). User confirms second-device availability before kickoff.
+2. On caregiver device: Settings → Invite Attendant → enter `+at@gmail.com` (or pick a fresh email — call it `<attendant-email>` below) → Send.
+3. On second device: receive email (check Mailgun / SES sandbox; staging is in SES sandbox so the email may not deliver — see `docs/runbook_support_v2.md` SES section). If sandbox is blocking, query `pending_invites` directly:
+   ```sql
+   SELECT id, invitee_email, invite_token, expires_at
+   FROM pending_invites WHERE invitee_email = '<attendant-email>'
+   ORDER BY created_at DESC LIMIT 1;
+   ```
+   Manually construct the accept-invite URL or call the accept-invite lambda directly with the token.
+4. Complete sign-up on second device. New Cognito user + `users` row + `persona_links` row should land.
+5. On caregiver device: Settings → Care Team → assert the new attendant row visible.
+6. On caregiver device, switch persona to "view as patient" OR log in as Jane PT on a third device → Settings → View Care Team → assert the new attendant visible too.
+
+**Mode 2 — write a single-device Maestro flow (more durable, ~30 min extra upfront):**
+1. Add missing testTags to `InviteAttendantScreen.kt`:
+   - Email field → `.testTag("invite_attendant_email")`
+   - Phone field → `.testTag("invite_attendant_phone")`
+   - Method toggle (email-vs-SMS radio) → `.testTag("invite_attendant_method_email")` / `_method_sms`
+2. Build + install.
+3. Write `.maestro/flows/cg_v2_<NN>_invite_attendant_email.yaml` that drives caregiver login → Settings → Invite → fills email + name + method=email → tap Send → asserts Success snackbar/screen. Single-device.
+4. Verify backend immediately via `pending_invites` query (above).
+5. For the accept side: drive a SECOND Maestro flow that signs up the attendant via the standard sign-up screen using the email + a known token (extracted via the `pending_invites` query and threaded into the sign-up URL).
+6. Verify `persona_links` row + Care Team screen renders the new attendant.
+
+**Verification gate:**
+- [ ] `pending_invites` row created in staging RDS with status='pending'.
+- [ ] Either email arrived (SES not in sandbox for this recipient) OR `accept-invite` lambda invoked directly with the token works.
+- [ ] New Cognito user created with `custom:persona_type=attendant` + `custom:linked_patient_id=CL-012W6M`.
+- [ ] `users` row with `persona_type='attendant'` linked to the new Cognito sub.
+- [ ] `persona_links` row connecting attendant `users.id` to patient `users.id` (Jane PT) with `relationship='attendant'`, `is_active=true`.
+- [ ] Caregiver's `CareTeamScreen` shows the new attendant row.
+- [ ] Patient's `PatientCareTeamScreen` shows the new attendant row.
+
+**Stop-and-surface:**
+- SES sandbox blocks delivery to a fresh recipient → fall back to direct lambda invoke for accept-invite. Note in CG-V2 row: "verified via direct accept-invite invoke, not real email" — this is acceptable evidence pre-prod-cutover.
+- Adding testTags to `InviteAttendantScreen.kt` reveals the screen is structurally different from the flow assumption (e.g., method is a dropdown not radio) → adjust the flow to match.
+- Second device not available + user doesn't want to install a separate package → use Mode 1 with browser-side accept-invite (visit the link in a phone browser, complete sign-up there) OR re-scope as Mode 2 single-device.
+
+**On PASS:** add new row CG-V2-<NN> in `docs/journeys_non_voice.md` Caregiver section; cross-link from §13 launch-plan beta gates.
+
+### E. Voice F23 retry path — `f23_voice_patient_onboarding.yaml` (20 min)
+
+**Goal:** drive the full caregiver-onboards-patient-via-voice flow end-to-end on the current build. Validates that the F39 + F42 + F43 + F44 wave (all landed 2026-05-17) still holds together.
+
+**Pre-read (mandatory):**
+- `.maestro/flows/f23_voice_patient_onboarding.yaml` — full 4-turn flow header. The post-run verification SQL is in the file's comment block.
+- `docs/testing_todos_v2.md` F39, F42, F43, F44 entries — these are what this flow protects against regression of.
+- Memory `voice_harness_lessons.md` lessons 6, 7 — F41 reboot/remote-TTS pattern.
+
+**Driver checklist:**
+1. Voice harness must be live (item C's pre-flight covers this — if you did C first, harness is warm).
+2. Caregiver staging password reset (item B) must have run.
+3. Drive:
+   ```
+   source ~/.matika-test-creds.env
+   scripts/matika-voice-run.sh f23_voice_patient_onboarding \
+     --turn "en|170|I want to set up monitoring for my mother. Her name is Asha Devi. She is 68 years old, female. She has hypertension and is otherwise healthy. Her primary language is English.|800" \
+     --turn "en|175|Yes, that is correct.|500" \
+     --turn "en|175|I have no other information. Please proceed to set up her account.|500" \
+     --turn "en|175|Yes, everything is correct, please confirm.|500"
+   ```
+4. After turn 3, the credentials AlertDialog should appear. The flow's post-turn-3 step should type email + phone into `patient_credentials_email` + `patient_credentials_phone` and tap `patient_credentials_submit`. Read the flow to confirm — if not wired, do it manually via `adb shell input text` between turns.
+5. Verify backend post-run:
+   ```sql
+   SELECT p.id, p.name, p.dob, u.email, u.phone_number
+   FROM patients p JOIN users u ON u.id = p.user_id
+   WHERE p.name ILIKE 'asha%' AND p.created_at > now() - interval '1 hour';
+
+   SELECT id, patient_id, session_type, fsm_state
+   FROM interaction_sessions
+   WHERE created_at > now() - interval '1 hour'
+     AND session_type = 'caregiver_onboarding'
+   ORDER BY created_at DESC LIMIT 3;
+   ```
+6. CloudWatch `/aws/lambda/carelog-staging-create-patient-from-voice` should show `create-patient-from-voice ok { patientShortId: 'CL-XXXXXX' }`.
+7. Cognito should have a new user with `custom:linked_patient_id=CL-XXXXXX` and the typed email + phone.
+
+**Verification gate:**
+- [ ] Maestro flow ends `COMPLETED`.
+- [ ] `patients` row for Asha Devi created in last hour with `dob` reflecting age 68.
+- [ ] `users.email` matches the typed email (F44 regression check).
+- [ ] `users.phone_number` matches the typed phone with `+91` prefix (F43 regression check).
+- [ ] `interaction_sessions` row has `fsm_state='PROFILE_CONFIRMED'` and `status='complete'`.
+- [ ] No `StateTransitionError: Transition PAUSED -> PAUSED` in bedrock-router logs (F42 regression check).
+- [ ] Cognito new user CONFIRMED + correct attributes.
+
+**Stop-and-surface:**
+- Turn 3 returns `StateTransitionError: Transition PAUSED -> PAUSED` → F42 regressed; investigate `bedrock-router/src/handler.ts` `handleTurn` credentials-receive path.
+- `users.phone_number` is NULL or `patients.emergency_contact_phone` is set → F43 regressed; check `create-patient-from-voice/index.js`.
+- `users.email` is `CL-XXXXXX@patient.carelog.com` (synthetic) instead of typed email → F44 regressed; check `create-patient/index.js`.
+- Soda mishears the name ("Asha" → "Asia") and the LLM doesn't catch it on readback → acceptable, flag as STT artifact, not a regression.
+
+**On PASS:** add a 2026-MM-DD bench-verify line to F39/F42/F43/F44 entries in `docs/testing_todos_v2.md` ("re-verified end-to-end <date> via f23_voice_patient_onboarding"). Add or update CG-V2-04 row in `docs/journeys_voice.md`.
+
+### Done definition for this kickoff
+
+All 5 items land + the §1/§4 carry-over section above is rewritten to "ALL CLOSED 2026-MM-DD" with cross-links to the actual evidence rows. Then commit + push.
+
+**Files expected to change (final scope):**
+- `docs/testing_todos_v2.md` — F40 final classification + F39/F42/F43/F44 re-verify timestamps.
+- `docs/journeys_voice.md` — PT-V2-05 + PT-V2-06 + CG-V2-04 rows.
+- `docs/journeys_non_voice.md` — new CG-V2-<NN> row for Manage Care Team if Mode 2 was taken.
+- `docs/v2_launch_plan.md` — §3.1 + §13 beta-gate checkboxes if any flip.
+- `docs/next-steps-2026-05-17-progress.md` — this section flipped to "ALL CLOSED".
+- New Maestro flow(s) under `.maestro/flows/` if Mode 2 was taken for item D.
+- testTag additions to `android/app/src/main/java/com/carelog/ui/invite/InviteAttendantScreen.kt` if Mode 2 was taken for item D.
+
+**Cross-cutting expectations (per the original kickoff §3):**
+- Commit after each item lands (5 commits, not one), so the orchestrator can bail mid-session without losing partial wins.
+- Match the existing commit-subject style (look at recent commits — `6c18a43`, `e4c86a2`, etc.).
+- Pre-existing drift in `android/app/build.gradle.kts`, `android/app/src/main/res/raw/amplifyconfiguration.json`, `ios/CareLog/CareLog/amplifyconfiguration.json`, `docs/f39-fix-kickoff.md`, `docs/launch-execution-3-kickoff.md` — leave alone unless directly relevant.
+
+**Out-of-repo side effects to expect:**
+- Staging Cognito: caregiver `+cg@gmail.com` password reset (item B).
+- Staging Cognito: new attendant user from item D.
+- Staging RDS: 1-2 new `interaction_sessions` rows + observations from items A, C, E.
+- Staging RDS: new `patients` row (Asha Devi) + linked `users` + `persona_links` from item E.
+- Staging RDS: new `pending_invites` + `users` + `persona_links` rows from item D.
+- Synthetic test residue is acceptable for staging. Do NOT run any of this against prod — prod env first-apply hasn't happened per launch-plan §4.6.
