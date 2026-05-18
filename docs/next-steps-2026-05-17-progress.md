@@ -290,6 +290,83 @@ Picked up immediately after Stream A landed. Commit: `<pending>` (this commit).
 
 ---
 
+## Must-do before closed beta (M1, target July 2026)
+
+> **Audience:** the orchestrator opening this file in a future session to plan beta cutover work. Pulled together 2026-05-17 from launch-plan §3.1 still-unchecked gates + open F-class entries in `docs/testing_todos_v2.md` + F48's `TO BE PROVISIONED PRE-BETA` items. Order is by external-vendor lead time + ship risk, NOT by engineering effort. **Slip on any item in §1 or §2 likely slips T-0.**
+
+### 1. Open critical bug (engineering, in our control)
+
+| Item | Where | Status / Notes |
+|---|---|---|
+| **F40** — voice→text `Type instead (fallback)` mode silently no-ops to backend (no `interaction_sessions` row, no observation queued for sync) | `docs/testing_todos_v2.md` F40 entry; client-side path through the conversation FSM | OPEN as of 2026-05-17. Safety net is broken — when voice fails (F41 class), the user thinks they've logged a vital but nothing reaches the backend. Beta-critical. |
+
+### 2. External-vendor lead time (start ASAP — they sit blocked on SLAs we don't control)
+
+| Item | Owner | T-N target | Notes |
+|---|---|---|---|
+| **DPDP audit + signed DPA with AWS + privacy policy + ToS legal review** | founder + external counsel | T-10 sign-off; engagement ASAP | launch-plan §1 pre-GA item #4 + §3.1 "Compliance lockdown" + §8.1. Counsel SLA typically multi-week. F50 (HIPAA-vs-DPDP `consent_records` tension) folds into this engagement — bring the question. |
+| **Penetration test** | security vendor (TBD) | Kickoff T-38, report T-14 | launch-plan §3.1 + §8 timeline. ~5–6 week external window. Vendor selection + scoping doc owed BEFORE kickoff. |
+| **SES production-access ticket** | founder → AWS Support | Before any beta-cohort onboarding | Current SES state: SANDBOX. Mail only deliverable to verified recipient identities. Two paths: (a) pre-verify every beta participant's email (~10) via `aws sesv2 create-email-identity` + participant clicks link; (b) request production access (couple-day SLA + AWS will ask traffic-pattern questions). Stream D pre-GA decision (commit `7dfc0f6`) chose path (a) for beta — confirm or revise. |
+| **Bedrock prod quotas (ap-south-1)** | founder → AWS Support | T-21 | Request 100 RPM Haiku + 30 RPM Sonnet. 1–3 day SLA. File AFTER prod env first-apply so the quota request can cite actual prod account IDs. |
+
+### 3. Infrastructure cutover
+
+| Item | Where | Status |
+|---|---|---|
+| **Prod environment first-apply** | `infrastructure/terraform/environments/prod/` | Module exists per commit `43f6678` ("Prod environment prep — tfvars template + main.tf scope fix"). Not yet applied. Needs end-to-end: VPC + RDS + Cognito + Bedrock + monitoring + bastion + KMS, then 1-week burn-in with a synthetic patient. T-21 per §8. |
+| **Staging soak completion** | staging | Clock continues to **2026-05-22**. Sign-off + freeze for prod cutover. |
+| **F47 cognito-snapshot apply to prod** | `infrastructure/terraform/environments/prod/` | Lands with prod first-apply (all monitoring + lambda module changes are env-symmetric). |
+| **F45 T1 + F45 T4 (drift detector) apply to prod** | same | T1 lands free with prod first-apply (it's in the monitoring module). T4 still un-implemented (deferred per Stream D follow-ups); implementation must precede prod cutover per F45 entry. |
+
+### 4. Untested product surfaces (most journeys are paper-classified, not executed)
+
+| Item | Where | Notes |
+|---|---|---|
+| **Patient — Pulse / SpO2 / Sugar / Temperature / Weight manual-entry tiles** | bench — manual exercise on Android | Only BP has been exercised end-to-end. Same UI shape, low-risk skip but worth one sweep before exposing to real patients. |
+| **Hindi voice flow + Bengali voice flow** | bench — voice harness | Per `voice_harness_lessons.md`: Bengali requires Mac reboot first (F41 class). Plan a single voice session that covers both languages. |
+| **Manage Care Team E2E** | Android caregiver flow (invite attendant + accept on second device) | Multi-device coordination, hasn't been actually-driven once end-to-end. |
+| **WorkManager sync flush verification** | bench — voice + manual entry → S3 + caregiver Trends | Confirm vitals recorded via voice OR manual entry actually land in `s3://carelog-v2-prod-documents-*/observations/{patientId}/...` AND surface on the caregiver Trends screen after sync. |
+| **Voice F23 retry path** | bench — multi-turn voice flow to completion | Per `testing_todos_v2.md` callouts. Verify `create-patient-from-voice` fires with correct payload + welcome-email lands. |
+
+### 5. Decisions still owed by founder
+
+| Decision | Where it surfaces | Blocker |
+|---|---|---|
+| **F50** — keep `consent_records` on patient delete (HIPAA stance) OR add `dpdpFullErasure=true` request flag that hard-deletes them | `docs/testing_todos_v2.md` F50 entry; lambda design ready either way at `backend/lambdas/delete-patient/index.js` | DPDP counsel call (fold into §2 legal engagement). |
+| **Data telemetry plan** — which dashboards do we look at Day 1 of beta? | launch-plan §7.3 + §13 | Stream A5 rollups land data nightly but no Grafana/Athena layer yet. Decide minimum-viable dashboard set BEFORE beta opens — otherwise beta runs blind. |
+| **Status-page tool** | `dr_runbook_v2.md` drill #5 (currently `<TO BE PROVISIONED PRE-BETA — target T-21>`) | Statuspage.io vs Atlassian Statuspage vs self-hosted Cachet. Founder choice. |
+
+### 6. Pre-beta provisioning (T-7 per launch-plan §8 — founder, solo-founder mode per F48)
+
+| Item | Owner | T-N target |
+|---|---|---|
+| Play Store closed-beta listing + invite link | founder | T-7 |
+| Beta-support WhatsApp number (separate from founder's personal) | founder | T-7 |
+| Beta-cohort roster doc (encrypted Notion or gdoc) | founder | T-7 |
+| Hindi + Bengali outage-comms translations (3 short WhatsApp/cohort templates) | founder + content team | T-14 |
+| Prod RDS breakglass user | founder | Lands with prod env first-apply |
+| Beta cohort consent + onboarding scripts | founder | T-7 per launch-plan §1 item #7 |
+
+### Out-of-scope-for-beta (confirmed deferrals, listed so they don't accidentally creep back in)
+
+- **F45 T2** (Bedrock guardrail block-rate metric) — touches `bedrock-router` live code; defer to a session already touching the router. Pre-GA, not pre-beta.
+- **F45 T3** (WorkManager backlog) — v2.1, needs app-side telemetry pipeline.
+- **F46** (S3 access-logs lifecycle) — cost cleanup, no functional impact. Pre-GA.
+- **Doctor portal, doctor onboarding, doctor-facing analytics** — Phase 2 per CLAUDE.md + launch-plan §13.
+- **iOS app** — parked since 2026-03-24.
+- **PagerDuty/Opsgenie tooling** — solo-founder mode for beta (F48 decision); revisit at first hire / pre-GA.
+- **Cross-region replication (multi-region DR)** — v2.1 per `dr_runbook_v2.md` §2.
+
+### How to use this section
+
+Each row above maps to a specific F-class entry, launch-plan section, or runbook owner. Use the table cell as the search anchor — the canonical detail lives in the file referenced, not in this index. When picking up any row in a future session:
+
+1. Re-read the referenced F-class entry / launch-plan section first; this index can go stale.
+2. Cross-check status against the live system (re-run the targeted plan, query the CloudWatch alarm state, check `aws ses get-account` for the SES sandbox bit, etc.) — per memory `feedback_verify_live_pattern.md`, don't trust documented status without inspecting current state.
+3. Update both the F-class entry AND this section when the row lands.
+
+---
+
 ## State of the bench (for the next session)
 
 - Galaxy device serial `RFCT10C1GSZ` is attached and has the Stream-C debug APK installed (com.carelog, versionCode 6, versionName 1.4.0).
