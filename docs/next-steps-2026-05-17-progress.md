@@ -442,13 +442,13 @@ Six manual-entry tile flows driven against staging Jane PT (`+pt9@gmail.com` / `
 
 ### What's still open (carry-over from this session)
 
-| # | Item | Effort | Notes |
+| # | Item | Status | Notes |
 |---|---|---|---|
-| **A** | **F40** — text-fallback bench re-verify | 10 min | Observability hook landed (commit `6c18a43`). Drive one text-fallback turn on staging → grep logcat → query RDS. Branches: close as misobserved, or reopen with a real reproducer. |
-| **B** | **Caregiver staging password reset** | 2 min | Prereq for items D + (optionally) E. Same shape as the Jane PT reset done this session. |
-| **C** | **PT-V2-05 Hindi voice** + **PT-V2-06 Bengali voice** | 30 min | Maestro flows exist; needs voice harness + DataStore language-pb seeding + (Bengali) pre-recorded MP3 already at `test-automation/audio/bn-IN-bp-130-85.mp3`. Mac mini reboot before kickoff per F41 / `voice_harness_lessons.md` lesson 6, OR drive via remote-TTS workaround. |
-| **D** | **Manage Care Team E2E** | 60-90 min | No existing flow. Two-device drive: caregiver invites attendant from one device, attendant signs up + sees patient on the second. Multi-account, multi-device. Add invite-screen testTags first OR drive by text/contentDescription. |
-| **E** | **Voice F23 retry path** | 20 min | `f23_voice_patient_onboarding.yaml` exists with 4 turns scripted. Tests caregiver voice-onboarding flow end-to-end including the credentials-form pivot at turn 3. Verify F23/F42/F43 fix wave still holds. |
+| **A** | **F40** — text-fallback bench re-verify | **CLOSED 2026-05-17** — misobserved. New flow `.maestro/flows/f40_text_fallback_reverify.yaml`; staging Jane PT lands Branch (a) with `onTextSubmitted chars=49; submitting turn` → `submitTurn ok fsm=PENDING_CONFIRMATION extracted=2`. RDS row `aa1c217d-608a-4d6a-8eaa-743ba2a5c575` carries both BP values. F40 entry in `testing_todos_v2.md` flipped to RESOLVED-misobserved. |
+| **B** | **Caregiver staging password reset** | pending | Prereq for items D + (optionally) E. Same shape as the Jane PT reset done this session. |
+| **C** | **PT-V2-05 Hindi voice** + **PT-V2-06 Bengali voice** | pending | Maestro flows exist; needs voice harness + DataStore language-pb seeding + (Bengali) pre-recorded MP3 already at `test-automation/audio/bn-IN-bp-130-85.mp3`. Mac mini reboot before kickoff per F41 / `voice_harness_lessons.md` lesson 6, OR drive via remote-TTS workaround. |
+| **D** | **Manage Care Team E2E** | pending | No existing flow. Two-device drive: caregiver invites attendant from one device, attendant signs up + sees patient on the second. Multi-account, multi-device. Add invite-screen testTags first OR drive by text/contentDescription. |
+| **E** | **Voice F23 retry path** | pending | `f23_voice_patient_onboarding.yaml` exists with 4 turns scripted. Tests caregiver voice-onboarding flow end-to-end including the credentials-form pivot at turn 3. Verify F23/F42/F43 fix wave still holds. |
 
 **Risk-ordered recommended sequence:** A → B → E → C-Hindi → C-Bengali → D. Reasoning:
 - **A first** — no voice harness needed, fast, settles the M1 §1 classification question while bench is fresh.

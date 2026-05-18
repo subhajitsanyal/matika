@@ -424,9 +424,20 @@ A second drive (post-F43 fix) created `CL-D12W5Q` (Sunita Ghosh) with the same v
 
 **Out of scope for F44.** The form-onboard UI has no patient-phone field today — only "Emergency Contact Phone", which correctly routes to `patients.emergency_contact_phone`. So `users.phone_number` legitimately stays NULL for form-onboarded patients. Filing a separate UX gap is premature; voice-onboard is the canonical path for capturing a patient's own phone.
 
-### F40 — `Type instead (fallback)` mode reported as never hitting backend (RE-CLASSIFIED 2026-05-17 — code review shows path is structurally identical to verified voice path; observability hook landed to disambiguate; needs one bench re-run before final closure)
+### F40 — `Type instead (fallback)` mode reported as never hitting backend (RESOLVED-misobserved — 2026-05-17 bench re-verify lands Branch (a) end-to-end)
 
-**Severity (post code-review):** Was **High** based on 2026-05-16 bench narrative; **downgraded to Medium-Probable-Misobservation** after 2026-05-17 code audit. Net: needs **one** bench re-drive against the now-current build to either close fully or reopen with reproducer logs.
+**Severity:** Was High → Medium-Probable-Misobservation (2026-05-17 code audit) → **CLOSED — misobservation** (2026-05-17 bench re-drive).
+
+**2026-05-17 bench evidence (closure).** Drove `.maestro/flows/f40_text_fallback_reverify.yaml` end-to-end on staging Jane PT (`+pt9@gmail.com` / `01f35daa-20c1-7074-1879-31fccc56806d` / `CL-012W6M`) via `RFCT10C1GSZ`. F40 observability lines fired exactly as Branch (a):
+- `MatikaConversationVM: onTextSubmitted chars=49; submitting turn`
+- `MatikaConversationVM: submitTurn seq=1 sessionId=aa1c217d-608a-4d6a-8eaa-743ba2a5c575 lang=en-IN type=patient_logging chars=49`
+- `MatikaConversationVM: submitTurn ok fsm=PENDING_CONFIRMATION extracted=2 actions=[] protocol=null`
+
+Staging RDS `interaction_sessions WHERE id = 'aa1c217d-608a-4d6a-8eaa-743ba2a5c575'` returned a fresh row with `fsm_state=PENDING_CONFIRMATION, language='en-IN', session_type='patient_logging'`. `pending_confirmation` carries both extracted values (`blood_pressure_systolic=130 mmHg, blood_pressure_diastolic=85 mmHg, LOINC 8480-6 + 8462-4, confidence 0.95`). `transcript_history` has the patient utterance "My blood pressure is one thirty over eighty five." and the system readback. `matika_response_card` mounted in the UI (only fires from `ConversationStateMachine.applyTurnResponse` on backend success). Maestro flow ends COMPLETED.
+
+The 2026-05-16 bench narrative ("UI advanced through PENDING_CONFIRMATION + Session complete with zero bedrock-router invocations") was internally inconsistent. Most likely root cause: bench operator looked at the wrong CloudWatch log group / region / time window, OR was on a v1 build's `ConversationScreen` rather than the v2 `MatikaConversationScreen`. No real-world product bug; the text-fallback path is structurally identical to the verified voice path and works end-to-end. Closing as misobservation.
+
+**Severity (post code-review, pre-bench):** Was **High** based on 2026-05-16 bench narrative; downgraded to Medium-Probable-Misobservation after 2026-05-17 code audit.
 
 **Why the downgrade.** Code audit on 2026-05-17 walked the text-fallback path end-to-end:
 - `MatikaConversationScreen.kt:195-198` — `TextFallback(onSubmit = viewModel::onTextSubmitted)`. No local-mock path; the only `onSubmit` consumer is the ViewModel.

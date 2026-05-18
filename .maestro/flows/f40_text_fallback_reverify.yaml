@@ -1,0 +1,85 @@
+# F40 text-fallback re-verify (one-shot bench probe).
+#
+# Goal: drive one text-fallback turn through MatikaConversationScreen and
+# let the F40 observability logs (commit 6c18a43) disambiguate whether
+# the 2026-05-16 "Type instead (fallback)" silent-no-op narrative was a
+# misobservation or a real reproducer.
+#
+# Run:
+#   adb logcat -c
+#   source ~/.matika-test-creds.env
+#   scripts/maestro-run.sh f40_text_fallback_reverify
+#   adb logcat -d MatikaConversationVM:* *:S | grep -E "onTextSubmitted|submitTurn"
+#
+# Expected log lines (exactly one of the first three):
+#   I MatikaConversationVM onTextSubmitted chars=NN; submitting turn
+#   W MatikaConversationVM onTextSubmitted ignored — blank text
+#   W MatikaConversationVM onTextSubmitted ignored — prior turn still in flight
+# Then:
+#   I MatikaConversationVM submitTurn ok ...   OR   E MatikaConversationVM submitTurn failed ...
+#
+# Backend evidence (staging RDS via SSM tunnel):
+#   SELECT session_id, fsm_state, started_at, status
+#   FROM interaction_sessions
+#   WHERE actor_cognito_sub = '01f35daa-20c1-7074-1879-31fccc56806d'
+#     AND started_at > now() - interval '5 minutes'
+#   ORDER BY started_at DESC LIMIT 3;
+#
+# Branches:
+#   (a) entry log fires + RDS row created   → close F40 misobserved.
+#   (b) entry log fires + no RDS row        → real failure, file concrete reproducer.
+#   (c) blank/in-flight log fires           → different surface than 2026-05-16 narrative.
+#   (d) no matching log line                → Compose wiring regression.
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+- extendedWaitUntil:
+    visible:
+      id: login_email
+    timeout: 15000
+- tapOn:
+    id: login_email
+- inputText: ${MATIKA_PATIENT_EMAIL}
+- tapOn:
+    id: login_password
+- inputText: ${MATIKA_PATIENT_PASSWORD}
+- hideKeyboard
+- tapOn:
+    id: login_button
+
+- extendedWaitUntil:
+    visible:
+      id: patient_home_start_conversation
+    timeout: 30000
+- tapOn:
+    id: patient_home_start_conversation
+- tapOn:
+    text: "Allow|While using the app"
+    optional: true
+
+- extendedWaitUntil:
+    visible:
+      id: matika_text_fallback
+    timeout: 30000
+- tapOn:
+    id: matika_text_fallback
+- inputText: "My blood pressure is one thirty over eighty five."
+- tapOn:
+    id: matika_text_send
+
+# Single BP turn round-trips through Haiku (T1) — typically <8s.
+# 60s ceiling gives plenty of slack on first-call Lambda cold start.
+- extendedWaitUntil:
+    visible:
+      id: matika_response_card
+    timeout: 60000
+
+# The response card mounting proves applyTurnResponse fired (which
+# only happens after a successful BedrockTurnClient HTTP roundtrip).
+# That alone closes branches (b)/(c)/(d) — but the logcat grep is
+# still needed to distinguish (a)-ok from a structurally weird path.
+- assertVisible:
+    id: matika_response_card
