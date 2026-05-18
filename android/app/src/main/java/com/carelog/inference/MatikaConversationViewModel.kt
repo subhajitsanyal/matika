@@ -284,10 +284,27 @@ class MatikaConversationViewModel @Inject constructor(
         }
     }
 
-    /** Fallback path: the user typed text instead of speaking. */
+    /**
+     * Fallback path: the user typed text instead of speaking.
+     *
+     * Mirrors the voice path's `submitTurn(result.text)` exactly — both
+     * routes go through the same `submitTurn` + `BedrockTurnClient`
+     * pipeline and POST to `/conversation/turn`. Adding entry / early-
+     * return logs here so bench runs can grep `MatikaConversationVM:
+     * onTextSubmitted` to distinguish "send was tapped but path no-op'd"
+     * from "send was tapped and turn was dispatched" — F40 was filed
+     * 2026-05-16 with no such log to disambiguate.
+     */
     fun onTextSubmitted(text: String) {
-        if (text.isBlank()) return
-        if (uiState.value.conversation.isProcessingTurn) return
+        if (text.isBlank()) {
+            Log.w(TAG, "onTextSubmitted ignored — blank text")
+            return
+        }
+        if (uiState.value.conversation.isProcessingTurn) {
+            Log.w(TAG, "onTextSubmitted ignored — prior turn still in flight")
+            return
+        }
+        Log.i(TAG, "onTextSubmitted chars=${text.length}; submitting turn")
         sttError.value = null
         lastUserUtterance.value = text
         viewModelScope.launch { submitTurn(text.trim()) }

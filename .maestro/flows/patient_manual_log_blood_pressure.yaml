@@ -2,7 +2,16 @@
 #
 # F4 Path A wired vital_tile_blood_pressure on PatientHomeScreen.
 # Flow: login → scroll to BP tile → tap → enter systolic+diastolic
-#       → tap Save → assert save_acknowledgement overlay → return home.
+#       → tap Save → assert home-screen Snackbar "Saved BP ..." → return home.
+#
+# UX note (2026-05-17 update — PT-V2-15 sweep): BP uses the PR-3
+# nav-result bridge pattern (BloodPressureScreen.kt:51-57 →
+# PatientHomeScreen.kt:116-121) so on save it pops to home and the
+# home Scaffold renders a Material3 Snackbar "Saved BP <s>/<d> mmHg".
+# The five sibling screens (Pulse/SpO2/Glucose/Temperature/Weight)
+# still use the legacy SaveAcknowledgement overlay testTag; this flow
+# was previously written against that pattern and silently bit-rotted
+# when BP migrated to PR-3.
 #
 # Backend evidence: sync-observation lambda writes to S3 at
 #   observations/{patientId}/{YYYY}/{MM}/{DD}/{id}.json
@@ -64,13 +73,17 @@ appId: com.carelog
 - tapOn:
     id: bp_save_button
 
-# ── Success overlay appears (auto-dismisses ~2.1s later) ────
+# ── Home-screen Snackbar surfaces after save (PR-3 nav-result) ──
+# Snackbar text is "Saved BP <systolic>/<diastolic> mmHg". The
+# Material3 SnackbarHost auto-dismisses after ~6s by default — long
+# enough for Maestro to catch it. We use extendedWaitUntil on the
+# regex so a future cosmetic copy change doesn't bit-rot the test.
 - extendedWaitUntil:
     visible:
-      id: save_acknowledgement
+      text: "(?i)Saved BP 130/85.*"
     timeout: 10000
 
-# ── Returns to patient home after auto-dismiss ──────────────
+# ── Returns to patient home after Snackbar dismiss ──────────
 - extendedWaitUntil:
     visible:
       id: patient_home_start_conversation

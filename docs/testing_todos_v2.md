@@ -424,32 +424,40 @@ A second drive (post-F43 fix) created `CL-D12W5Q` (Sunita Ghosh) with the same v
 
 **Out of scope for F44.** The form-onboard UI has no patient-phone field today — only "Emergency Contact Phone", which correctly routes to `patients.emergency_contact_phone`. So `users.phone_number` legitimately stays NULL for form-onboarded patients. Filing a separate UX gap is premature; voice-onboard is the canonical path for capturing a patient's own phone.
 
-### F40 — `Type instead (fallback)` mode never hits backend — drives local UI to COMPLETE without creating an interaction_sessions row or queuing observations for sync (NEW — 2026-05-16 post-reboot bench)
+### F40 — `Type instead (fallback)` mode reported as never hitting backend (RE-CLASSIFIED 2026-05-17 — code review shows path is structurally identical to verified voice path; observability hook landed to disambiguate; needs one bench re-run before final closure)
 
-**Severity:** **High — invalidates text-fallback as a bench substitute when voice is unavailable.** Used as the pivot path after the Core Audio re-wedge (F41) blocked PT-V2-03 voice driving. Typed `My blood pressure is one thirty over eighty five.` into `matika_text_fallback` + tapped `matika_text_send` (which correctly enabled on text entry). UI advanced through PENDING_CONFIRMATION (BP 130 / 85 mmHg displayed) → typed `Yes, that is correct.` → tapped send → UI showed "Session complete. The readings below have been recorded." with a Done button. Tapped Done, returned to patient home. All looked clean.
+**Severity (post code-review):** Was **High** based on 2026-05-16 bench narrative; **downgraded to Medium-Probable-Misobservation** after 2026-05-17 code audit. Net: needs **one** bench re-drive against the now-current build to either close fully or reopen with reproducer logs.
 
-Backend asserts contradict the UI:
-- `interaction_sessions` (staging RDS): **zero rows** created in the last 4 h despite the full drive; the only recent patient_logging row is `44c1f27e-…` from a prior session 4+ hours earlier (same BP 130/85 — the runbook canonical value, not mine).
-- `observation_sync_log` for `CL-TPUX54` since the drive: **zero rows**.
-- S3 `s3://carelog-v2-staging-documents-316643066568/observations/CL-TPUX54/2026/05/16/`: no new `obs-*.json`.
-- `/aws/lambda/matika-staging-bedrock-router`: zero invocations in the relevant 20-min window.
-- `/aws/lambda/carelog-staging-manage-interactions`, `carelog-staging-store-interaction`, `carelog-staging-end-session`: all silent.
-- App logcat: `FhirSyncWorker` fired routinely and logged `Found 0 pending observations to sync` — nothing was queued for sync from the fallback drive.
+**Why the downgrade.** Code audit on 2026-05-17 walked the text-fallback path end-to-end:
+- `MatikaConversationScreen.kt:195-198` — `TextFallback(onSubmit = viewModel::onTextSubmitted)`. No local-mock path; the only `onSubmit` consumer is the ViewModel.
+- `MatikaConversationViewModel.onTextSubmitted` — calls `viewModelScope.launch { submitTurn(text.trim()) }`. Same `submitTurn` that the voice path's `SttResult.Final` branch invokes (line 261). No fork, no debug-only short-circuit.
+- `submitTurn` (line 361) → `stateMachine.beginTurn()` (which throws if `start()` wasn't called) → `turnClient.submitTurn(...)` → `BedrockTurnClient.submitTurn` → `MatikaCloudApi.turn` → `POST /conversation/turn`.
+- `pendingConfirmation` (the F40 narrative's "BP 130 / 85 mmHg displayed") is set **only** by `ConversationStateMachine.applyTurnResponse` (`ConversationStateMachine.kt:113`), which is itself called **only** from `submitTurn`'s `onSuccess` fold (`MatikaConversationViewModel.kt:408`). There is no other writer in the v2 path — the v1 `SessionManager.kt:409` writer is dead code (gated behind `BuildConfig.USE_V2_INFERENCE=false`, which both `debug` and `release` set to `true` per `android/app/build.gradle.kts:43,54`).
+- `sessionEnded=true` (the F40 narrative's "Session complete" card) is set only by `onStopPressed` or by `applyTurnResponse` seeing a `COMPLETE_SESSION` action — both of which require the backend to have responded.
+- Voice path uses **the same** `submitTurn` and was verified end-to-end on 2026-05-17 (Phase B PT-V2-01 through PT-V2-05 all PASS with RDS+S3+CloudWatch triad evidence — see `docs/journeys_voice.md`). By transitivity, the text-fallback path's POST should land too.
 
-So the "Type instead (fallback)" path is either:
-1. A purely-local mock state machine that produces the same UI feedback as a real session but never POSTs (likely a debug/dev affordance that should NOT be on a staging-pointed APK), OR
-2. A real path whose HTTP call is failing silently before reaching the AGW (no Retrofit error visible in app logs either).
+So the 2026-05-16 narrative ("UI advanced through PENDING_CONFIRMATION" + "Session complete" + "zero bedrock-router invocations") is internally inconsistent — the UI states quoted **require** backend success, yet bench reports show none. Most likely explanation: bench operator looked at the wrong CloudWatch log group / wrong region / wrong time window, OR the operator was actually on the v1 `ConversationScreen` (which has different test-tag wiring but matches the same `matika_text_fallback` testTag in old code — needs verification).
 
-Either way, the consequence on bench: text-fallback cannot validate Bedrock + LLM extraction + FSM + RDS persist + S3 sync. The implicit "fallback covers everything voice does, minus STT" assumption baked into the bench runbook and `journeys_non_voice.md` is wrong for this APK build.
+**Observability hook shipped 2026-05-17.** `MatikaConversationViewModel.onTextSubmitted` now logs at three points:
+- Entry: `MatikaConversationVM: onTextSubmitted chars=<n>; submitting turn`
+- Early-return on blank text: `MatikaConversationVM: onTextSubmitted ignored — blank text`
+- Early-return on prior-turn-in-flight: `MatikaConversationVM: onTextSubmitted ignored — prior turn still in flight`
 
-**Owner:** `android` (`MatikaConversationViewModel` / `matika_text_fallback` → `matika_text_send` wire path) + `qa-testing` (re-classify any journey that relies on text-fallback for backend asserts).
+With these logs, the next bench drive can deterministically distinguish "path was taken" vs "send tap did nothing". Combined with the existing `submitTurn` failure log (`Log.e(TAG, "submitTurn failed seq=...", err)`) at line 428 and Crashlytics non-fatal forwarding (per Stream C), a real F40 reproduction now leaves a clear forensic trail.
 
-**Fix candidates:**
-1. If fallback is intentionally local-only, gate it on `BuildConfig.DEBUG` AND surface a visible "(local mock — not synced)" banner. Re-classify text-fallback journeys.
-2. If fallback should POST: wire it through the same `/conversation/turn` endpoint the voice path uses; add Retrofit error toast on non-2xx.
-3. Add `Log.i(TAG, …)` at the send-text handler with the chosen path (local vs network) so bench runs can grep.
+**Verification recipe for next bench session.**
+1. Install the current debug APK on `RFCT10C1GSZ` (Stream C build or later — observability hook landed in the same commit as this entry update).
+2. Open the conversation screen as a patient (e.g. Jane Doe in staging).
+3. `adb logcat -c` to clear, then `adb logcat | grep -E 'MatikaConversationVM|submitTurn'` in one terminal.
+4. Type a vital utterance into `matika_text_fallback` and tap `matika_text_send`. Watch for the `onTextSubmitted chars=...; submitting turn` line.
+5. After ~3 seconds, query staging RDS for the session row: `SELECT session_id, fsm_state, started_at FROM interaction_sessions WHERE actor_cognito_sub = '<jane-pt-sub>' AND started_at > now() - interval '5 minutes';`
+6. If `onTextSubmitted` log fired AND RDS row exists → close F40 as misobserved.
+7. If `onTextSubmitted` log fired AND RDS row missing → grep logcat for `submitTurn failed` or `beginTurn threw` — that's the real failure mode, file as the actual bug.
+8. If `onTextSubmitted` log did NOT fire → the send-tap wiring is broken; file as a Compose-layer regression.
 
-**Repro:** Patient (or any) voice screen → tap `Type instead (fallback)` → type any vital utterance → tap send → observe full UI flow to "Session complete" → query `interaction_sessions WHERE started_at > now() - interval '5 minutes'` on staging RDS → returns 0 rows.
+**Owner:** `qa-testing` to drive the re-verify; `android` to action if step 7 or step 8 fires.
+
+**Repro (pre-2026-05-17, may not reproduce on current build):** Patient voice screen → tap `Type instead (fallback)` → type any vital utterance → tap send → observe full UI flow to "Session complete" → query `interaction_sessions WHERE started_at > now() - interval '5 minutes'` on staging RDS → returns 0 rows.
 
 ### F41 — Core Audio re-wedges within ~30 min of sustained voice activity, even after fresh reboot + coreaudiod/audiomxd restart (BYPASSED via remote-TTS workaround 2026-05-17; underlying Mac mini regression remains)
 

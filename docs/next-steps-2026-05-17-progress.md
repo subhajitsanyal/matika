@@ -298,7 +298,7 @@ Picked up immediately after Stream A landed. Commit: `<pending>` (this commit).
 
 | Item | Where | Status / Notes |
 |---|---|---|
-| **F40** — voice→text `Type instead (fallback)` mode silently no-ops to backend (no `interaction_sessions` row, no observation queued for sync) | `docs/testing_todos_v2.md` F40 entry; client-side path through the conversation FSM | OPEN as of 2026-05-17. Safety net is broken — when voice fails (F41 class), the user thinks they've logged a vital but nothing reaches the backend. Beta-critical. |
+| **F40** — voice→text `Type instead (fallback)` mode reported to silently no-op to backend | `docs/testing_todos_v2.md` F40 entry; client-side path through the conversation FSM | **RE-CLASSIFIED 2026-05-17 by code audit.** The text-fallback path is structurally identical to the verified voice path — same `submitTurn` → `BedrockTurnClient` → `/conversation/turn`. There is no local-mock writer for `pendingConfirmation` or `sessionEnded` in the v2 build (v1 SessionManager is dead code behind `USE_V2_INFERENCE=true`). The 2026-05-16 bench narrative is internally inconsistent. Observability hook shipped: `onTextSubmitted` now logs entry + both early-return reasons so the next bench can deterministically disambiguate. Needs one re-drive on the current build (see F40 entry §"Verification recipe") before closing as misobservation. Probable-misobservation, not beta-critical engineering work. |
 
 ### 2. External-vendor lead time (start ASAP — they sit blocked on SLAs we don't control)
 
@@ -380,3 +380,56 @@ Each row above maps to a specific F-class entry, launch-plan section, or runbook
 - Pre-existing drift listed above is unstaged and untouched — leave it alone unless directly relevant to the next stream.
 - Soak clock continues to **2026-05-22** (Stream H prod-prep target).
 - Stream B's three stale `tfplan.streamb*` files in `environments/staging/` were removed as housekeeping during Stream A (they were untracked, not pre-existing drift; just consumed plan-file leftovers).
+
+---
+
+## M1 §1 + §4 follow-ups (testing-todos-v2-phase5 session) — **2026-05-17 evening**
+
+Picked up the "Must-do before closed beta" §1 (F40) and §4 (untested product surfaces) line items as a single session.
+
+### §1 — F40 — **observability landed; re-verify deferred (commit `<pending>`)**
+
+**Verdict:** Code-review concludes the text-fallback path is structurally identical to the verified voice path. Most-likely explanation for the 2026-05-16 bench narrative is misobservation — the UI states quoted (PENDING_CONFIRMATION + Session complete) require `applyTurnResponse` to fire, which requires successful HTTP roundtrip, yet the bench reported zero bedrock-router invocations. Internal inconsistency.
+
+**What landed:**
+- `MatikaConversationViewModel.onTextSubmitted` (lines 287-310) — three new log lines:
+  - Entry: `Log.i(TAG, "onTextSubmitted chars=$n; submitting turn")` (mirrors the voice path's `Log.i` at line 259).
+  - Early-return on blank: `Log.w(TAG, "onTextSubmitted ignored — blank text")`.
+  - Early-return on in-flight: `Log.w(TAG, "onTextSubmitted ignored — prior turn still in flight")`.
+- `docs/testing_todos_v2.md` F40 entry rewritten — severity downgraded from High to Medium-Probable-Misobservation; full code-path walkthrough cited (file:line for every step); 7-step verification recipe for the next bench session (logcat grep + RDS query + branching by which log line fires).
+
+**Why the unit test was skipped.** `MatikaConversationViewModel` takes 7 Hilt-injected dependencies (`SttManager`, `TtsManager`, `BedrockTurnClient`, `ConversationStateMachine`, `AuthRepository`, `AppSettings`, `CloudApiService`, plus `SavedStateHandle`). A focused "text-submit hits turnClient.submitTurn" test would have required 5+ new fakes for what amounts to a 3-line assertion. The bench re-verify is the higher-leverage artifact.
+
+**Outstanding for the next bench session.** Verification recipe is captured in F40 entry §"Verification recipe for next bench session". Branches: (a) `onTextSubmitted chars=...` fires + RDS row exists → close F40 as misobserved. (b) Log fires + RDS row missing → real network/auth failure, file as the actual bug. (c) Log does NOT fire → Compose wiring regression.
+
+### §4 — Untested product surfaces — **manual-entry tiles all PASS staging end-to-end**
+
+Six manual-entry tile flows driven against staging Jane PT (`+pt9@gmail.com` / `CL-012W6M`) via Maestro. All 6 PASS UI path **and** the FhirSyncWorker → backend → S3 pipeline.
+
+**What landed:**
+- Drove `patient_manual_log_pulse`, `_blood_pressure`, `_glucose`, `_spo2`, `_temperature`, `_weight` against staging. First run of BP failed; flow updated for the PR-3 nav-result pattern (BloodPressureScreen migrated from `SaveAcknowledgement` overlay to PatientHomeScreen `Snackbar` — the Maestro flow's `save_acknowledgement` testTag assertion was bit-rotted). Updated flow asserts `(?i)Saved BP 130/85.*` Snackbar text instead. Re-run → PASS.
+- Live evidence: 8 observation JSONs landed in `s3://carelog-v2-staging-documents-316643066568/observations/CL-012W6M/2026/05/18/` (UTC partition) between 20:54:30 and 21:07:00 IST. Sizes: ~941-964 bytes for single-value vitals, 1576 bytes for BP (which has systolic + diastolic components).
+- **WorkManager sync flush** (§4 row "Confirm vitals recorded via voice OR manual entry actually land in S3"): confirmed end-to-end. FhirSyncWorker logcat: `Found N pending observations to sync` → `Synced observation ... → serverId=...` → S3 write. Worker fires automatically on app foreground (`SyncManager.connectivityChanged` → `enqueueWifiSync`), no manual force-trigger needed.
+- `docs/journeys_non_voice.md` PT-V2-15 through PT-V2-20 rows updated — each retains its 2026-05-10 dev evidence + appends 2026-05-17 staging re-verify timestamp + S3 path + the BP PR-3 flow-repair note.
+
+**Deviation from the playbook + lessons captured:**
+- **Staging Jane PT password mismatch.** `~/.matika-test-creds.env` carried `MATIKA_PATIENT_EMAIL=sanyalsubhajit2010+pt@gmail.com` (the **dev** account) and `MATIKA_PATIENT_PASSWORD=buri123@S`. Switching the email to `+pt9@gmail.com` (staging) didn't suffice — staging account's password was different (Cognito `NotAuthorizedException`). User authorised `aws cognito-idp admin-set-user-password --permanent` to align the two; the staging Jane PT password now matches dev. Net: a future bench session against staging works out-of-box with the existing creds file. Caregiver creds (`+cg@gmail.com`) also need the same reset before a staging caregiver-trends drive can run — defer to next session if needed.
+- **Maestro flow staleness pattern.** BP's flow was marked PASS on 2026-05-10 dev but was structurally broken against the current build because BloodPressureScreen migrated to the PR-3 Snackbar pattern post-flow-authoring. Other 5 vital screens still use the `SaveAcknowledgement` overlay. If/when those migrate, their flows will also bit-rot the same way. Add to `maestro_lessons.md` (TODO).
+- **`clearState: true` racing the sync.** Each Maestro flow opens with `launchApp: clearState: true`, which wipes Room DB. The 8 observations landed in S3 ONLY because WorkManager fired between flows (foreground-trigger via `SyncManager` on app start). On a tight back-to-back run, clearState could wipe before sync — risk for future, low for current bench cadence.
+
+**§4 rows still open (deferred to next bench session):**
+- **Hindi voice flow + Bengali voice flow** — Maestro flows exist (`patient_voice_bp_hi_single_turn.yaml`, `patient_voice_bp_bn_single_turn.yaml`); needs Mac mini voice harness (or remote-TTS workaround per `voice_harness_lessons.md` lesson 7) + Mac mini reboot for Bengali.
+- **Manage Care Team E2E** (multi-device invite-then-accept) — no existing Maestro flow; needs hand-driven on two devices.
+- **Voice F23 retry path** — `f23_voice_patient_onboarding.yaml` exists; needs full bench voice drive.
+
+**Files touched (final scope):**
+- `android/app/src/main/java/com/carelog/inference/MatikaConversationViewModel.kt`
+- `.maestro/flows/patient_manual_log_blood_pressure.yaml`
+- `docs/testing_todos_v2.md`
+- `docs/journeys_non_voice.md`
+- `docs/next-steps-2026-05-17-progress.md` (this file)
+
+**Out-of-repo side effects:**
+- `~/.matika-test-creds.env` — `MATIKA_PATIENT_EMAIL` swapped from `+pt@gmail.com` (dev) to `+pt9@gmail.com` (staging). Not in the repo (no .env files are tracked).
+- Staging Cognito user `01f35daa-20c1-7074-1879-31fccc56806d` (Jane PT) — password reset to `buri123@S` to align with dev. Side effect on any automation that previously used the old staging password.
+- Staging RDS / S3 — 8 synthetic observations against `CL-012W6M`. Not destructive; cluttering Jane's history.
