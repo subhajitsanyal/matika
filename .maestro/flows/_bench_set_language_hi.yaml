@@ -1,0 +1,33 @@
+# Bench helper — log in as patient and switch app language to Hindi
+# via the in-UI picker (F22). Used to prime the device DataStore before
+# running voice flows that depend on `appSettings.language = hi` such
+# as `patient_voice_bp_hi_single_turn`. Not a journey itself.
+#
+# Underscore-prefix marks this as orchestration-only, not coverage.
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+- tapOn: { id: login_email }
+- inputText: ${MATIKA_PATIENT_EMAIL}
+- tapOn: { id: login_password }
+- inputText: ${MATIKA_PATIENT_PASSWORD}
+- hideKeyboard
+- tapOn: { id: login_button }
+
+- extendedWaitUntil: { visible: { id: patient_home_start_conversation }, timeout: 30000 }
+
+# Settings IconButton in the TopAppBar — no testTag, target by
+# accessibility contentDescription="Settings" on the Icon.
+- tapOn:
+    text: "Settings"
+
+- extendedWaitUntil: { visible: { id: settings_language_card }, timeout: 10000 }
+- scrollUntilVisible:
+    element: { id: language_option_hi }
+- tapOn: { id: language_option_hi }
+
+# Back out so the voice flow's launchApp doesn't land on Settings.
+- back
+- extendedWaitUntil: { visible: { id: patient_home_start_conversation }, timeout: 10000 }

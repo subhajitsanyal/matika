@@ -1,5 +1,6 @@
 package com.carelog.ui.settings
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -371,6 +372,7 @@ private fun LanguageOptionRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .clickable(onClick = onClick)
             .testTag("language_option_$code"),
         verticalAlignment = Alignment.CenterVertically,
     ) {

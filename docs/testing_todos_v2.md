@@ -587,6 +587,24 @@ The Stream B hardening kept the patient's `users` row soft-deleted (`is_active=f
 
 **Wire-target:** before public GA (M2). For closed beta (M1, ~10 patients), the current behavior is defensible — beta cohort hasn't invoked right-to-erasure formally. If DPDP audit requires deletion: add a `DELETE FROM consent_records WHERE user_id = $patient_user_id` step to `backend/lambdas/delete-patient/index.js` between steps 7b and 8 (before patients hard-delete), gated by a new request flag `dpdpFullErasure=true`. Two-tier model: HIPAA soft-delete by default; DPDP hard-delete on explicit user opt-in.
 
+### F51 — `language_option_$code` testTag on non-clickable Row; in-UI language picker silently fails when driven via Maestro `tapOn` (RESOLVED — 2026-05-17 evening)
+
+**Severity:** Was Medium — false-positive PASS hazard for any voice journey that depends on the language picker. The flow appeared to PASS (tap completed, no error) but DataStore was never written; subsequent voice sessions ran with the default `language=en-IN` regardless of which language radio the harness tapped.
+
+**Root cause.** `SettingsScreen.kt:371-389` placed the `testTag("language_option_$code")` on the **Row**, but only the inner `RadioButton` carried the `onClick = onClick` handler. Maestro's `tapOn: { id: language_option_X }` resolves to the Row node and taps its center — which lands on the text label (`"हिन्दी (Hindi)"` / `"বাংলা (Bengali)"`), not on the RadioButton at the start of the Row. Without a clickable modifier on the Row itself, the click never propagates to the onClick handler. The picker UI looked correct (radio still showed the prior selection) so the operator couldn't tell the tap had no-op'd.
+
+**Pre-fix discovery path.** PT-V2-05 Hindi flow drove `_bench_set_language_hi` + `patient_voice_bp_hi_single_turn` against staging Jane PT. STT first try returned NO_MATCH (offline Hindi pack couldn't transcribe synthetic Lekha audio at rate 165). Retried at rate 140 → STT succeeded with `stt_offline_used=true` BUT the transcript was **romanized** ("Meena raktchap 140 Bata 90 hai") and the session was tagged `language='en-IN'`. That gap proved the in-UI picker had silently failed: the language was still English the whole time. (The English Soda pack picked up the Hindi audio as best-effort romanization; bedrock-router extracted BP values from the romanized text via its multilingual prompt path, so the flow "passed" the visible asserts while smuggling the wrong language tag through.)
+
+**The historical PT-V2-05/06 PASS rows pre-fix** worked around the bug with `tapOn: { point: "x,y" }` coordinate taps at the RadioButton's specific bounds (`[91,1021][226,1156]`) — see `docs/journeys_voice.md` PT-V2-05 row inline note "the row text region is non-clickable". The bench operator knew but the helper Maestro flows did not.
+
+**Fix.** Added `.clickable(onClick = onClick)` to the Row's modifier chain in `LanguageOptionRow` (`SettingsScreen.kt:373`), plus the `androidx.compose.foundation.clickable` import. Maestro `tapOn: { id: language_option_$code }` now fires the onClick reliably; coordinate-tap workaround no longer required.
+
+**Post-fix verification.** Same `_bench_set_language_hi` helper + `patient_voice_bp_hi_single_turn` run produced session `a3fc9a3d-...` with `language='hi-IN'` + Devanagari transcript + Hindi system readback. C-Bengali (session `d8bb6ec1-...`) also clean PASS with `language='bn-IN'` + Bangla numerals.
+
+**Side effect: new bench helper.** `.maestro/flows/_bench_set_language_hi.yaml` added (mirrors the existing `_bench_set_language_bn.yaml`). Both flows are now durable against the language picker, post-fix.
+
+**Owner:** `android` (fix shipped) + `qa-testing` (helper flow shipped). Closed.
+
 ### Bench scope NOT covered (callouts for next session)
 
 - **Trends + Thresholds screens** (caregiver side) — patient has vitals now, can exercise.
