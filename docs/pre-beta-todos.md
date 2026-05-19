@@ -81,7 +81,7 @@
 | **Beta cohort size** | `v2_launch_plan.md` §11 Q2 | 10 target; flex 5–20? |
 | **Final SES sender domain** | `v2_launch_plan.md` §11 Q6 | `no-reply@matika.health`? `support@matika.in`? Affects EX-1 + EX-3. |
 | **iOS in v2.1** | `v2_launch_plan.md` §11 Q7 | Firm commit, or revisit based on beta signal? |
-| **PT-V2-22 (patient Care Team view)** | `v2_launch_plan.md` §11 Q4 | Ship caregiver-only view in v2.0, or defer to Phase 2? Doc recommends defer. |
+| ~~**PT-V2-22 (patient Care Team view)**~~ | ~~`v2_launch_plan.md` §11 Q4~~ | **RESOLVED 2026-05-14 (Stream D) — shipped caregiver-only view in v2.0.** `PatientCareTeamScreen` lives in Android (read-only by construction); `care-team` lambda updated to allow patient self-access via `patients.user_id` + accept UUID or short code; `isPrimary` now serialized. Maestro `pt_v2_22_patient_care_team.yaml` PASS. See `journeys_non_voice.md` PT-V2-22 row. |
 | **Data telemetry — Day-1 dashboard set** | §3.3 above + `v2_launch_plan.md` §13 | Which metrics + aggregations get logged from day 1? Without this, beta runs blind. |
 | **Status-page tool** | `dr_runbook_v2.md` drill #5 (currently `<TO BE PROVISIONED PRE-BETA — target T-21>`) | Statuspage.io vs Atlassian Statuspage vs self-hosted Cachet |
 

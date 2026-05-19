@@ -96,7 +96,7 @@ From `docs/testing_todos_v2.md`:
 | Cognito email-intercept blocked (CG-V2-01, PT-V2-23, EDGE-V2-04) | 3 | `devops` (intercept harness) + `qa-testing` | ~1 day for harness, then run |
 | Backend backlog (CG-V2-16 delete-patient, EDGE-V2-08 chaos, EDGE-V2-09 prompt-mutation) | 3 | `inference-platform` + `qa-testing` | ~3 days |
 | Cost-prohibitive (PT-V2-14 sustained Sonnet load) | 1 | Decision: simulate or accept | 1–2 days |
-| Design-blocked (PT-V2-22 patient Care Team view) | 1 | Product + design | TBD — may itself defer to Phase 2 (Care Team primarily shows doctors) |
+| ~~Design-blocked (PT-V2-22 patient Care Team view)~~ **RESOLVED 2026-05-14 (Stream D)** | 0 | shipped | done — caregiver-only read-only view shipped; doctor section suppressed until Phase 2 |
 | ~~F26 reminders deferred (CG-V2-13)~~ **RESOLVED 2026-05-15 voice-only** | 0 | shipped | done |
 
 Plus **organic-run E2E pushes** (CG-V2-08/09 + E2E-V2-02/03/06): transport unblocked by F17; just need a vital-log-triggered evaluate-thresholds-batch path to flip these from synthetic-PASS to organic-PASS. ~1 day of re-runs.
@@ -179,7 +179,7 @@ Recommend C — least DNS surface, least delay. Owner: `devops`. ~1 day.
 
 ### 4.4 PT-V2-22 design and PT-V2-14 cost decisions
 
-- **PT-V2-22 (patient Care Team view):** Care Team primarily shows doctors. Since doctor onboarding is deferred, the most consistent call is to defer this view to Phase 2 alongside doctor onboarding. Document the KNOWN-GAP waiver. If product wants a caregiver-only Care Team view for beta, that's a small Android-only change.
+- **PT-V2-22 (patient Care Team view):** **RESOLVED 2026-05-14 (Stream D)** — shipped read-only caregiver-only view (`PatientCareTeamScreen`); doctor section suppressed until Phase 2. Backend `care-team` lambda allows patient self-access via `patients.user_id` + accepts UUID or short `CL-XXXXXX` form; response now serializes `isPrimary`. Maestro `pt_v2_22_patient_care_team.yaml` PASS. See `journeys_non_voice.md` PT-V2-22.
 - **PT-V2-14:** Cost-prohibitive Bedrock test (sustained Sonnet load). Either (a) accept the ~$50–100 one-time cost for a live capacity validation, (b) substitute with a synthetic load test against a Bedrock mock, or (c) defer to GA capacity testing. Recommend (a).
 
 ### 4.5 Production-strip audit of debug-only code
@@ -435,7 +435,7 @@ These need product/leadership decisions before plan execution:
 1. **Beta region:** Bengaluru-only? Or wider Karnataka? Or all India?
 2. **Beta cohort size:** 10 is the target — flex to 5 or 20?
 3. ~~**F26b reminder UX:** keep manual editing in v2.0, make voice-only, or skip reminders for beta?~~ **RESOLVED 2026-05-15 → voice-only.** Manual UI removed; caregiver_onboarding voice protocol is the canonical reminder-config surface (handler.ts T-V2-302 → protocol_persister UPSERT on parameter_configs).
-4. **PT-V2-22 (patient Care Team view):** ship a caregiver-only view in v2.0, or defer to Phase 2 with the doctor portal? Recommend defer — Care Team without a doctor isn't a complete experience.
+4. ~~**PT-V2-22 (patient Care Team view):** ship a caregiver-only view in v2.0, or defer to Phase 2 with the doctor portal?~~ **RESOLVED 2026-05-14 (Stream D) → shipped caregiver-only view.** Read-only `PatientCareTeamScreen` ships in v2.0; doctor section suppressed until Phase 2. See `journeys_non_voice.md` PT-V2-22 (PASS) and the §4.4 entry below.
 5. ~~**Crash reporting tool:** Sentry or Firebase Crashlytics?~~ **RESOLVED 2026-05-12 → Firebase Crashlytics.** Wired into the Android app 2026-05-17 (see §3.1).
 6. **Final sender domain for SES:** `no-reply@matika.health`? `support@matika.in`?
 7. **iOS in v2.1:** firm commit, or revisit based on beta signal?
