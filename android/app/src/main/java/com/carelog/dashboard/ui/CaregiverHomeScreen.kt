@@ -100,6 +100,14 @@ fun CaregiverHomeScreen(
     onNavigateToSettings: () -> Unit = {},
     onNavigateToThresholds: () -> Unit = {},
     onNavigateToTrends: () -> Unit = {},
+    // Past-readings chronological list. Distinct from Trends (which
+    // shows time-series charts + the 10 most-recent rows per vital).
+    // History is the unified cross-vital scroll with recorder identity
+    // + sync status — useful for "when did Jane log her BP yesterday?"
+    // audit questions. HistoryViewModel resolves
+    // user.linkedPatientId for caregivers, so it shows the patient's
+    // observations.
+    onNavigateToHistory: () -> Unit = {},
     /**
      * PR-3 nav-result bridge: when a child screen (Add-Patient form OR
      * voice onboarding) finishes successfully, it writes
@@ -148,6 +156,16 @@ fun CaregiverHomeScreen(
                     )
                 },
                 actions = {
+                    IconButton(
+                        onClick = onNavigateToHistory,
+                        modifier = Modifier
+                            .testTag("caregiver_home_history")
+                            .semantics {
+                                contentDescription = "View past readings"
+                            }
+                    ) {
+                        Icon(Icons.Default.History, contentDescription = null)
+                    }
                     IconButton(
                         onClick = onNavigateToSettings,
                         modifier = Modifier.semantics {

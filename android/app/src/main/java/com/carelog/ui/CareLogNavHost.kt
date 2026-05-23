@@ -574,6 +574,7 @@ fun CareLogNavHost() {
                 // session), so the manual-edit card is gone.
                 onNavigateToThresholds = { navController.navigate(CareLogRoutes.THRESHOLDS) },
                 onNavigateToTrends = { navController.navigate(CareLogRoutes.TRENDS) },
+                onNavigateToHistory = { navController.navigate(CareLogRoutes.HISTORY) },
                 // PR-3 — wire navController so the screen can observe
                 // its own SavedStateHandle for `patient_added` and
                 // auto-refresh after Add Patient.
@@ -883,6 +884,10 @@ fun CareLogNavHost() {
                 onNavigateToSettings = {
                     navController.navigate(CareLogRoutes.SETTINGS)
                 },
+                // Past-readings view — the patient can scroll back through
+                // their own observations. HistoryScreen handles persona
+                // resolution internally.
+                onNavigateToHistory = { navController.navigate(CareLogRoutes.HISTORY) },
                 // F4 — manual vital entry. Routes already exist further
                 // down the file; this just hooks the home tiles up to them.
                 onNavigateToBloodPressure = { navController.navigate(CareLogRoutes.BLOOD_PRESSURE) },

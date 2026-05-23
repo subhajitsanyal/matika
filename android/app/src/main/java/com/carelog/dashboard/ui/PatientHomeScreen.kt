@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.Air
 import androidx.compose.material.icons.filled.Bloodtype
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.MonitorWeight
 import androidx.compose.material.icons.filled.Mic
@@ -87,6 +88,13 @@ data class LastSessionSummary(
 fun PatientHomeScreen(
     onStartConversation: () -> Unit = {},
     onNavigateToSettings: () -> Unit = {},
+    // Past-readings view. HistoryScreen is persona-aware
+    // (HistoryViewModel.kt:70 resolves user.linkedPatientId ?: user.userId,
+    // so the patient sees their own observations). The legacy
+    // DashboardScreen had this wired; PATIENT_HOME (the v2 patient home)
+    // didn't carry it over, leaving the patient with no way to scroll
+    // back through their own logged vitals.
+    onNavigateToHistory: () -> Unit = {},
     onNavigateToBloodPressure: () -> Unit = {},
     onNavigateToGlucose: () -> Unit = {},
     onNavigateToTemperature: () -> Unit = {},
@@ -125,6 +133,12 @@ fun PatientHomeScreen(
             TopAppBar(
                 title = { Text("CareLog") },
                 actions = {
+                    IconButton(
+                        onClick = onNavigateToHistory,
+                        modifier = Modifier.testTag("patient_home_history"),
+                    ) {
+                        Icon(Icons.Default.History, contentDescription = "Past readings")
+                    }
                     IconButton(onClick = onNavigateToSettings) {
                         Icon(Icons.Default.Settings, contentDescription = "Settings")
                     }
