@@ -152,14 +152,20 @@ exports.handler = async (event) => {
   try {
     dbClient = await createDbConnection();
 
-    // Verify relative owns this patient
+    // Verify caregiver owns this patient.
+    //
+    // F52 sub-issue 2 (2026-05-18): callers from the caregiver app send
+    // the patient short-code (CL-XXXXXX) from custom:linked_patient_id,
+    // not the patients.id UUID. The old `$1::uuid` cast crashed with
+    // 22P02 on non-UUID input. Accept either format — same shape as
+    // the invite-attendant fix.
     const accessCheck = await dbClient.query(
       `SELECT p.id as patient_db_id, p.patient_id, up.name as patient_name, ur.name as relative_name
        FROM patients p
        JOIN persona_links pl ON pl.patient_id = p.id
        JOIN users up ON up.id = p.user_id
        JOIN users ur ON ur.cognito_sub = $2
-       WHERE p.id = $1::uuid
+       WHERE (p.patient_id = $1 OR p.id::text = $1)
          AND pl.linked_user_id = ur.id
          AND pl.relationship = 'caregiver'
          AND pl.is_active = true`,
@@ -180,14 +186,22 @@ exports.handler = async (event) => {
     const patientName = accessCheck.rows[0].patient_name;
     const relativeName = accessCheck.rows[0].relative_name;
 
-    // Find the member to remove
+    // Find the member to remove.
+    //
+    // v2 reality: there is no `attendant` persona. invite-attendant always
+    // writes persona_links.relationship='caregiver' (and users.persona_type
+    // ='caregiver'). The doctor flow is Phase 2 but the enum value is
+    // already populated for forward-compat. Excluding `is_primary=true`
+    // protects the primary caregiver row (the inviter) from being
+    // removed via this lambda.
     const memberQuery = await dbClient.query(
       `SELECT u.id, u.email, u.name, u.cognito_sub, pl.relationship, pl.id as link_id
        FROM persona_links pl
        JOIN users u ON u.id = pl.linked_user_id
        WHERE pl.patient_id = $1
          AND u.id = $2
-         AND pl.relationship IN ('attendant', 'doctor')
+         AND pl.relationship IN ('caregiver', 'doctor')
+         AND pl.is_primary = false
          AND pl.is_active = true`,
       [patientDbId, memberId]
     );
@@ -211,9 +225,20 @@ exports.handler = async (event) => {
         [member.link_id]
       );
 
-      // 2. Deactivate user record
+      // 2. Deactivate user record.
+      //
+      // F53 (2026-05-18): the v2 `users` schema has no `deactivated_at`
+      // column — only `is_active`, `created_at`, `updated_at`,
+      // `last_login_at`. The previous UPDATE referenced a column from a
+      // pre-v2 schema, so any actual invocation of this lambda would
+      // have thrown `42703 column "deactivated_at" does not exist` and
+      // rolled the whole removal back. The DELETE route was masked as a
+      // MOCK in API Gateway (also F53) so the lambda was never invoked
+      // and the bug went undetected. If a future migration restores
+      // `deactivated_at`, add it back here (or fold via `updated_at`
+      // which the row gets implicitly).
       await dbClient.query(
-        `UPDATE users SET is_active = false, deactivated_at = NOW() WHERE id = $1`,
+        `UPDATE users SET is_active = false, updated_at = NOW() WHERE id = $1`,
         [member.id]
       );
 

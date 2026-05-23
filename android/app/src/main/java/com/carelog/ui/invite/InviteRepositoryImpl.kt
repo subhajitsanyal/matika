@@ -52,7 +52,9 @@ class InviteRepositoryImpl @Inject constructor() : InviteRepository {
             SendInviteResponse(
                 inviteId = json.optString("inviteId", ""),
                 message = json.optString("message", "Invitation sent successfully"),
-                expiresAt = json.optString("expiresAt", "")
+                expiresAt = json.optString("expiresAt", ""),
+                emailStatus = json.optString("emailStatus", "").ifBlank { null },
+                emailDeliveryError = json.optString("emailDeliveryError", "").ifBlank { null }
             )
         } else {
             throw Exception("Failed to send invitation: HTTP ${response.code} $responseBody")

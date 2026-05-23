@@ -451,36 +451,57 @@ exports.handler = async (event) => {
       [inviteId]
     );
 
-    // Send credentials email
+    // Send credentials email.
+    //
+    // F52 sub-issue 4 (2026-05-18): all DB writes above are already
+    // committed by this point. If SES fails (IAM gap on
+    // VerifyEmailIdentity, sandbox lookup error, send throttling),
+    // we still want to return 201 with emailStatus=delivery_failed
+    // so the caregiver UX can render "Invite created, email delivery
+    // pending" — the invite IS valid; the credential email is the
+    // only side-effect that didn't land. Treating it as a 500
+    // (the previous behavior, via the outer try/catch) misled the
+    // caregiver and left an "accepted" invite + Cognito user
+    // orphaned from the UI.
     let emailStatus = "sent";
+    let emailDeliveryError = null;
     if (body.email) {
-      // Check if recipient is verified in SES (sandbox mode)
-      const verifyResult = await sesClient.send(
-        new GetIdentityVerificationAttributesCommand({
-          Identities: [body.email],
-        })
-      );
-      const status =
-        verifyResult.VerificationAttributes?.[body.email]?.VerificationStatus;
+      try {
+        // Check if recipient is verified in SES (sandbox mode)
+        const verifyResult = await sesClient.send(
+          new GetIdentityVerificationAttributesCommand({
+            Identities: [body.email],
+          })
+        );
+        const status =
+          verifyResult.VerificationAttributes?.[body.email]?.VerificationStatus;
 
-      if (status === "Success") {
-        await sendInviteEmail(
-          body.email,
-          inviteeName,
-          patientName,
-          password,
-          downloadLink
+        if (status === "Success") {
+          await sendInviteEmail(
+            body.email,
+            inviteeName,
+            patientName,
+            password,
+            downloadLink
+          );
+          emailStatus = "sent";
+        } else {
+          // Recipient not verified — trigger verification email first
+          await sesClient.send(
+            new VerifyEmailIdentityCommand({ EmailAddress: body.email })
+          );
+          console.log(
+            `SES verification sent to ${body.email} (sandbox mode). Credentials email will be sent after verification.`
+          );
+          emailStatus = "verification_pending";
+        }
+      } catch (sesError) {
+        emailStatus = "delivery_failed";
+        emailDeliveryError = sesError.name || sesError.code || "SESError";
+        console.error(
+          `SES failed for ${body.email} (emailStatus=delivery_failed); invite was still created. ` +
+          `Cause: ${emailDeliveryError}: ${sesError.message}`
         );
-        emailStatus = "sent";
-      } else {
-        // Recipient not verified — trigger verification email first
-        await sesClient.send(
-          new VerifyEmailIdentityCommand({ EmailAddress: body.email })
-        );
-        console.log(
-          `SES verification sent to ${body.email} (sandbox mode). Credentials email will be sent after verification.`
-        );
-        emailStatus = "verification_pending";
       }
     }
 
@@ -508,10 +529,17 @@ exports.handler = async (event) => {
       console.warn("Failed to send admin notification:", notifyErr.message);
     }
 
-    const message =
-      emailStatus === "verification_pending"
-        ? "Account created. A verification email has been sent to the caregiver. Once verified, they will receive their login credentials."
-        : "Invitation sent successfully. The caregiver will receive their login credentials by email.";
+    let message;
+    if (emailStatus === "verification_pending") {
+      message =
+        "Account created. A verification email has been sent to the caregiver. Once verified, they will receive their login credentials.";
+    } else if (emailStatus === "delivery_failed") {
+      message =
+        "Invite created, but the credentials email could not be delivered. Please share the login details manually or retry from the care team screen.";
+    } else {
+      message =
+        "Invitation sent successfully. The caregiver will receive their login credentials by email.";
+    }
 
     return {
       statusCode: 201,
@@ -520,6 +548,7 @@ exports.handler = async (event) => {
         inviteId,
         message,
         emailStatus,
+        emailDeliveryError,
         expiresAt: expiresAt.toISOString(),
       }),
     };

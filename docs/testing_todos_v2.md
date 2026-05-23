@@ -605,6 +605,39 @@ The Stream B hardening kept the patient's `users` row soft-deleted (`is_active=f
 
 **Owner:** `android` (fix shipped) + `qa-testing` (helper flow shipped). Closed.
 
+### F53 — DELETE /patients/{patientId}/team/{memberId} API GW route was a deliberate MOCK stub + `users.deactivated_at` column missing from v2 schema → remove-team-member feature was non-functional end-to-end (RESOLVED — verified live 2026-05-18)
+
+**Severity:** High. The caregiver-facing Manage Care Team "Remove" button was a server-side no-op (route returned 200 unconditionally, lambda never invoked, persona_link.is_active stayed `true`, no `audit_log` row, Cognito user not disabled). Even if the route had been wired, the lambda would have crashed on the `UPDATE users SET deactivated_at = NOW()` step (42703 column does not exist; v2 `users` schema has only `id, cognito_sub, email, name, phone_number, persona_type, is_active, created_at, updated_at, last_login_at`).
+
+**Owner:** `backend` (lambda) + `infra` (terraform).
+
+**Status:** Fixed and verified end-to-end on staging 2026-05-18.
+
+**Discovery sequence.** Surfaced while writing `.maestro/flows/cg_v2_care_team_remove.yaml`. The flow appeared to PASS on Maestro `notVisible` assertions, but the post-run staging screenshot showed the row still in the list (count climbed from 6 to 7 instead of staying at 6). RDS confirmed `persona_links.is_active=true`, no `audit_log` REMOVE_MEMBER row written. CloudWatch showed zero new invocations of `carelog-staging-remove-team-member`. Tracing API Gateway revealed the integration was `type=MOCK` with `requestTemplates = {"application/json" = "{\"statusCode\": 200}"}`; the terraform comment read `"DELETE /patients/{patientId}/team/{memberId} — remove-team-member (kept as MOCK)"`. A direct `aws lambda invoke` against the lambda (bypassing API GW) THEN failed with `42703 column "deactivated_at" does not exist`, revealing the second bug.
+
+**Fixes (in order applied).**
+1. `backend/lambdas/remove-team-member/index.js:230` — replaced `UPDATE users SET is_active = false, deactivated_at = NOW()` with `UPDATE users SET is_active = false, updated_at = NOW()`. Redeployed via CLI (CodeSha `VMloYBB0JkaOZsfmf+OybFpe+K6m80iZtRcw3pSex9I=`).
+2. `infrastructure/terraform/modules/api_gateway/main.tf:461-481` — flipped `aws_api_gateway_integration.team_member_delete` from MOCK to AWS_PROXY pointing at `var.remove_team_member_invoke_arn`; dropped the obsolete `aws_api_gateway_method_response.team_member_delete_200` + `aws_api_gateway_integration_response.team_member_delete_200`; added `aws_api_gateway_integration.team_member_delete.id` to the deployment trigger. New `remove_team_member_invoke_arn` variable on the api_gateway module + wiring in root `main.tf` (the lambda module already had the output at line 206).
+3. Applied with `terraform apply -refresh=false -target=...team_member_delete -target=...method_response -target=...integration_response -target=...deployment.main -target=...stage.main` from `infrastructure/terraform/environments/staging/`. First apply destroyed the MOCK integration but failed at `aws_api_gateway_deployment.main` with `BadRequestException: No integration defined for method` because the new AWS_PROXY integration's creation was deferred behind dependent lambdas in the graph. Recovered via `terraform taint` + `terraform apply -target=...team_member_delete` to recreate the integration cleanly, then `aws apigateway create-deployment --rest-api-id 3mni7nx5bf --stage-name staging` to push the change live.
+
+**Live verification (2026-05-18, via real Android tap, not direct invoke).**
+- Maestro flow `cg_v2_care_team_remove.yaml` invited "CT Remove 518g" then drove the remove leg through the now-real API GW path.
+- CloudWatch `RequestId 3da7c41a-a63b-411e-8b3d-531f821d9fc4`: `Remove team member request received → Team member removed: sanyalsubhajit2010+atinv518g@gmail.com (caregiver) from patient CL-1RK0CD` (1286ms billed).
+- RDS: `users.is_active=false`; `persona_links` row `4c1d3e30-f67d-4e67-a41b-a834030bd630`, `relationship=caregiver`, `is_active=false`, `updated_at=2026-05-19 05:31:46.788121+00`; `audit_log` row `4d54ffb1-53e0-4f14-adc6-3dddc9e7035e`, `action=REMOVE_MEMBER`, `resource_type=caregiver`, `member_email=sanyalsubhajit2010+atinv518g@gmail.com`.
+- Cognito: user `Enabled=false, UserStatus=CONFIRMED`.
+- UI screenshot `docs/evidence/cg_v2_care_team_remove_real_path_pass_20260518.png`: Caregivers count dropped 7 → 6.
+- A separate `WARN: Failed to send removal email … noreply@carelog.com … is not verified` log line surfaces because the `From` identity isn't in SES; the lambda wraps `sendRemovalEmail` in its own try/catch so the structural removal chain is unaffected. Separate from F52 sub-issue 3 (which is the IAM gap on `ses:VerifyEmailIdentity`); this is the sender-verification gap tracked under Stream D #5.
+
+**Lambda hash drift fallout.** The `terraform apply` pulled in `aws_lambda_function.bedrock_router`, `create_patient`, `create_patient_from_voice`, `remove_team_member` for repackage + upload (`source_code_hash` changed for all four). Each was re-uploaded from the current in-tree source. Verified clean — all four had their canonical fixes in the in-tree code per recent git commits (`26d9f7b F44`, `b3a5308 F43`, `c7394ac F42`, `55ba154 F36`). Belt-and-suspenders CLI re-deploy of remove-team-member ran post-apply to guarantee the fix is the live code.
+
+**Dev parity (2026-05-18 same session).** Audited dev: API GW `DELETE /patients/{patientId}/team/{memberId}` was the same MOCK stub, `carelog-dev-remove-team-member` CodeSha matched staging pre-fix (`A+Ui/hQayj/…`, last modified 2026-05-03), dev `users` schema also has no `deactivated_at` column. Same `terraform apply -refresh=false -target=…team_member_delete…` against `environments/dev/`; this time no deployment-target was passed, so the apply completed cleanly without the staging BadRequestException + taint dance. Pushed stage deployment id `qyqla8`; CLI re-deployed `carelog-dev-remove-team-member` to live CodeSha `VMloYBB0JkaOZsfmf+OybFpe+K6m80iZtRcw3pSex9I=` (same as staging). Smoke-tested with John CG cognito sub + Jane's `CL-63NRGO` short-code + fake memberId UUID → 404 "Team member not found" (RequestId `d9160bf0-571b-43a8-835d-2177502408cd`, clean CloudWatch, no 22P02). Both fixes live in dev.
+
+**Open follow-ups.**
+- The `From: noreply@carelog.com` SES sender-verification gap → removal-email + invite-credentials-email still don't deliver in sandbox. Tracked under Stream D #5 (sender domain decision) in `v2_launch_plan.md`. The Maestro flows pass without delivery; UX renders the `delivery_failed` warning gracefully.
+- Maestro flow false-positive lesson: `notVisible` can spuriously pass during a list re-render. Use a DB-side or count-based check (the screenshot showed "Caregivers count" header drop from 7 to 6) as a stricter signal. Added to `maestro_lessons.md` (consider).
+
+---
+
 ### F52 — invite-attendant / remove-team-member / invite-doctor: `'relative'` enum filter + patient short-code → UUID cast crash + SES IAM gap + UX false-500 (stacked bug chain — 3 lambdas; 2 fixed + deployed, 1 fixed code-only)
 
 Discovered during Item D of the 2026-05-17 evening bench (Manage Care Team E2E). The CG-V2-<NN> Maestro flow `cg_v2_invite_attendant_email.yaml` drove caregiver login → Settings → Invite Attendant → Send. Three sequential bug-stack hits before backend chain landed:
@@ -625,16 +658,25 @@ Discovered during Item D of the 2026-05-17 evening bench (Manage Care Team E2E).
 - Cognito user `b1333d7a-...` — UserStatus=CONFIRMED, Enabled=true, email_verified=true, name="Test Attendant CG-V2", custom:persona_type=caregiver, Groups=[`caregivers`].
 
 **Status of each sub-fix:**
-1. ✅ DEPLOYED to staging invite-attendant (commit `<this>`); also code-fixed in invite-doctor + remove-team-member (code-only — not deployed this session).
-2. ✅ DEPLOYED to staging invite-attendant. invite-doctor + remove-team-member share the same shape; their fix is identical-pattern but not yet exercised → file follow-up for the next session that touches doctor portal or remove-team-member.
+1. ✅ DEPLOYED to staging invite-attendant (2026-05-17). ✅ DEPLOYED to staging `remove-team-member` (2026-05-18, CodeSha `mn7s8ynrN5oGPePzJ7VALoMOYwBpOrUIdKbY+U27toI=`) — see 2026-05-18 follow-up below. invite-doctor still code-fixed only (Phase 2).
+2. ✅ DEPLOYED to staging invite-attendant. ✅ DEPLOYED to staging `remove-team-member` (2026-05-18) — accessCheck predicate is now `(p.patient_id = $1 OR p.id::text = $1)`. Live smoke verified: short-code patientId yields 403 cleanly (was 500/22P02 pre-fix). invite-doctor still pending Phase 2.
 3. ⏳ DEFERRED. IAM fix needs terraform apply on `carelog-staging-lambda-rds-ses` role. Wire-target: pre-prod-cutover (or skip entirely if SES production access is granted, which eliminates the VerifyEmailIdentity call path).
-4. ⏳ DEFERRED. Lambda code change to catch SES errors and return 201 + `emailStatus=delivery_failed`. Required UX polish before beta; not strictly beta-blocking if SES production access lands in time.
+4. ✅ DEPLOYED to staging invite-attendant (2026-05-18, CodeSha `Eafu65C3GOkVCy6vlHft5vdLEI9phWak/b2g/F2BkMg=`). The SES block (verify-attributes / VerifyEmailIdentity / send) is now wrapped in its own try/catch. On any SES failure the lambda returns 201 with `emailStatus=delivery_failed` + `emailDeliveryError=<name>` + a fallback message; outer 500 path is reserved for true DB / Cognito failures. Android side: `SendInviteResponse` carries `emailStatus`/`emailDeliveryError`; `InviteAttendantUiState.Success` carries `emailStatus` + `message`; `InviteAttendantScreen` mounts the `InviteSentDialog` with a warning-icon variant + `invite_sent_dialog_delivery_failed` testTag instead of navigating away silently on the `delivery_failed` path. Live E2E verification deferred to next bench (requires either real SES failure or a temporary IAM block to exercise the path).
+
+**2026-05-18 follow-up (testing-todos-v2-phase7 session) — v2 vocab cleanup, exposed while deploying sub-issues 1+2 to remove-team-member:**
+
+- `remove-team-member/index.js:196` previously filtered `pl.relationship IN ('attendant', 'doctor')`. In v2 there is no `attendant` persona — `invite-attendant/index.js:160,173` always writes `users.persona_type='caregiver'` + `persona_links.relationship='caregiver'`. The filter never matched any v2 row, so removing a freshly-invited caregiver was structurally impossible. Fix: filter is now `IN ('caregiver', 'doctor') AND is_primary = false` so the primary caregiver (the inviter) is structurally non-removable via this lambda.
+- Caregiver-side `CareTeamScreen.kt` was iterating `uiState.careTeam.attendants` (always empty in v2 — the lambda returns `caregivers: []`, no `attendants` key). The "Attendants" section header rendered with a count of 0 forever. Replaced with a single "Caregivers" section that iterates `careTeam.caregivers`; legacy `attendants` + "Family Members" sections dropped from the screen. Remove eligibility now: caregivers + doctors, EXCEPT primary caregiver (`onRemove=null` upstream).
+- Per-row testTags added: `care_team_member_<id>`, `care_team_member_name_<id>`, `care_team_member_email_<id>`, `care_team_member_role_<id>`, `care_team_member_primary_<id>`, `care_team_member_remove_<id>`, plus list-level `care_team_list` + remove dialog `care_team_remove_confirm` / `care_team_remove_cancel`.
 
 **Owner:** `backend` (lambdas + IAM) + `qa-testing` (CG-V2-<NN> journey rows).
 
-**New Maestro flow:** `.maestro/flows/cg_v2_invite_attendant_email.yaml` (single-device invite leg; depends on F52-fixed lambda). `invite_attendant_email`, `invite_attendant_phone`, `invite_attendant_method_email`, `invite_attendant_method_sms` testTags added to `android/app/src/main/java/com/carelog/ui/invite/InviteAttendantScreen.kt`.
+**New Maestro flows:**
+- `.maestro/flows/cg_v2_invite_attendant_email.yaml` (single-device invite leg; depends on F52-fixed lambda). `invite_attendant_email`, `invite_attendant_phone`, `invite_attendant_method_email`, `invite_attendant_method_sms` testTags in `InviteAttendantScreen.kt`.
+- `.maestro/flows/cg_v2_care_team_list.yaml` (2026-05-18, this session) — invites + asserts the new caregiver row + the inviter's "Primary" badge render in `CareTeamScreen`. Handles the F52 sub-issue 4 `delivery_failed` dialog by waiting on visible-text "Invite Created" + tapping Done (the `invite_sent_dialog_delivery_failed` Icon testTag is hidden by AlertDialog's `mergeDescendants` semantics — added `invite_sent_dialog_delivery_failed_title` Text testTag for future durability, plus a fallback visible-text wait).
+- `.maestro/flows/cg_v2_care_team_remove.yaml` (2026-05-18, same session) — invites + lists + taps `Remove <name>` (matches IconButton contentDescription) + confirms via anchored regex `^Remove$` (the dialog's confirm Button testTag also gets eaten by `mergeDescendants`). End-to-end via the real API GW path post-F53.
 
-**Cross-references:** `docs/journeys_non_voice.md` should grow a CG-V2-<NN> row "Caregiver invites attendant by email" with the evidence cited above and the Sub-issue 3/4 caveats. Done in same commit as F52 entry.
+**Cross-references:** `docs/journeys_non_voice.md` grew CG-V2-19 (status update), CG-V2-20 (care-team list), CG-V2-21 (remove leg) rows with cited evidence + the Sub-issue 3 caveat. Done in same commit as this F52/F53 update.
 
 ### Bench scope NOT covered (callouts for next session)
 

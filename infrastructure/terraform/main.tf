@@ -131,6 +131,7 @@ module "api_gateway" {
   invite_doctor_invoke_arn            = module.lambda.invite_doctor_invoke_arn
   accept_invite_invoke_arn            = module.lambda.accept_invite_invoke_arn
   care_team_invoke_arn                = module.lambda.care_team_invoke_arn
+  remove_team_member_invoke_arn       = module.lambda.remove_team_member_invoke_arn
   patient_summary_invoke_arn          = module.lambda.patient_summary_invoke_arn
   get_observations_invoke_arn         = module.lambda.get_observations_invoke_arn
   fetch_session_config_invoke_arn     = module.lambda.fetch_session_config_invoke_arn

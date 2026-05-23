@@ -1,0 +1,112 @@
+# Manage Care Team E2E — list / rendering leg (companion to
+# cg_v2_invite_attendant_email.yaml).
+#
+# Block 3 / §3.2 of docs/pre-beta-todos.md — "UI rendering of the
+# new-attendant row in caregiver CareTeamScreen" was untested because
+# the rows had no testTags. After the F52 sub-issue 1+2 redeploy of
+# remove-team-member and the v2 vocab fix in CareTeamScreen.kt (the
+# screen now iterates `caregivers`, not the legacy empty `attendants`
+# array), this flow asserts that an invited caregiver lands in the
+# rendered list with its email visible.
+#
+# Sequence:
+#   1. Caregiver login.
+#   2. Settings → Invite Attendant → fill form → Send.
+#   3. After popBackStack, Settings → Manage Care Team.
+#   4. Assert the rendered list contains the invitee's name + email.
+#
+# The screen-level testTag is `care_team_list`. Each member row is
+# `care_team_member_<users.id>` (UUID), with `_name_`, `_email_`,
+# `_role_`, `_primary_`, `_remove_` variants for sub-elements. Since
+# we don't know the new caregiver's UUID in advance, the asserts here
+# target the rendered text directly.
+#
+# Env vars (same shape as cg_v2_invite_attendant_email):
+#   MATIKA_CAREGIVER_EMAIL
+#   MATIKA_CAREGIVER_PASSWORD
+#   MATIKA_INVITE_ATTENDANT_EMAIL — fresh +atinvNNN@gmail.com (per run)
+#   MATIKA_INVITE_ATTENDANT_NAME  — e.g. "Test Attendant CT-list"
+#
+# Run:
+#   source ~/.matika-test-creds.env
+#   export MATIKA_INVITE_ATTENDANT_EMAIL=sanyalsubhajit2010+atinvNNN@gmail.com
+#   export MATIKA_INVITE_ATTENDANT_NAME="Care Team List Attendant"
+#   scripts/maestro-run.sh --no-install cg_v2_care_team_list
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+# Caregiver login
+- extendedWaitUntil: { visible: { id: login_email }, timeout: 15000 }
+- tapOn: { id: login_email }
+- inputText: ${MATIKA_CAREGIVER_EMAIL}
+- tapOn: { id: login_password }
+- inputText: ${MATIKA_CAREGIVER_PASSWORD}
+- hideKeyboard
+- tapOn: { id: login_button }
+
+# Caregiver dashboard reachable
+- extendedWaitUntil: { visible: { id: add_patient_voice_fab }, timeout: 60000 }
+
+# Open settings
+- tapOn:
+    text: "Open settings"
+    optional: false
+
+# Invite leg — same as cg_v2_invite_attendant_email
+- extendedWaitUntil: { visible: { id: settings_action_invite_attendant }, timeout: 15000 }
+- tapOn: { id: settings_action_invite_attendant }
+
+- extendedWaitUntil: { visible: { id: invite_attendant_name }, timeout: 10000 }
+- tapOn: { id: invite_attendant_name }
+- inputText: ${MATIKA_INVITE_ATTENDANT_NAME}
+- hideKeyboard
+
+- tapOn: { id: invite_attendant_method_email }
+
+- tapOn: { id: invite_attendant_email }
+- inputText: ${MATIKA_INVITE_ATTENDANT_EMAIL}
+- hideKeyboard
+
+- tapOn: { id: invite_attendant_send }
+
+# F52 sub-issue 3 (SES IAM gap on carelog-staging-lambda-rds-ses missing
+# ses:VerifyEmailIdentity) is still deferred at the time this flow was
+# written, so every invite triggers the delivery_failed branch of
+# sub-issue 4 and the warning-icon InviteSentDialog mounts. Wait for it
+# explicitly, then dismiss with Done. If sub-issue 3 lands later (or
+# SES production access is granted, removing the VerifyEmailIdentity
+# call path entirely), this dialog will stop mounting — this step will
+# need to become an optional/conditional wait and the assertion below
+# will be reached directly. Track that as a flow-revisit follow-up.
+- extendedWaitUntil:
+    visible: "Invite Created"
+    timeout: 15000
+- tapOn:
+    text: "Done"
+
+- extendedWaitUntil:
+    visible:
+      id: settings_action_invite_attendant
+    timeout: 30000
+
+# Manage Care Team — list leg
+- tapOn: { id: settings_action_manage_care_team }
+
+- extendedWaitUntil: { visible: { id: care_team_list }, timeout: 15000 }
+
+# Assert the invited caregiver shows up in the list. Maestro's text
+# assertion does a regex match; the email is the most stable check
+# because the name is user-supplied and could legally collide. Use
+# the per-row email testTag once the UUID is known for tighter
+# assertion; for the smoke version, asserting visible text is enough.
+- assertVisible: ${MATIKA_INVITE_ATTENDANT_NAME}
+- assertVisible: ${MATIKA_INVITE_ATTENDANT_EMAIL}
+
+# Confirm the inviter (primary caregiver) is also rendered with a
+# Primary badge — proves the new is_primary path lights up.
+- assertVisible:
+    id: care_team_list
+- assertVisible: "Primary"

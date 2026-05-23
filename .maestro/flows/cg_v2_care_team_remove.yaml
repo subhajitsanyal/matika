@@ -1,0 +1,114 @@
+# Manage Care Team E2E — remove leg.
+#
+# Block 3 / §3.2 of docs/pre-beta-todos.md — "Manage Care Team —
+# remove-team-member" was untested because (a) the remove-team-member
+# lambda had the v1 vocab + short-code-uuid-cast bug, (b) the caregiver
+# CareTeamScreen iterated the legacy empty `attendants` array. Both
+# were fixed in the testing-todos-v2-phase7 session (2026-05-18). This
+# flow exercises the remove leg end-to-end against the fixed stack:
+#
+#   1. Caregiver login → Settings → Invite Attendant → fill + Send.
+#   2. Dismiss the F52 sub-issue 4 delivery_failed dialog.
+#   3. Settings → Manage Care Team. Assert the new row is present.
+#   4. Tap the Remove icon for that row (targets the IconButton's
+#      contentDescription "Remove <name>").
+#   5. Confirm in the AlertDialog (care_team_remove_confirm testTag).
+#   6. Assert the row disappears from the list (Maestro `notVisible`).
+#
+# Env vars (use a UNIQUE attendant email + name per run — the previous
+# row will collide on (patient_id, linked_user_id) or the cognito_sub
+# constraint):
+#   MATIKA_CAREGIVER_EMAIL
+#   MATIKA_CAREGIVER_PASSWORD
+#   MATIKA_INVITE_ATTENDANT_EMAIL — sanyalsubhajit2010+atinvNNN@gmail.com
+#   MATIKA_INVITE_ATTENDANT_NAME  — e.g. "CT Remove NNN"
+#
+# Run:
+#   source ~/.matika-test-creds.env
+#   export MATIKA_INVITE_ATTENDANT_EMAIL=sanyalsubhajit2010+atinv518e@gmail.com
+#   export MATIKA_INVITE_ATTENDANT_NAME="CT Remove 518e"
+#   scripts/maestro-run.sh --no-install cg_v2_care_team_remove
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+# Caregiver login
+- extendedWaitUntil: { visible: { id: login_email }, timeout: 15000 }
+- tapOn: { id: login_email }
+- inputText: ${MATIKA_CAREGIVER_EMAIL}
+- tapOn: { id: login_password }
+- inputText: ${MATIKA_CAREGIVER_PASSWORD}
+- hideKeyboard
+- tapOn: { id: login_button }
+
+# Caregiver dashboard reachable
+- extendedWaitUntil: { visible: { id: add_patient_voice_fab }, timeout: 60000 }
+
+# Open settings
+- tapOn:
+    text: "Open settings"
+    optional: false
+
+# Invite leg (same as cg_v2_care_team_list)
+- extendedWaitUntil: { visible: { id: settings_action_invite_attendant }, timeout: 15000 }
+- tapOn: { id: settings_action_invite_attendant }
+
+- extendedWaitUntil: { visible: { id: invite_attendant_name }, timeout: 10000 }
+- tapOn: { id: invite_attendant_name }
+- inputText: ${MATIKA_INVITE_ATTENDANT_NAME}
+- hideKeyboard
+
+- tapOn: { id: invite_attendant_method_email }
+
+- tapOn: { id: invite_attendant_email }
+- inputText: ${MATIKA_INVITE_ATTENDANT_EMAIL}
+- hideKeyboard
+
+- tapOn: { id: invite_attendant_send }
+
+# F52 sub-issue 4 delivery_failed dialog (sub-issue 3 IAM gap still
+# deferred → dialog always mounts on staging right now)
+- extendedWaitUntil:
+    visible: "Invite Created"
+    timeout: 15000
+- tapOn:
+    text: "Done"
+
+# Back on Settings
+- extendedWaitUntil:
+    visible:
+      id: settings_action_invite_attendant
+    timeout: 30000
+
+# Manage Care Team
+- tapOn: { id: settings_action_manage_care_team }
+- extendedWaitUntil: { visible: { id: care_team_list }, timeout: 15000 }
+- assertVisible: ${MATIKA_INVITE_ATTENDANT_NAME}
+
+# Tap the Remove icon for the just-invited row. IconButton has
+# contentDescription="Remove ${member.name}" (CareTeamScreen.kt:357).
+# Maestro matches contentDescription via text= on Android.
+- tapOn:
+    text: "Remove ${MATIKA_INVITE_ATTENDANT_NAME}"
+
+# Confirm dialog. AlertDialog's mergeDescendants semantics mean the
+# testTag on the inner Button doesn't surface separately, so wait on
+# the dialog title text and tap the Remove button by anchored regex
+# (^Remove$ so we don't match the "Remove <name>?" title).
+- extendedWaitUntil:
+    visible: "Remove ${MATIKA_INVITE_ATTENDANT_NAME}\\?"
+    timeout: 10000
+- tapOn:
+    text: "^Remove$"
+
+# After the lambda call returns, the screen refreshes via loadCareTeam().
+# Assert the row no longer renders.
+- extendedWaitUntil:
+    notVisible: ${MATIKA_INVITE_ATTENDANT_NAME}
+    timeout: 30000
+
+# Sanity: list is still mounted (we didn't accidentally navigate away)
+- assertVisible:
+    id: care_team_list

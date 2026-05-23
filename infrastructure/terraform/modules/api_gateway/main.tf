@@ -458,7 +458,16 @@ resource "aws_api_gateway_integration" "consent_delete" {
   uri                     = var.consent_invoke_arn
 }
 
-# DELETE /patients/{patientId}/team/{memberId} — remove-team-member (kept as MOCK)
+# DELETE /patients/{patientId}/team/{memberId} → remove-team-member Lambda.
+#
+# F53 (2026-05-18): previously this was a MOCK stub returning 200, so the
+# Android Remove button was a server-side no-op (the row stayed
+# is_active=true and no audit_log row was written). Wired through to the
+# real lambda after sub-issue 1/2 + the v2 vocab fix + the deactivated_at
+# schema fix landed and direct-invoke verified the lambda is healthy.
+# CORS headers are emitted by the Lambda itself (AWS_PROXY passes the
+# lambda's response straight through), so the explicit method_response/
+# integration_response pair is no longer needed.
 resource "aws_api_gateway_method" "team_member_delete" {
   rest_api_id   = aws_api_gateway_rest_api.main.id
   resource_id   = aws_api_gateway_resource.patient_team_member.id
@@ -468,38 +477,12 @@ resource "aws_api_gateway_method" "team_member_delete" {
 }
 
 resource "aws_api_gateway_integration" "team_member_delete" {
-  rest_api_id = aws_api_gateway_rest_api.main.id
-  resource_id = aws_api_gateway_resource.patient_team_member.id
-  http_method = aws_api_gateway_method.team_member_delete.http_method
-  type        = "MOCK"
-
-  request_templates = {
-    "application/json" = "{\"statusCode\": 200}"
-  }
-}
-
-resource "aws_api_gateway_method_response" "team_member_delete_200" {
-  rest_api_id = aws_api_gateway_rest_api.main.id
-  resource_id = aws_api_gateway_resource.patient_team_member.id
-  http_method = aws_api_gateway_method.team_member_delete.http_method
-  status_code = "200"
-
-  response_parameters = {
-    "method.response.header.Access-Control-Allow-Origin" = true
-  }
-}
-
-resource "aws_api_gateway_integration_response" "team_member_delete_200" {
-  rest_api_id = aws_api_gateway_rest_api.main.id
-  resource_id = aws_api_gateway_resource.patient_team_member.id
-  http_method = aws_api_gateway_method.team_member_delete.http_method
-  status_code = aws_api_gateway_method_response.team_member_delete_200.status_code
-
-  response_parameters = {
-    "method.response.header.Access-Control-Allow-Origin" = "'${var.cors_origin}'"
-  }
-
-  depends_on = [aws_api_gateway_integration.team_member_delete]
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.patient_team_member.id
+  http_method             = aws_api_gateway_method.team_member_delete.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = var.remove_team_member_invoke_arn
 }
 
 # POST /observations/sync — sync-observation
@@ -1089,6 +1072,7 @@ resource "aws_api_gateway_deployment" "main" {
       aws_api_gateway_integration.patients_post.id,
       aws_api_gateway_method.patient_delete.id,
       aws_api_gateway_method.team_member_delete.id,
+      aws_api_gateway_integration.team_member_delete.id,
       aws_api_gateway_method.observations_sync_post.id,
       aws_api_gateway_integration.observations_sync_post.id,
       aws_api_gateway_method.observations_bulk_sync_post.id,

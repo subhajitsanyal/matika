@@ -43,8 +43,13 @@ fun InviteAttendantScreen(
     val isFormValid = attendantName.isNotBlank() &&
         (if (useEmail) email.isNotBlank() else phone.isNotBlank())
 
+    // On a normal success, navigate immediately. On a "delivery_failed"
+    // success (F52 sub-issue 4 — invite committed but credentials email
+    // could not be sent), hold the screen and surface the warning dialog
+    // so the caregiver can read the explanation before navigating away.
+    val successState = uiState as? InviteAttendantUiState.Success
     LaunchedEffect(uiState) {
-        if (uiState is InviteAttendantUiState.Success) {
+        if (successState != null && successState.emailStatus != "delivery_failed") {
             onInviteSent()
         }
     }
@@ -249,31 +254,70 @@ fun InviteAttendantScreen(
             Spacer(modifier = Modifier.height(32.dp))
         }
     }
+
+    if (successState?.emailStatus == "delivery_failed") {
+        InviteSentDialog(
+            attendantName = attendantName,
+            emailStatus = "delivery_failed",
+            fallbackMessage = successState.message,
+            onDismiss = onInviteSent,
+        )
+    }
 }
 
 /**
  * Success dialog shown after invite is sent.
+ *
+ * Renders two variants based on `emailStatus`:
+ *   - normal ("sent" / "verification_pending"): green check + standard copy.
+ *   - "delivery_failed" (F52 sub-issue 4): warning icon + non-blocking copy
+ *     telling the caregiver the invite is valid but the email didn't go
+ *     out, so they need to share credentials manually. This is reached
+ *     when the lambda returns 201 with emailStatus=delivery_failed
+ *     (SES IAM gap or other SES-side failure after DB writes commit).
  */
 @Composable
 fun InviteSentDialog(
     attendantName: String,
+    emailStatus: String? = null,
+    fallbackMessage: String? = null,
     onDismiss: () -> Unit
 ) {
+    val isDeliveryFailed = emailStatus == "delivery_failed"
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = {
             Icon(
-                Icons.Default.CheckCircle,
+                if (isDeliveryFailed) Icons.Default.Warning else Icons.Default.CheckCircle,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(48.dp)
+                tint = if (isDeliveryFailed) MaterialTheme.colorScheme.tertiary
+                    else MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .size(48.dp)
+                    .testTag(
+                        if (isDeliveryFailed) "invite_sent_dialog_delivery_failed"
+                        else "invite_sent_dialog_success"
+                    )
             )
         },
-        title = { Text("Invitation Sent!") },
+        title = {
+            Text(
+                if (isDeliveryFailed) "Invite Created" else "Invitation Sent!",
+                modifier = Modifier.testTag(
+                    if (isDeliveryFailed) "invite_sent_dialog_delivery_failed_title"
+                    else "invite_sent_dialog_success_title"
+                )
+            )
+        },
         text = {
             Text(
-                "We've sent an invitation to $attendantName. " +
-                    "They will receive instructions to create their account and start caring for your loved one."
+                if (isDeliveryFailed) {
+                    fallbackMessage
+                        ?: "We created the invite for $attendantName, but the credentials email could not be delivered. Please share their login details manually or retry from the care team screen."
+                } else {
+                    "We've sent an invitation to $attendantName. " +
+                        "They will receive instructions to create their account and start caring for your loved one."
+                }
             )
         },
         confirmButton = {

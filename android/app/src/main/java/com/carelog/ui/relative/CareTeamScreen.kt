@@ -93,7 +93,9 @@ fun CareTeamScreen(
                 }
                 else -> {
                     LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .testTag("care_team_list"),
                         contentPadding = PaddingValues(16.dp),
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
@@ -117,46 +119,42 @@ fun CareTeamScreen(
                             }
                         }
 
-                        // Attendants section
+                        // Caregivers section.
+                        //
+                        // v2 has a single non-doctor team-member persona:
+                        // `caregiver`. The care-team lambda returns every
+                        // active persona_link with relationship='caregiver'
+                        // here, with `isPrimary` flagging the inviter so
+                        // the UI can show a Primary badge and disable the
+                        // remove button for them. The legacy `attendants`
+                        // and `relatives` arrays are gone — they were
+                        // always empty in v2 and the user can't tell the
+                        // difference, so removing the sections.
                         item {
                             SectionHeader(
-                                title = "Attendants",
+                                title = "Caregivers",
                                 icon = Icons.Default.Person,
-                                count = uiState.careTeam?.attendants?.size ?: 0,
+                                count = uiState.careTeam?.caregivers?.size ?: 0,
                                 onAddClick = {
-                                    inviteRole = "attendant"
+                                    inviteRole = "caregiver"
                                     showInviteDialog = true
                                 }
                             )
                         }
 
-                        if (uiState.careTeam?.attendants?.isNotEmpty() == true) {
-                            items(uiState.careTeam!!.attendants) { member ->
+                        if (uiState.careTeam?.caregivers?.isNotEmpty() == true) {
+                            items(uiState.careTeam!!.caregivers) { member ->
                                 CareTeamMemberCard(
                                     member = member,
                                     roleColor = CareLogColors.Success,
-                                    onRemove = { viewModel.removeMember(member.id) },
+                                    onRemove = if (member.isPrimary) null
+                                        else ({ viewModel.removeMember(member.id) }),
                                     isRemoving = uiState.removingMemberId == member.id
                                 )
                             }
                         } else {
                             item {
-                                EmptySection(message = "No attendants yet. Invite someone to help care for the patient.")
-                            }
-                        }
-
-                        // Relatives section
-                        if (uiState.careTeam?.relatives?.isNotEmpty() == true) {
-                            item {
-                                SectionHeader(
-                                    title = "Family Members",
-                                    icon = Icons.Default.FamilyRestroom,
-                                    count = uiState.careTeam!!.relatives.size
-                                )
-                            }
-
-                            items(uiState.careTeam!!.relatives) { member ->
-                                CareTeamMemberCard(member = member, roleColor = CareLogColors.Warning)
+                                EmptySection(message = "No caregivers yet. Invite someone to help care for the patient.")
                             }
                         }
 
@@ -274,7 +272,9 @@ private fun CareTeamMemberCard(
     var showRemoveDialog by remember { mutableStateOf(false) }
 
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("care_team_member_${member.id}"),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
@@ -309,7 +309,8 @@ private fun CareTeamMemberCard(
                 Text(
                     text = member.name,
                     style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Medium
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.testTag("care_team_member_name_${member.id}")
                 )
 
                 member.email?.let { email ->
@@ -318,7 +319,8 @@ private fun CareTeamMemberCard(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.testTag("care_team_member_email_${member.id}")
                     )
                 }
 
@@ -337,20 +339,33 @@ private fun CareTeamMemberCard(
                 color = roleColor.copy(alpha = 0.1f)
             ) {
                 Text(
-                    text = member.role.replaceFirstChar { it.uppercase() },
+                    text = if (member.isPrimary) "Primary"
+                        else member.role.replaceFirstChar { it.uppercase() },
                     style = MaterialTheme.typography.labelSmall,
                     color = roleColor,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    modifier = Modifier
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                        .testTag(
+                            if (member.isPrimary) "care_team_member_primary_${member.id}"
+                            else "care_team_member_role_${member.id}"
+                        )
                 )
             }
 
-            // Remove button (only for attendants and doctors)
-            if (onRemove != null && member.role in listOf("attendant", "doctor")) {
+            // Remove button. v2 personas with this control are
+            // non-primary caregivers and doctors. Primary caregiver
+            // already gets onRemove=null upstream — keeping the role
+            // gate as a second-line safety so this composable stays
+            // safe to reuse for any future caller.
+            if (onRemove != null && member.role in listOf("caregiver", "doctor")) {
                 Spacer(modifier = Modifier.width(4.dp))
                 if (isRemoving) {
                     CircularProgressIndicator(modifier = Modifier.size(24.dp))
                 } else {
-                    IconButton(onClick = { showRemoveDialog = true }) {
+                    IconButton(
+                        onClick = { showRemoveDialog = true },
+                        modifier = Modifier.testTag("care_team_member_remove_${member.id}")
+                    ) {
                         Icon(
                             Icons.Default.RemoveCircleOutline,
                             contentDescription = "Remove ${member.name}",
@@ -366,7 +381,12 @@ private fun CareTeamMemberCard(
     if (showRemoveDialog && onRemove != null) {
         AlertDialog(
             onDismissRequest = { showRemoveDialog = false },
-            title = { Text("Remove ${member.name}?") },
+            title = {
+                Text(
+                    "Remove ${member.name}?",
+                    modifier = Modifier.testTag("care_team_remove_confirm_title")
+                )
+            },
             text = {
                 Text(
                     "This will disable their account and remove their access to this patient. " +
@@ -381,13 +401,17 @@ private fun CareTeamMemberCard(
                     },
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.error
-                    )
+                    ),
+                    modifier = Modifier.testTag("care_team_remove_confirm")
                 ) {
                     Text("Remove")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showRemoveDialog = false }) {
+                TextButton(
+                    onClick = { showRemoveDialog = false },
+                    modifier = Modifier.testTag("care_team_remove_cancel")
+                ) {
                     Text("Cancel")
                 }
             }

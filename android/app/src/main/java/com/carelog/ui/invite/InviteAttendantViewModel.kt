@@ -55,7 +55,9 @@ class InviteAttendantViewModel @Inject constructor(
 
                 _uiState.value = InviteAttendantUiState.Success(
                     inviteId = result.inviteId,
-                    expiresAt = result.expiresAt
+                    expiresAt = result.expiresAt,
+                    emailStatus = result.emailStatus,
+                    message = result.message
                 )
             } catch (e: Exception) {
                 _uiState.value = InviteAttendantUiState.Error(
@@ -79,7 +81,17 @@ class InviteAttendantViewModel @Inject constructor(
 sealed class InviteAttendantUiState {
     object Idle : InviteAttendantUiState()
     object Loading : InviteAttendantUiState()
-    data class Success(val inviteId: String, val expiresAt: String) : InviteAttendantUiState()
+    // emailStatus mirrors the lambda response: "sent" (normal path),
+    // "verification_pending" (SES sandbox first-time recipient), or
+    // "delivery_failed" (F52 sub-issue 4 — invite committed but the
+    // credentials email couldn't be sent; UI should show a non-blocking
+    // hint rather than treat as failure).
+    data class Success(
+        val inviteId: String,
+        val expiresAt: String,
+        val emailStatus: String? = null,
+        val message: String? = null,
+    ) : InviteAttendantUiState()
     data class Error(val message: String) : InviteAttendantUiState()
 }
 
@@ -99,7 +111,9 @@ data class SendInviteRequest(
 data class SendInviteResponse(
     val inviteId: String,
     val message: String,
-    val expiresAt: String
+    val expiresAt: String,
+    val emailStatus: String? = null,
+    val emailDeliveryError: String? = null,
 )
 
 /**

@@ -81,6 +81,11 @@ variable "care_team_invoke_arn" {
   default = ""
 }
 
+variable "remove_team_member_invoke_arn" {
+  type    = string
+  default = ""
+}
+
 variable "patient_summary_invoke_arn" {
   type    = string
   default = ""
