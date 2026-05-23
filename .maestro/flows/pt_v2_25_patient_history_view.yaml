@@ -1,0 +1,28 @@
+# PT-V2-25 — patient-side History view affordance from home.
+#
+# Pre-condition: at least one observation already saved for Jane
+# (manual log journeys PT-V2-15..20 produce them).
+#
+# Asserts: tapping caret-style History icon in the top bar navigates
+# to a History screen with at least one row. After-cleanup empty-state
+# is acceptable; the assertNotVisible guards the post-PT-V2-15..20 run.
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil: { visible: { id: login_email }, timeout: 15000 }
+- tapOn: { id: login_email }
+- inputText: ${MATIKA_PATIENT_EMAIL}
+- tapOn: { id: login_password }
+- inputText: ${MATIKA_PATIENT_PASSWORD}
+- hideKeyboard
+- tapOn: { id: login_button }
+# Consent is sticky for Jane; tap-if-visible to make the flow resilient
+# if a future bench starts from a freshly-truncated consent_records.
+- tapOn: { id: consent_checkbox, optional: true }
+- tapOn: { text: "Accept and Continue", optional: true }
+- extendedWaitUntil: { visible: { id: patient_home_history }, timeout: 60000 }
+- tapOn: { id: patient_home_history }
+- extendedWaitUntil: { visible: "History", timeout: 15000 }
+- assertNotVisible: "No history yet"

@@ -53,10 +53,10 @@ appId: com.carelog
 # testTag is patient_card_<patient_id>.
 - extendedWaitUntil:
     visible:
-      id: patient_card_CL-63NRGO
+      id: patient_card_CL-012W6M
     timeout: 30000
 - tapOn:
-    id: patient_card_CL-63NRGO
+    id: patient_card_CL-012W6M
 
 # ── Tap "View Logs" inside the expanded card ────────────────
 # AnimatedVisibility expand-spring is ~250ms; small wait is enough.

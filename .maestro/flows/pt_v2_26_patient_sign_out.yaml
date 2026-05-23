@@ -1,0 +1,23 @@
+# PT-V2-26 — patient sign-out returns to login screen.
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil: { visible: { id: login_email }, timeout: 15000 }
+- tapOn: { id: login_email }
+- inputText: ${MATIKA_PATIENT_EMAIL}
+- tapOn: { id: login_password }
+- inputText: ${MATIKA_PATIENT_PASSWORD}
+- hideKeyboard
+- tapOn: { id: login_button }
+- tapOn: { id: consent_checkbox, optional: true }
+- tapOn: { text: "Accept and Continue", optional: true }
+- extendedWaitUntil: { visible: { id: patient_home_start_conversation }, timeout: 60000 }
+- tapOn: { id: patient_home_settings }
+- extendedWaitUntil: { visible: { id: settings_sign_out }, timeout: 15000 }
+- scrollUntilVisible:
+    element: { id: settings_sign_out }
+    direction: DOWN
+- tapOn: { id: settings_sign_out }
+- extendedWaitUntil: { visible: { id: login_email }, timeout: 30000 }

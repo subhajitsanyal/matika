@@ -168,9 +168,11 @@ fun CaregiverHomeScreen(
                     }
                     IconButton(
                         onClick = onNavigateToSettings,
-                        modifier = Modifier.semantics {
-                            contentDescription = "Open settings"
-                        }
+                        modifier = Modifier
+                            .testTag("caregiver_home_settings")
+                            .semantics {
+                                contentDescription = "Open settings"
+                            }
                     ) {
                         Icon(Icons.Default.Settings, contentDescription = null)
                     }

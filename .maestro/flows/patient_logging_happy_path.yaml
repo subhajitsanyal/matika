@@ -36,6 +36,16 @@ appId: com.carelog
 - tapOn:
     id: login_button
 
+# Privacy consent fires on first-ever login per user (when consent_records
+# has no row for this user_id). Sticky once accepted. Optional steps so the
+# flow keeps working on subsequent runs where the consent prompt is gone.
+- tapOn:
+    id: consent_checkbox
+    optional: true
+- tapOn:
+    text: "Accept and Continue"
+    optional: true
+
 # ── Patient home → Start Conversation ───────────────────────
 - extendedWaitUntil:
     visible:

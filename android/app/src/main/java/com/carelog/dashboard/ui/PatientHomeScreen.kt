@@ -139,7 +139,10 @@ fun PatientHomeScreen(
                     ) {
                         Icon(Icons.Default.History, contentDescription = "Past readings")
                     }
-                    IconButton(onClick = onNavigateToSettings) {
+                    IconButton(
+                        onClick = onNavigateToSettings,
+                        modifier = Modifier.testTag("patient_home_settings"),
+                    ) {
                         Icon(Icons.Default.Settings, contentDescription = "Settings")
                     }
                 }

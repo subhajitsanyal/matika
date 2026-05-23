@@ -18,10 +18,8 @@ appId: com.carelog
 
 - extendedWaitUntil: { visible: { id: patient_home_start_conversation }, timeout: 30000 }
 
-# Settings IconButton in the TopAppBar — no testTag, target by
-# accessibility contentDescription="Settings" on the Icon.
-- tapOn:
-    text: "Settings"
+# Settings IconButton in the TopAppBar — testTag added 2026-05-23.
+- tapOn: { id: patient_home_settings }
 
 - extendedWaitUntil: { visible: { id: settings_language_card }, timeout: 10000 }
 - scrollUntilVisible:

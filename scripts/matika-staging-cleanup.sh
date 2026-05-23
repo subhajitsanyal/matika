@@ -66,7 +66,8 @@ readonly PRESERVE_USER_IDS=(
 )
 readonly PRESERVE_PATIENT_ID="d4d38abb-af57-4658-a9e4-32b8701d12da"
 readonly PRESERVE_PATIENT_SHORT="CL-012W6M"
-readonly JOHN_CG_COGNITO_SUB="51134dba-0041-70c0-ea5f-5c70348c3bb4"
+# Note: John CG's Cognito sub is auto-generated on each (re)creation and is no longer
+# hardcoded. Phase 8 references the user by their email alias instead.
 
 readonly PSQL="/opt/homebrew/opt/libpq/bin/psql"
 
@@ -252,15 +253,20 @@ WHERE id NOT IN (
 );"
 
 # ── Phase 6: Cognito wipe ─────────────────────────────────
-echo "  ◦ Wiping Cognito users (preserve list: ${PRESERVE_COGNITO_EMAILS[*]})…"
-PRESERVE_REGEX=$(printf '|%s' "${PRESERVE_COGNITO_EMAILS[@]}")
-PRESERVE_REGEX="${PRESERVE_REGEX:1}"
+echo "  ◦ Wiping Cognito users (preserve list: ${PRESERVE_COGNITO_EMAILS[*]})..."
 COG_USERS=$(aws cognito-idp list-users --user-pool-id "$USER_POOL_ID" --region "$REGION" \
     --query 'Users[].[Username, Attributes[?Name==`email`].Value|[0]]' --output text)
 DELETED=0
 while IFS=$'\t' read -r USERNAME EMAIL; do
     [[ -z "$USERNAME" ]] && continue
-    if [[ "$EMAIL" =~ ^(${PRESERVE_REGEX})$ ]]; then
+    PRESERVED=0
+    for KEEP in "${PRESERVE_COGNITO_EMAILS[@]}"; do
+        if [[ "$EMAIL" == "$KEEP" ]]; then
+            PRESERVED=1
+            break
+        fi
+    done
+    if [[ $PRESERVED -eq 1 ]]; then
         echo "    ✓ preserve $EMAIL"
         continue
     fi
@@ -274,7 +280,7 @@ done <<< "$COG_USERS"
 echo "    Cognito users deleted: $DELETED"
 
 # ── Phase 7: S3 wipe ──────────────────────────────────────
-echo "  ◦ Wiping S3 observations except observations/$PRESERVE_PATIENT_SHORT/…"
+echo "  ◦ Wiping S3 observations except observations/${PRESERVE_PATIENT_SHORT}/..."
 S3_DELETED=0
 while IFS= read -r KEY; do
     [[ -z "$KEY" ]] && continue
@@ -288,11 +294,12 @@ done < <(aws s3 ls "s3://$S3_BUCKET/observations/" --recursive --region "$REGION
 echo "    S3 keys deleted: $S3_DELETED"
 
 # ── Phase 8: fix-up John CG's linked_patient_id ──────────
-echo "  ◦ Setting John CG Cognito custom:linked_patient_id → $PRESERVE_PATIENT_SHORT…"
+echo "  ◦ Setting John CG Cognito custom:linked_patient_id -> ${PRESERVE_PATIENT_SHORT}..."
+# Username can be the email alias; sub changes if Cognito user was recreated.
 aws cognito-idp admin-update-user-attributes \
     --user-pool-id "$USER_POOL_ID" \
     --region "$REGION" \
-    --username "$JOHN_CG_COGNITO_SUB" \
+    --username "${PRESERVE_COGNITO_EMAILS[0]}" \
     --user-attributes Name=custom:linked_patient_id,Value="$PRESERVE_PATIENT_SHORT" \
     >/dev/null
 echo "    ✓ updated"

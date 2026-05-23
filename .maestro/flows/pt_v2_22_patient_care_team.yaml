@@ -13,7 +13,7 @@
 #      SettingsActionRow is `settings_action_view_care_team`.
 #   5. Asserts patient_care_team_screen mounts.
 #   6. Asserts John CG's caregiver row is visible by his canonical
-#      users.id (a2b0af09-86a7-4156-8e24-7837c311f7de).
+#      users.id (f375ce5e-3d1b-4f6b-9c4f-e1fc1484f411).
 #   7. Asserts the "Primary" badge renders (John CG has is_primary=true).
 #
 # Live evidence: in-place backend test already confirmed via direct
@@ -44,10 +44,8 @@ appId: com.carelog
     timeout: 30000
 
 # ── Open Settings ────────────────────────────────────────
-# PatientHomeScreen TopAppBar settings IconButton uses contentDescription.
-# Per maestro_lessons.md #1 + #3 we target the icon via accessibility text.
 - tapOn:
-    text: "(?i).*Open settings.*"
+    id: patient_home_settings
 
 # Wait for an entry-row to confirm Settings has rendered. The CareLog
 # Device card is universal; it doesn't have a testTag, so use the
@@ -65,10 +63,10 @@ appId: com.carelog
 
 # John CG's users.id (jane_dev_test_account memory).
 - extendedWaitUntil:
-    visible: { id: patient_care_team_caregiver_a2b0af09-86a7-4156-8e24-7837c311f7de }
+    visible: { id: patient_care_team_caregiver_f375ce5e-3d1b-4f6b-9c4f-e1fc1484f411 }
     timeout: 10000
 
-- assertVisible: { id: patient_care_team_primary_badge_a2b0af09-86a7-4156-8e24-7837c311f7de }
+- assertVisible: { id: patient_care_team_primary_badge_f375ce5e-3d1b-4f6b-9c4f-e1fc1484f411 }
 
 # Belt-and-braces: name + email render in the row text.
 - assertVisible:

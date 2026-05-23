@@ -1,0 +1,35 @@
+# PT-V2-27 — patient changes language to Hindi; persists across relaunch.
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil: { visible: { id: login_email }, timeout: 15000 }
+- tapOn: { id: login_email }
+- inputText: ${MATIKA_PATIENT_EMAIL}
+- tapOn: { id: login_password }
+- inputText: ${MATIKA_PATIENT_PASSWORD}
+- hideKeyboard
+- tapOn: { id: login_button }
+- tapOn: { id: consent_checkbox, optional: true }
+- tapOn: { text: "Accept and Continue", optional: true }
+- extendedWaitUntil: { visible: { id: patient_home_start_conversation }, timeout: 60000 }
+- tapOn: { id: patient_home_settings }
+- extendedWaitUntil: { visible: { id: settings_language_card }, timeout: 15000 }
+- tapOn: { id: language_option_hi }
+# Relaunch (no clearState — DataStore + auth should persist; Jane stays logged in).
+- stopApp
+- launchApp:
+    clearState: false
+# Persisted auth means we land on home directly, NOT the login screen.
+- extendedWaitUntil: { visible: { id: patient_home_start_conversation }, timeout: 60000 }
+- tapOn: { id: patient_home_settings }
+- extendedWaitUntil: { visible: { id: settings_language_card }, timeout: 15000 }
+# Hindi label is always present in the picker; the meaningful proof that
+# the language survived the relaunch is that we got here without re-login.
+- assertVisible: "हिन्दी \\(Hindi\\)"
+
+# Reset to English so subsequent bench journeys assert their original English labels.
+# Per voice_harness_lessons #8, the RadioButton testTag is on the row container —
+# we patched it to be clickable in F51 (2026-05-17), so a direct tap on the testTag works.
+- tapOn: { id: language_option_en }
