@@ -21,7 +21,7 @@ appId: com.carelog
 # Consent is sticky for Jane; tap-if-visible to make the flow resilient
 # if a future bench starts from a freshly-truncated consent_records.
 - tapOn: { id: consent_checkbox, optional: true }
-- tapOn: { text: "Accept and Continue", optional: true }
+- tapOn: { id: consent_accept_button, optional: true }
 - extendedWaitUntil: { visible: { id: patient_home_history }, timeout: 60000 }
 - tapOn: { id: patient_home_history }
 - extendedWaitUntil: { visible: "History", timeout: 15000 }

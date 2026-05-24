@@ -43,7 +43,7 @@ appId: com.carelog
     id: consent_checkbox
     optional: true
 - tapOn:
-    text: "Accept and Continue"
+    id: consent_accept_button
     optional: true
 
 # ── Patient home → Start Conversation ───────────────────────

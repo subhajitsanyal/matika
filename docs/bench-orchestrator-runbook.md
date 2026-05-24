@@ -86,13 +86,15 @@ Compare against the known-good hashes captured in the most-recent session wrap. 
 
 ## 2. Staging seed pair (preserved across cleanup)
 
-| Role | Cognito email | Cognito sub | users.id | Notes |
-|---|---|---|---|---|
-| Caregiver (John CG) | `sanyalsubhajit2010+cg@gmail.com` | `51134dba-0041-70c0-ea5f-5c70348c3bb4` | `f375ce5e-3d1b-4f6b-9c4f-e1fc1484f411` | Primary caregiver. `custom:linked_patient_id` is forced to `CL-012W6M` by the cleanup script. Group: `caregivers`. |
-| Patient (Jane PT) | `sanyalsubhajit2010+pt9@gmail.com` | `01f35daa-20c1-7074-1879-31fccc56806d` | `75564941-09f8-4381-b1e6-4554f23755e8` | Patient short code `CL-012W6M`, UUID `d4d38abb-af57-4658-a9e4-32b8701d12da`. 7 active `parameter_configs`: BP sys/dia, blood_glucose, body_temperature_c, body_weight, heart_rate, spo2. |
-| Persona link | — | — | `0bfb8a8e-0dd9-4a6d-b834-000806ede5ae` | John ↔ Jane, `relationship='caregiver'`, `is_primary=true`. |
+| Role | Cognito email | users.id | Notes |
+|---|---|---|---|
+| Caregiver (John CG) | `sanyalsubhajit2010+cg@gmail.com` | `f375ce5e-3d1b-4f6b-9c4f-e1fc1484f411` | Primary caregiver. `custom:linked_patient_id` is forced to `CL-012W6M` by the cleanup script. Group: `caregivers`. |
+| Patient (Jane PT) | `sanyalsubhajit2010+pt9@gmail.com` | `75564941-09f8-4381-b1e6-4554f23755e8` | Patient short code `CL-012W6M`, UUID `d4d38abb-af57-4658-a9e4-32b8701d12da`. 7 active `parameter_configs`: BP sys/dia, blood_glucose, body_temperature_c, body_weight, heart_rate, spo2. |
+| Persona link | — | `0bfb8a8e-0dd9-4a6d-b834-000806ede5ae` | John ↔ Jane, `relationship='caregiver'`, `is_primary=true`. |
 
 Passwords live in `~/.matika-test-creds.env` (out of repo).
+
+> **Cognito subs are NOT pinned here.** They auto-generate on `admin-create-user` so any cleanup-recovery cycle gives them new values (e.g. 2026-05-23 incident regenerated both). `users.cognito_sub` is reconciled by the cleanup script's post-create step. Use `users.id` UUIDs (stable) or email-as-username (stable) for any operation that needs to address these accounts.
 
 ---
 
@@ -167,7 +169,7 @@ Voice journeys use `scripts/matika-voice-run.sh`. Per `voice_harness_lessons.md`
 | **PT-V2-03** | `matika-voice-run.sh patient_voice_bp_en_single_turn --turn "en\|175\|My blood pressure is one thirty over eighty five.\|600" --turn "en\|175\|Yes that's correct.\|400"` | RDS `interaction_sessions.fsm_state='EXTRACTING'`, `extracted=2` (BP sys 130 + dia 85 with LOINC) |
 | **PT-V2-04** | `matika-voice-run.sh patient_voice_bp_en_multi_param --turn ... --turn ...` | RDS extracted=2 (glucose 110 + body_weight 65) in addition |
 | **PT-V2-05** | First set language to Hindi via `_bench_set_language_hi.yaml`, then `matika-voice-run.sh patient_voice_bp_hi_single_turn --turn "hi\|165\|मेरा रक्तचाप एक सौ चालीस के ऊपर नब्बे है।\|600" --turn "hi\|165\|हाँ सही है।\|400"` | Session `language=hi-IN`, Devanagari STT, Hindi LLM response, BP 140/90 extracted |
-| **PT-V2-06** | Set language to Bengali, run `matika-voice-run.sh patient_voice_bp_bn_single_turn --turn "bn\|0\|আমার রক্তচাপ ১৪০ উপর ৯০\|600" --turn "bn\|0\|হ্যাঁ ঠিক আছে।\|400"` (rate ignored; gTTS path) | Session `language=bn-IN`, `stt_offline_used=false` in logcat (F25 fallback), BP 140/90 |
+| **PT-V2-06** | Set language to Bengali, run `matika-voice-run.sh patient_voice_bp_bn_single_turn --turn "bn\|175\|আমার রক্তচাপ ১৪০ উপর ৯০\|600" --turn "bn\|175\|হ্যাঁ ঠিক আছে।\|400"` (rate ignored on gTTS path but server validates 80..300) | Session `language=bn-IN`, `stt_offline_used=false` in logcat (F25 fallback), BP 140/90 |
 | **PT-V2-08 voice variant** | (already covered by `patient_implausible_text.yaml` in §4.2; voice version is optional re-verify) | — |
 
 **F23 caveat:** if the existing `cg_v2_04` voice patient onboarding flow is re-run, turn 3 mic-active trigger may not fire (pre-beta-todos.md §3.2). Skip if encountered; capture state and move on.

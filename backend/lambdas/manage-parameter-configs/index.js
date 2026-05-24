@@ -91,6 +91,12 @@ async function checkAccessAndRole(dbClient, cognitoSub, patientDbId) {
  * GET — List active parameter configs for a patient.
  */
 async function listParameterConfigs(dbClient, patientDbId) {
+  // set_by_doctor is computed by joining the threshold_set_by FK back to users
+  // and checking persona_type='doctor'. Caregiver edits also stamp threshold_set_by
+  // (per protocol_persister + this lambda's UPDATE path), so the raw column being
+  // non-null does NOT imply doctor-locked. The Android client used to read the
+  // raw column and lock the field for any non-null value — that locked caregivers
+  // out of re-editing their own thresholds. This boolean removes the ambiguity.
   const result = await dbClient.query(
     `SELECT
        pc.id,
@@ -104,10 +110,12 @@ async function listParameterConfigs(dbClient, patientDbId) {
        pc.threshold_min,
        pc.threshold_max,
        pc.threshold_set_by,
+       COALESCE(u_setby.persona_type = 'doctor', false) AS set_by_doctor,
        pc.active,
        pc.created_at,
        pc.updated_at
      FROM parameter_configs pc
+     LEFT JOIN users u_setby ON u_setby.id = pc.threshold_set_by
      WHERE pc.patient_id = $1 AND pc.active = true
      ORDER BY pc.created_at`,
     [patientDbId]

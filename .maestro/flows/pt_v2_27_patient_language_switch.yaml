@@ -12,7 +12,7 @@ appId: com.carelog
 - hideKeyboard
 - tapOn: { id: login_button }
 - tapOn: { id: consent_checkbox, optional: true }
-- tapOn: { text: "Accept and Continue", optional: true }
+- tapOn: { id: consent_accept_button, optional: true }
 - extendedWaitUntil: { visible: { id: patient_home_start_conversation }, timeout: 60000 }
 - tapOn: { id: patient_home_settings }
 - extendedWaitUntil: { visible: { id: settings_language_card }, timeout: 15000 }

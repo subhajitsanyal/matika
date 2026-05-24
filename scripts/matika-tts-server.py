@@ -96,8 +96,13 @@ class TtsHandler(BaseHTTPRequestHandler):
             supported = sorted(set(NATIVE_VOICES) | set(GTTS_LANGS))
             self._json(400, {"error": f"unsupported lang '{lang}' ({'|'.join(supported)})"})
             return
+        # The gTTS path doesn't use rate, but the native `say` path needs a
+        # valid 80..300. Coerce rate=0 (the "don't care" sentinel used by some
+        # callers, e.g. bench Bengali turns) to a sane default; same for None.
+        if rate is None or (isinstance(rate, int) and rate == 0):
+            rate = 175
         if not isinstance(rate, int) or not 80 <= rate <= 300:
-            self._json(400, {"error": "rate must be int 80..300"})
+            self._json(400, {"error": "rate must be int 0 (default 175) or 80..300"})
             return
         if not isinstance(text, str) or not text.strip():
             self._json(400, {"error": "text required"})

@@ -180,6 +180,16 @@ class RelativeApiService @Inject constructor(
             // coerce via firstNumericInsideArrayLike. Empty / absent → null.
             val minValue = firstNumericInsideArrayLike(obj.opt("threshold_min"))
             val maxValue = firstNumericInsideArrayLike(obj.opt("threshold_max"))
+            // Prefer the server-computed `set_by_doctor` boolean (added 2026-05-23).
+            // Falls back to the legacy `threshold_set_by != null` heuristic only when
+            // the field is absent — older lambda versions did not emit it. The legacy
+            // heuristic over-locks: caregiver edits also stamp threshold_set_by, so
+            // it falsely treats caregiver-set thresholds as doctor-locked.
+            val setByDoctor = if (obj.has("set_by_doctor")) {
+                obj.optBoolean("set_by_doctor", false)
+            } else {
+                !obj.isNull("threshold_set_by")
+            }
             list.add(
                 ParameterThreshold(
                     configId = obj.getString("id"),
@@ -188,7 +198,7 @@ class RelativeApiService @Inject constructor(
                     minValue = minValue,
                     maxValue = maxValue,
                     unit = obj.optString("unit", ""),
-                    setByDoctor = !obj.isNull("threshold_set_by"),
+                    setByDoctor = setByDoctor,
                 ),
             )
         }

@@ -36,13 +36,12 @@ appId: com.carelog
 - hideKeyboard
 - tapOn: { id: login_button }
 
-# Caregiver dashboard reachable
-- extendedWaitUntil: { visible: { id: add_patient_voice_fab }, timeout: 60000 }
+# Caregiver dashboard reachable (FAB testTag is onboard_patient_fab — same as cg_v2_12).
+- extendedWaitUntil: { visible: { id: onboard_patient_fab }, timeout: 60000 }
 
-# Settings — the IconButton has contentDescription="Open settings"
-- tapOn:
-    text: "Open settings"
-    optional: false
+# Settings — IconButton testTag added 2026-05-23 (maestro_lessons #13:
+# text-match on contentDescription was landing on the inner non-clickable Icon).
+- tapOn: { id: caregiver_home_settings }
 
 # Settings card visible — scroll to find "Invite Attendant" action row
 - extendedWaitUntil: { visible: { id: settings_action_invite_attendant }, timeout: 15000 }
@@ -68,12 +67,16 @@ appId: com.carelog
 # Send
 - tapOn: { id: invite_attendant_send }
 
-# After successful send, onInviteSent in the NavHost calls popBackStack,
-# returning to Settings. The InviteSentDialog is shown by the
-# ViewModel-success-state path but the NavHost wires popBackStack on the
-# Success state, so the dialog may or may not flash. Assert we're back
-# on Settings.
+# After Send the Material3 AlertDialog shows either "Invitation Sent!" (SES OK)
+# or "Invite Created" (SES delivery_failed — invite row still committed). Either
+# proves the lambda 201'd. testTags do NOT propagate through M3 AlertDialog's
+# PopupLayer in this Compose version (verified 2026-05-23) — use text-match.
 - extendedWaitUntil:
-    visible:
-      id: settings_action_invite_attendant
+    visible: ".*(Invitation Sent|Invite Created).*"
     timeout: 30000
+
+# Tap Done — Button is the clickable parent of the inner Text "Done".
+- tapOn: "Done"
+- extendedWaitUntil:
+    visible: { id: settings_action_invite_attendant }
+    timeout: 15000
