@@ -1,0 +1,66 @@
+# EDGE-V2-15 — microphone permission denied → text fallback substitution.
+#
+# Pre-condition: RECORD_AUDIO permission must be REVOKED before this
+# flow starts. Use the wrapper at scripts/edge-v2-15-mic-denied.sh
+# which does the `pm revoke` + Maestro run + `pm grant` chain.
+#
+# What this flow asserts:
+#   1. With mic perm pre-revoked via `pm revoke`, MatikaConversationScreen
+#      mounts cleanly without crashing. On Android 11+ (test device is
+#      Android 15 / API 35) the system DOES NOT re-show the runtime
+#      permission dialog after a prior denial — the LaunchedEffect's
+#      permissionLauncher.launch(RECORD_AUDIO) at
+#      MatikaConversationScreen.kt:125 silently returns denied and the
+#      session-start path proceeds anyway.
+#   2. The text fallback (`matika_text_fallback`) is rendered and
+#      functional — the user can submit a turn via typed input and the
+#      Bedrock turn completes despite no mic access.
+#
+# Product contract being verified: mic permission is OPTIONAL for the
+# core patient-logging flow. The `OutlinedTextField` at
+# MatikaConversationScreen.kt:760 is always rendered alongside the mic
+# button, regardless of mic permission state.
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+# ── Sign in as Jane PT ──────────────────────────────────────
+- extendedWaitUntil: { visible: { id: login_email }, timeout: 15000 }
+- tapOn: { id: login_email }
+- inputText: ${MATIKA_PATIENT_EMAIL}
+- tapOn: { id: login_password }
+- inputText: ${MATIKA_PATIENT_PASSWORD}
+- hideKeyboard
+- tapOn: { id: login_button }
+# Consent is sticky for Jane; tap-if-visible.
+- tapOn: { id: consent_checkbox, optional: true }
+- tapOn: { id: consent_accept_button, optional: true }
+
+# ── Start a conversation. RECORD_AUDIO is already revoked; the system
+#    permission dialog does NOT re-appear on Android 15 after a prior
+#    denial. The screen mounts directly with text fallback ready.
+- extendedWaitUntil: { visible: { id: patient_home_start_conversation }, timeout: 60000 }
+- tapOn: { id: patient_home_start_conversation }
+
+# ── Assert text fallback is rendered (the load-bearing assertion) ──
+# This is the proof of EDGE-V2-15: even with mic denied, the user has
+# a working input affordance. The session has been started by the
+# LaunchedEffect, so the text field is mounted regardless of mic state.
+- extendedWaitUntil: { visible: { id: matika_text_fallback }, timeout: 30000 }
+
+# ── Submit a vital via text fallback to prove the path is functional ──
+- tapOn: { id: matika_text_fallback }
+- inputText: "My blood pressure is 124 over 78."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+
+# Wait for the turn to round-trip through Bedrock — "thinking…" clears
+# when isProcessingTurn flips back to false. Same wait pattern as
+# caregiver_protocol_setup.yaml.
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+
+# Sanity: text fallback still visible + ready for next input. Proves
+# the screen didn't crash and the turn completed cleanly.
+- assertVisible: { id: matika_text_fallback }
