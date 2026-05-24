@@ -1,0 +1,72 @@
+# LV-V2-06 — Off-topic / interpretation error (revised 2026-05-24).
+#
+# Sequence (all non-committable utterances to keep session open):
+#   T1: "Hello, how are you?" (greeting)
+#   T2: "What's the weather today?"
+#   T3: "Tell me a joke."
+#   T4: "How old is the sun?"
+#   T5: "Are you a robot?"
+#
+# Load-bearing assertion: session stays alive across 5 off-topic
+# turns — proves the FSM doesn't auto-close on non-numeric chatter
+# and doesn't crash. The LLM should redirect to vitals each time but
+# stay in EXTRACTING/CREATED state without committing anything.
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+- extendedWaitUntil: { visible: { id: login_email }, timeout: 15000 }
+- tapOn: { id: login_email }
+- inputText: ${MATIKA_PATIENT_EMAIL}
+- tapOn: { id: login_password }
+- inputText: ${MATIKA_PATIENT_PASSWORD}
+- hideKeyboard
+- tapOn: { id: login_button }
+- tapOn: { id: consent_checkbox, optional: true }
+- tapOn: { id: consent_accept_button, optional: true }
+
+- extendedWaitUntil: { visible: { id: patient_home_start_conversation }, timeout: 60000 }
+- tapOn: { id: patient_home_start_conversation }
+- extendedWaitUntil: { visible: { id: matika_text_fallback }, timeout: 30000 }
+
+# ── T1: greeting ─────────────────────────────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "Hello, how are you?"
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+- assertVisible: { id: matika_text_fallback }
+
+# ── T2: weather ──────────────────────────────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "What's the weather today?"
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+- assertVisible: { id: matika_text_fallback }
+
+# ── T3: joke ─────────────────────────────────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "Tell me a joke."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+- assertVisible: { id: matika_text_fallback }
+
+# ── T4: trivia ───────────────────────────────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "How old is the sun?"
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+- assertVisible: { id: matika_text_fallback }
+
+# ── T5: meta ─────────────────────────────────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "Are you a robot?"
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+- assertVisible: { id: matika_text_fallback }

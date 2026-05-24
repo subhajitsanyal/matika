@@ -1,0 +1,133 @@
+# LV-V2-13 — Caregiver patient-onboarding interpretation error.
+#
+# Extends CG-V2-04's voice patient-onboarding flow (which onboards a
+# new patient via Sonnet conversation) with off-topic interjections.
+# Verifies the patient-profile extraction survives caregivers going
+# off-script (which beta caregivers will likely do).
+#
+# Sequence (10 turns total):
+#   Turn 1: "I'd like to onboard a new patient." → start
+#   Turn 2: "Her name is Test Patient OffTopic." → name extracted
+#   Turn 3: off-topic 1 — "What time is it?"
+#   Turn 4: "She is 78 years old." → age extracted
+#   Turn 5: off-topic 2 — "Tell me about Indian classical music."
+#   Turn 6: "She has hypertension and type 2 diabetes." → conditions
+#   Turn 7: off-topic 3 — "Are you connected to the internet?"
+#   Turn 8: "Track her blood pressure every morning." → protocol
+#   Turn 9: off-topic 4 — "Can you also book her doctor appointments?"
+#   Turn 10: confirm "Yes, that's correct."
+#
+# NOTE: this flow uses the form-based onboarding path because the
+# F23 voice-onboarding requires acoustic infra. The chooser dialog
+# Form option lands on PatientOnboardingScreen, which is form-based.
+# For a TRUE voice patient-onboarding off-topic test, see the voice
+# variant `lv_v2_13_onboarding_off_topic_voice.yaml` (TBA).
+#
+# Run:
+#   source ~/.matika-test-creds.env
+#   scripts/maestro-run.sh --no-install lv_v2_13_onboarding_off_topic_text
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+# Pre-step: Jane must be cascade-deleted first so the
+# one-caregiver-one-patient gate doesn't block the Add Patient FAB.
+# The wrapper script `scripts/lv-v2-13-prep.sh` (TBA) handles the
+# cascade-delete + re-seed. For this flow, we assume John CG is in
+# zero-patient state.
+
+- extendedWaitUntil: { visible: { id: login_email }, timeout: 15000 }
+- tapOn: { id: login_email }
+- inputText: ${MATIKA_CAREGIVER_EMAIL}
+- tapOn: { id: login_password }
+- inputText: ${MATIKA_CAREGIVER_PASSWORD}
+- hideKeyboard
+- tapOn: { id: login_button }
+
+# Caregiver dashboard — FAB visible because no linked patient.
+- extendedWaitUntil: { visible: { id: onboard_patient_fab }, timeout: 60000 }
+- tapOn: { id: onboard_patient_fab }
+- extendedWaitUntil: { visible: { id: add_patient_dialog }, timeout: 5000 }
+- tapOn: { id: add_patient_choice_voice }
+- tapOn: { id: add_patient_confirm }
+
+# Voice patient-onboarding screen — MatikaConversationScreen mounts
+# in caregiver_onboarding session_type.
+- extendedWaitUntil: { visible: { id: matika_text_fallback }, timeout: 30000 }
+
+# ── Turn 1: opening ─────────────────────────────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "I'd like to onboard a new patient."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+
+# ── Turn 2: name ─────────────────────────────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "Her name is Test Patient OffTopic."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+
+# ── Turn 3: off-topic ─────────────────────────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "What time is it?"
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+
+# ── Turn 4: age ─────────────────────────────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "She is 78 years old."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+
+# ── Turn 5: off-topic ─────────────────────────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "Tell me about Indian classical music."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+
+# ── Turn 6: conditions ─────────────────────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "She has hypertension and type 2 diabetes."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+
+# ── Turn 7: off-topic ─────────────────────────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "Are you connected to the internet?"
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+
+# ── Turn 8: protocol ────────────────────────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "Please track her blood pressure every morning."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+
+# ── Turn 9: off-topic ─────────────────────────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "Can you also book her doctor appointments?"
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+
+# ── Turn 10: confirm and characterize final state ─────
+# Whether the LLM is robust enough to ignore the 4 off-topic turns and
+# still extract a complete patient profile (name + age + conditions +
+# protocol) is the load-bearing finding. After confirm, the session
+# should reach PROFILE_CONFIRMED or COMPLETE and the
+# create-patient-from-voice lambda fires.
+- tapOn: { id: matika_text_fallback }
+- inputText: "Yes, that's correct. Please save."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }

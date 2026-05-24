@@ -509,13 +509,51 @@ The four, updated:
 
 **Cross-reference:** `docs/runbook_oncall_v2.md` for the inline TARGET sections + diagnostic steps that future alarm wiring should preserve.
 
-### F56 — 15-turn conversation stress test infeasible against current seed; explicit-confirm text path flakes (NEW — 2026-05-24)
+### F57 — Patient daily-logging session aggressively auto-closes within 1-2 turns regardless of content (NEW — 2026-05-24)
 
-**Severity:** Low — characterization finding from #24 (Error-recovery + multi-turn ~15 turn conversation testing). The product works correctly; the test rig was scoped beyond what the current seed configuration supports.
+**Severity:** **Medium / open question** — affects beta user experience. Either intentional UX choice that should be documented for beta cohort onboarding, or a bug where the FSM closes sessions when it shouldn't.
+
+**Discovered while testing LV-V2-02 / LV-V2-05 / LV-V2-06.** The patient daily-logging session ends after ~1-2 turns regardless of:
+
+- **Whether values are committable.** Jane has all 7 vitals seeded in `parameter_configs` (BP sys, BP dia, glucose, weight, temp, heart_rate, spo2). Submitting any single one ("My BP is 130/85.") followed by confirm ("Yes save that.") closes the session — even though 6 other configured vitals remain unlogged.
+- **Whether values are off-protocol.** Submitting non-standard vitals not in the schema ("My cholesterol is 220.") still triggers session close within 2 turns. The LLM either commits/closes or refuses+closes — net effect identical.
+- **Whether the utterance is non-numeric.** Even "Hello, how are you?" as turn 1 followed by "What's the weather today?" as turn 2 closes the session. There is no extractable value, no PENDING state, yet the session ends.
+
+**The ONE working multi-turn pattern.** Turn 1 must produce a PENDING value (e.g., "My blood pressure is 130 over 85."), turn 2 can be a non-committing clarifying question on the SAME pending value ("Is that in the normal range for me?"). The FSM stays in PENDING_CONFIRMATION for turn 2. Turn 3 then auto-commits (as F56 captured) — either with explicit confirm OR a new numeric statement OR even some non-numeric statements.
+
+**Implications for v2.0 launch.**
+- Multi-vital chains in a single session are structurally impossible — every vital requires its own session-start tap. Beta caregivers configuring 6 vitals/day means a patient does 6 conversation-starts per day.
+- A 15-turn long-session test shape is infeasible against the patient_logging session_type. For long-session coverage, use CAREGIVER protocol-config (CG-V2-03 already runs 6 turns; extension to 15 should be feasible).
+- The single-vital-per-session pattern needs to be in patient onboarding copy / coaching so users don't expect to chain multiple vitals.
+
+**Root cause (LLM prompt instruction).** `backend/lambdas/bedrock-router/prompts/system_v2.md` line 43 instructs the LLM:
+
+> 12. **When all required parameters are captured**, give a brief warm summary and close. Set `actions: [{ type: "complete_session", ... }]`.
+
+The LLM is acting on this rule — but with an interpretation that diverges from product intent. It treats "the single BP just committed" as "all required parameters" and emits `complete_session` even though Jane has 6 other configured vitals (glucose, weight, temp, heart_rate, spo2) that haven't been logged today. The handler then flips `session_status = complete` and the SessionCompleteCard mounts. Likely cause: the LLM either (a) isn't being passed the full `parameter_configs` list as context, OR (b) the prompt doesn't make it explicit that "required parameters" means "the FULL configured set per the patient's protocol, not just whatever the patient happened to mention."
+
+**Fix options (prompt-side, no code change needed).**
+1. **Pass the parameter_configs list explicitly into the conversation.** Inject as a system-prompt prefix: "The patient's configured monitoring set today is: BP (sys+dia), glucose, weight, temp, heart_rate, spo2. Do NOT emit complete_session until at least one reading for each has been committed today (or the patient explicitly opts to defer)."
+2. **Rewrite rule 12.** From "When all required parameters are captured" → "When all parameters in `<configured_set>` (provided above) have at least one reading committed in today's session, ..."
+3. **Add an explicit "ask for next vital" guidance.** After each commit, the prompt should direct the LLM to check the configured set and prompt for the next unlogged vital, only emitting `complete_session` when the protocol is satisfied.
+
+Pre-fix: a beta caregiver who configures 6 vitals/day will see their patient do 6 conversation-starts/day. Post-fix: a single conversation can walk through the configured protocol.
+
+**Open question.** Is the current single-vital-per-session behavior an INTENTIONAL UX choice (low cognitive load for elderly) or an UNINTENDED consequence of the prompt? Needs product sign-off either way.
+
+**Owner:** `backend/prompts` (prompt audit + tune) + `product` (one-session-one-vital UX decision).
+
+**Cross-reference:** `backend/lambdas/bedrock-router/prompts/system_v2.md:43`, `backend/lambdas/bedrock-router/src/handler.ts:201-220` (complete_session handling), F56 for the related text-path commit-flake finding.
+
+---
+
+### F56 — Multi-turn conversation characterization; explicit-confirm text path flakes (NEW — 2026-05-24; revised same day)
+
+**Severity:** Low — characterization finding from #24 (Error-recovery + multi-turn ~15 turn conversation testing). The product works correctly; the test rig characterization had wrong premises that were corrected later.
 
 **Findings during the bench-cycle attempt.**
 
-1. **Single-parameter auto-close on patient_logging sessions.** Jane PT's `parameter_configs` rows on staging include only `blood_pressure_systolic` + `blood_pressure_diastolic`. The patient daily-logging FSM auto-completes the session as soon as all configured parameters commit. So a 15-vital multi-vital chain (BP → glucose → weight → temp → pulse → SpO2) is structurally impossible against Jane — the session ends after BP regardless of further turns. A genuine 15-turn shape requires either (a) seeding Jane with 5+ additional `parameter_configs` rows, or (b) using the caregiver protocol-config session type which is multi-parameter by design and already runs 6 turns successfully (CG-V2-03 evidence).
+1. **Initial wrong premise corrected.** I initially concluded Jane PT had only `blood_pressure_systolic` + `blood_pressure_diastolic` seeded — that was wrong. The 2026-05-24 sweep confirmed Jane has 7 `parameter_configs` rows on staging: blood_glucose, blood_pressure_diastolic, blood_pressure_systolic, body_temperature_c, body_weight, heart_rate, spo2 — all active. The 1-turn "auto-close" I observed earlier is actually post-commit behavior; whether the FSM walks through subsequent parameters serially (next-vital prompt) or closes after the first commit is still being empirically tested by LV-V2-02 multi-vital chain. Updated catalog in `docs/voice_multi_turn_journeys.md`.
 
 2. **Revision-chain collapses on text fallback.** A second attempt reframed as a long revision chain (turn 1 "BP 130/85" → turn 2 "actually 140/90" → turn 3 "no wait, 134/87" → ...) hoping to keep the FSM in PENDING_CONFIRMATION for many turns. In practice, the LLM commits-with-revision: any new numeric value during PENDING_CONFIRMATION is treated as both a revision AND an implicit confirm of the new value → COMMIT → session close. The revision chain collapses to 2 turns. Non-numeric clarifying-question turns ("Is that in the normal range?", "How am I doing?") DO keep the FSM in PENDING_CONFIRMATION — confirmed by `e2e_long_conversation_text.yaml` (2 turns PASS reliably). So long-session shape against Jane is feasible only with non-numeric inter-turns + a final commit, capped by the auto-close after BP commits.
 

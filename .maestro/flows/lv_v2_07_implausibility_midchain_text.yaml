@@ -1,0 +1,64 @@
+# LV-V2-07 — Implausibility challenge recovery mid-chain.
+#
+# Extends PT-V2-08 (implausibility on the first turn) by inserting a
+# PLAUSIBILITY_CHALLENGE in the middle of a 4-turn chain. Verifies the
+# challenge doesn't corrupt FSM state — the patient can correct the
+# implausible value and the session continues normally.
+#
+# Sequence:
+#   Turn 1: BP 130/85 → PENDING_CONFIRMATION (normal, in-range)
+#   Turn 2: implausible "Actually 400 over 300" → PLAUSIBILITY_CHALLENGE
+#           (pending value should NOT be overwritten with 400/300;
+#            FSM should re-ask user to double-check)
+#   Turn 3: realistic correction "Sorry, 132 over 86" → PENDING_CONFIRMATION
+#   Turn 4 (skipped — F56 commit-flake). Assertion that FSM is
+#   PENDING with corrected value at turn 3 is the load-bearing check.
+#
+# Run:
+#   source ~/.matika-test-creds.env
+#   scripts/maestro-run.sh --no-install lv_v2_07_implausibility_midchain_text
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+- extendedWaitUntil: { visible: { id: login_email }, timeout: 15000 }
+- tapOn: { id: login_email }
+- inputText: ${MATIKA_PATIENT_EMAIL}
+- tapOn: { id: login_password }
+- inputText: ${MATIKA_PATIENT_PASSWORD}
+- hideKeyboard
+- tapOn: { id: login_button }
+- tapOn: { id: consent_checkbox, optional: true }
+- tapOn: { id: consent_accept_button, optional: true }
+
+- extendedWaitUntil: { visible: { id: patient_home_start_conversation }, timeout: 60000 }
+- tapOn: { id: patient_home_start_conversation }
+- extendedWaitUntil: { visible: { id: matika_text_fallback }, timeout: 30000 }
+
+# ── Turn 1: in-range BP → PENDING_CONFIRMATION ───────
+- tapOn: { id: matika_text_fallback }
+- inputText: "My blood pressure is 130 over 85."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+- assertVisible: "(?i).*PENDING_CONFIRMATION.*"
+
+# ── Turn 2: implausible revision → PLAUSIBILITY_CHALLENGE ────
+# Per PT-V2-08 evidence the FSM badge reads PLAUSIBILITY_CHALLENGE
+# and the AI response asks the patient to double-check the monitor.
+- tapOn: { id: matika_text_fallback }
+- inputText: "Actually 400 over 300."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+- assertVisible: "(?i).*PLAUSIBILITY_CHALLENGE.*|.*double.check.*|.*seems.*high.*|.*unusual.*"
+
+# ── Turn 3: realistic correction → back to PENDING_CONFIRMATION ──
+- tapOn: { id: matika_text_fallback }
+- inputText: "Sorry, the actual reading is 132 over 86."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+- assertVisible: "(?i).*PENDING_CONFIRMATION.*"

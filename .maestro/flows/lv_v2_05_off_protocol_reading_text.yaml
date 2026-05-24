@@ -1,0 +1,79 @@
+# LV-V2-05 — Off-protocol reading (revised 2026-05-24).
+#
+# Jane's parameter_configs has the 7 standard vitals (BP sys, BP dia,
+# glucose, weight, temp, heart_rate, spo2). To exercise an "off-
+# protocol" reading we need vitals NOT in her configured set —
+# cholesterol, vitamin D, blood urea, INR, etc. These are real lab
+# values a patient might mention but aren't in the standard
+# parameter_configs schema.
+#
+# Sequence (4 turns total — patient_logging session auto-closes after
+# any committable vital commits, so we stay off-protocol the entire
+# time):
+#   T1: "My cholesterol is 220." → expect: AI explains it's not in
+#        the configured protocol, no commit.
+#   T2: "My vitamin D level is 18."
+#   T3: "My blood urea is 32."
+#   T4: "Tell my caregiver to add cholesterol tracking."
+#
+# Load-bearing assertion: session stays alive (matika_text_fallback
+# still mounted) across 4 turns — proves the FSM doesn't crash or
+# auto-close when no committable vital is mentioned.
+#
+# Run:
+#   source ~/.matika-test-creds.env
+#   scripts/maestro-run.sh --no-install lv_v2_05_off_protocol_reading_text
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+- extendedWaitUntil: { visible: { id: login_email }, timeout: 15000 }
+- tapOn: { id: login_email }
+- inputText: ${MATIKA_PATIENT_EMAIL}
+- tapOn: { id: login_password }
+- inputText: ${MATIKA_PATIENT_PASSWORD}
+- hideKeyboard
+- tapOn: { id: login_button }
+- tapOn: { id: consent_checkbox, optional: true }
+- tapOn: { id: consent_accept_button, optional: true }
+
+- extendedWaitUntil: { visible: { id: patient_home_start_conversation }, timeout: 60000 }
+- tapOn: { id: patient_home_start_conversation }
+- extendedWaitUntil: { visible: { id: matika_text_fallback }, timeout: 30000 }
+
+# ── T1: off-protocol cholesterol ─────────────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "My cholesterol is 220."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+# Session should still be open — cholesterol isn't in parameter_configs
+# so the LLM should explain it can't track that here. matika_text_fallback
+# stays mounted, confirming no auto-close.
+- assertVisible: { id: matika_text_fallback }
+
+# ── T2: off-protocol vitamin D ──────────────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "My vitamin D level is 18."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+- assertVisible: { id: matika_text_fallback }
+
+# ── T3: off-protocol blood urea ─────────────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "My blood urea is 32."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+- assertVisible: { id: matika_text_fallback }
+
+# ── T4: ask the AI to coordinate with caregiver ─────
+- tapOn: { id: matika_text_fallback }
+- inputText: "Can you tell my caregiver to add cholesterol tracking?"
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+- assertVisible: { id: matika_text_fallback }

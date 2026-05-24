@@ -1,0 +1,134 @@
+# LV-V2-02 — Multi-vital chain (text fallback).
+#
+# Jane has 7 parameter_configs rows on staging (BP sys, BP dia,
+# glucose, temp, weight, heart_rate, spo2). This flow exercises a
+# full daily-logging chain across all of them, confirming each
+# vital before moving to the next.
+#
+# What's being characterized:
+#   - Does the FSM walk through subsequent params after each commit?
+#   - Does the LLM proactively ask for the next vital, or does the
+#     patient have to volunteer it?
+#   - Does the session stay alive across 12+ turns?
+#   - Does Bedrock context retention handle 7-vital state?
+#
+# Sequence (12 turns):
+#   T1:  BP statement (130/85)
+#   T2:  confirm BP
+#   T3:  glucose statement (110 mg/dL)
+#   T4:  confirm glucose
+#   T5:  weight statement (72 kg)
+#   T6:  confirm weight
+#   T7:  temperature statement (36.8°C)
+#   T8:  confirm temp
+#   T9:  pulse statement (78 bpm)
+#   T10: confirm pulse
+#   T11: SpO2 statement (98%)
+#   T12: confirm SpO2 — session reaches COMPLETE after this
+#
+# Run:
+#   source ~/.matika-test-creds.env
+#   scripts/maestro-run.sh --no-install lv_v2_02_multi_vital_chain_text
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+- extendedWaitUntil: { visible: { id: login_email }, timeout: 15000 }
+- tapOn: { id: login_email }
+- inputText: ${MATIKA_PATIENT_EMAIL}
+- tapOn: { id: login_password }
+- inputText: ${MATIKA_PATIENT_PASSWORD}
+- hideKeyboard
+- tapOn: { id: login_button }
+- tapOn: { id: consent_checkbox, optional: true }
+- tapOn: { id: consent_accept_button, optional: true }
+
+- extendedWaitUntil: { visible: { id: patient_home_start_conversation }, timeout: 60000 }
+- tapOn: { id: patient_home_start_conversation }
+- extendedWaitUntil: { visible: { id: matika_text_fallback }, timeout: 30000 }
+
+# ── T1: BP ──────────────────────────────────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "My blood pressure is 130 over 85."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+
+# ── T2: confirm BP ──────────────────────────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "Yes save that."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+
+# ── T3: glucose ─────────────────────────────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "My blood sugar is 110."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+
+# ── T4: confirm glucose ─────────────────────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "Yes that's right."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+
+# ── T5: weight ──────────────────────────────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "My weight is 72 kilograms."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+
+# ── T6: confirm weight ──────────────────────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "Correct, save it."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+
+# ── T7: temperature ─────────────────────────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "My temperature is 36.8 degrees Celsius."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+
+# ── T8: confirm temp ────────────────────────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "Yes."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+
+# ── T9: pulse ───────────────────────────────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "My pulse is 78."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+
+# ── T10: confirm pulse ──────────────────────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "Yes save it."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+
+# ── T11: SpO2 ───────────────────────────────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "My oxygen saturation is 98 percent."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+
+# ── T12: final confirm (session should auto-complete) ──
+- tapOn: { id: matika_text_fallback }
+- inputText: "Yes save all of that."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
