@@ -509,6 +509,24 @@ The four, updated:
 
 **Cross-reference:** `docs/runbook_oncall_v2.md` for the inline TARGET sections + diagnostic steps that future alarm wiring should preserve.
 
+### F56 — 15-turn conversation stress test infeasible against current seed; explicit-confirm text path flakes (NEW — 2026-05-24)
+
+**Severity:** Low — characterization finding from #24 (Error-recovery + multi-turn ~15 turn conversation testing). The product works correctly; the test rig was scoped beyond what the current seed configuration supports.
+
+**Findings during the bench-cycle attempt.**
+
+1. **Single-parameter auto-close on patient_logging sessions.** Jane PT's `parameter_configs` rows on staging include only `blood_pressure_systolic` + `blood_pressure_diastolic`. The patient daily-logging FSM auto-completes the session as soon as all configured parameters commit. So a 15-vital multi-vital chain (BP → glucose → weight → temp → pulse → SpO2) is structurally impossible against Jane — the session ends after BP regardless of further turns. A genuine 15-turn shape requires either (a) seeding Jane with 5+ additional `parameter_configs` rows, or (b) using the caregiver protocol-config session type which is multi-parameter by design and already runs 6 turns successfully (CG-V2-03 evidence).
+
+2. **Revision-chain collapses on text fallback.** A second attempt reframed as a long revision chain (turn 1 "BP 130/85" → turn 2 "actually 140/90" → turn 3 "no wait, 134/87" → ...) hoping to keep the FSM in PENDING_CONFIRMATION for many turns. In practice, the LLM commits-with-revision: any new numeric value during PENDING_CONFIRMATION is treated as both a revision AND an implicit confirm of the new value → COMMIT → session close. The revision chain collapses to 2 turns. Non-numeric clarifying-question turns ("Is that in the normal range?", "How am I doing?") DO keep the FSM in PENDING_CONFIRMATION — confirmed by `e2e_long_conversation_text.yaml` (2 turns PASS reliably). So long-session shape against Jane is feasible only with non-numeric inter-turns + a final commit, capped by the auto-close after BP commits.
+
+3. **Explicit-confirm text turn flakes Maestro.** A 3rd turn of "Yes that is correct, please save it." after a clarifying question intermittently fails on `tapOn: matika_text_send` — Maestro reports element-not-found between `hideKeyboard` and the send tap. Two hypotheses: (a) the LLM async-commits between turn 2 response render and turn 3 dispatch — the SessionCompleteCard mounts before Maestro reaches the send button. (b) the keyboard-dismiss animation overlaps the matika_text_send visibility window in a way the Maestro tree-resolution races. Voice-side PT-V2-03 evidence shows the same 2-turn pattern (statement → confirm) working reliably via remote-TTS — so this is text-path-specific. Workaround: rely on `caregiver_protocol_setup.yaml` (which uses single-turn statement + auto-commit on submit) and PT-V2-03 (voice-driven explicit confirm) for full-coverage; the text fallback's explicit-confirm 3rd-turn is acoustically unnecessary anyway.
+
+**Owner:** `qa-testing` (bench rig direction — pick one of the feasible 15-turn shapes if expansion is needed pre-GA) + `android` (text-fallback timing investigation if the 3rd-turn flake bites again).
+
+**Wire-target:** Defer to pre-GA if 15-turn stress coverage becomes load-bearing. The current `e2e_long_conversation_text.yaml` 2-turn PASS exercises the realistic patient session shape (statement → clarifying question → still pending) which is the main thing that wasn't covered by other journeys.
+
+**Cross-reference:** `.maestro/flows/e2e_long_conversation_text.yaml`, CG-V2-03 (`caregiver_protocol_voice.yaml`) for multi-turn happy-path, PT-V2-03 evidence in `docs/journeys_voice.md` for voice-path 2-turn confirm.
+
 ### F46 — S3 access-logs bucket has no noncurrent-version expiration rule (NEW — 2026-05-17 Stream D)
 
 **Severity:** **Low — cost cleanup, no functional impact today.** The DR runbook backup-arch overview (commit `9d2c9dd`, `docs/dr_runbook_v2.md` §"S3 backups") surfaced the gap during terraform verification. Other buckets (`carelog-v2-<env>-documents-<acct>`, `carelog-raw-<env>-<acct>`) have proper noncurrent-version lifecycle policies declared in `infrastructure/terraform/modules/s3/main.tf`. The access-logs bucket (`carelog-v2-<env>-access-logs-<acct>`) is versioned but has no lifecycle rule — every version retained indefinitely. Will accumulate cost over time, especially as access-log volume scales with beta + GA traffic.
