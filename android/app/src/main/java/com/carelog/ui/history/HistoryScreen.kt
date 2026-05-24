@@ -44,6 +44,7 @@ fun HistoryScreen(
     val uiState by viewModel.uiState.collectAsState()
 
     Scaffold(
+        modifier = Modifier.testTag("history_screen"),
         topBar = {
             TopAppBar(
                 title = { Text("History") },

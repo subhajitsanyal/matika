@@ -141,7 +141,7 @@ fun AlertListScreen(
             )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
-        modifier = modifier
+        modifier = modifier.testTag("alert_list")
     ) { paddingValues ->
         if (uiState.isLoading && uiState.alerts.isEmpty()) {
             Box(

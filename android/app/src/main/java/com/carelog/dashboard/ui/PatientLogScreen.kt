@@ -166,7 +166,7 @@ fun PatientLogScreen(
             )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
-        modifier = modifier
+        modifier = modifier.testTag("patient_log_screen")
     ) { paddingValues ->
         if (uiState.isLoading && uiState.interactions.isEmpty()) {
             Box(

@@ -1,0 +1,55 @@
+# CG-V2-23 — caregiver opens AlertInboxScreen for Jane.
+#
+# Separate from CG-V2-07/08/09 (push delivery): this exercises the UI
+# of opening the alerts list and confirming it renders. Same expand-
+# then-tap nav pattern as CG-V2-24, but the OutlinedButton labelled
+# "Alerts" routes to AlertInboxScreen instead of PatientLogScreen.
+#
+# Standalone vs. chained: This flow only asserts the screen mounts
+# (alert_list testTag) which works in both empty AND populated states.
+# Per journeys_non_voice.md the full assertion is that alert rows
+# render with vital_value + threshold_min/max fields (F13 fix surface),
+# which requires an `alerts` row in the DB — run AFTER E2E-V2-02 to
+# extend this flow with row-content assertions.
+#
+# Env vars:
+#   MATIKA_CAREGIVER_EMAIL    — sanyalsubhajit2010+cg@gmail.com
+#   MATIKA_CAREGIVER_PASSWORD — buri123@S (post-reset)
+#
+# Run:
+#   source ~/.matika-test-creds.env
+#   scripts/maestro-run.sh --no-install cg_v2_23_caregiver_alerts_list
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+# Caregiver login
+- extendedWaitUntil: { visible: { id: login_email }, timeout: 15000 }
+- tapOn: { id: login_email }
+- inputText: ${MATIKA_CAREGIVER_EMAIL}
+- tapOn: { id: login_password }
+- inputText: ${MATIKA_CAREGIVER_PASSWORD}
+- hideKeyboard
+- tapOn: { id: login_button }
+
+# Caregiver home — History icon visible signals the surface is ready.
+- extendedWaitUntil: { visible: { id: caregiver_home_history }, timeout: 60000 }
+
+# Tap Jane's patient card to expand it.
+- tapOn: "Jane PT"
+
+# Expanded state reveals OutlinedButton labelled "Alerts"
+# (CaregiverHomeScreen.kt — distinct from the patient-card alert badge
+# which renders just a count number; the button text "Alerts" is unique).
+- extendedWaitUntil: { visible: "Alerts", timeout: 10000 }
+- tapOn: "Alerts"
+
+# AlertListScreen mounts (dashboard/ui/AlertListScreen.kt — the v2
+# patient-scoped alerts surface). NOTE: distinct from the legacy
+# ui/relative/AlertInboxScreen.kt — the caregiver "Alerts" button on
+# CaregiverHomeScreen routes through CareLogNavHost → AlertListScreen.
+# `alert_list` testTag on the root Scaffold (added 2026-05-23). Present
+# in both empty ("No alerts" + green check) and populated states.
+- extendedWaitUntil: { visible: { id: alert_list }, timeout: 15000 }

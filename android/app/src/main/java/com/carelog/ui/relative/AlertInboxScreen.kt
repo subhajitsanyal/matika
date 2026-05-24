@@ -103,6 +103,7 @@ fun AlertInboxScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .testTag("alert_list")
         ) {
             when {
                 uiState.isLoading && uiState.alerts.isEmpty() -> {

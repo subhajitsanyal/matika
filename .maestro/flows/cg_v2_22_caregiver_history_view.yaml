@@ -1,0 +1,41 @@
+# CG-V2-22 — caregiver opens HistoryScreen via the home History icon.
+#
+# Distinct from CG-V2-17 (Trends — chart + 10 most-recent per vital):
+# HistoryScreen is the unified cross-vital chronological list with
+# recorder identity + sync status. HistoryViewModel resolves
+# `user.linkedPatientId` for caregivers, so it scopes to Jane.
+#
+# Env vars:
+#   MATIKA_CAREGIVER_EMAIL    — sanyalsubhajit2010+cg@gmail.com
+#   MATIKA_CAREGIVER_PASSWORD — buri123@S (post-reset)
+#
+# Run:
+#   source ~/.matika-test-creds.env
+#   scripts/maestro-run.sh --no-install cg_v2_22_caregiver_history_view
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+# Caregiver login
+- extendedWaitUntil: { visible: { id: login_email }, timeout: 15000 }
+- tapOn: { id: login_email }
+- inputText: ${MATIKA_CAREGIVER_EMAIL}
+- tapOn: { id: login_password }
+- inputText: ${MATIKA_CAREGIVER_PASSWORD}
+- hideKeyboard
+- tapOn: { id: login_button }
+
+# Caregiver home reachable — History icon lives in the TopAppBar actions
+# alongside Settings (testTag added on the IconButton).
+- extendedWaitUntil: { visible: { id: caregiver_home_history }, timeout: 60000 }
+- tapOn: { id: caregiver_home_history }
+
+# HistoryScreen mounts — `history_screen` testTag on the root Scaffold
+# is present in both empty and populated states. `history_list` only
+# mounts when entries exist (LazyColumn is gated on uiState.entries),
+# so we prefer the screen-level tag here. After PT-V2-15..20 the empty
+# state shouldn't be visible; the orchestrator may chain a stronger
+# assertion (`history_list` visible) once that journey has been run.
+- extendedWaitUntil: { visible: { id: history_screen }, timeout: 15000 }

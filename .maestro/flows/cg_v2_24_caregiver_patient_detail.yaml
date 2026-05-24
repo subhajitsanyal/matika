@@ -1,0 +1,54 @@
+# CG-V2-24 — caregiver drills into a patient's PatientLogScreen.
+#
+# Distinct from CG-V2-17 (Trends, shared chart across patients in v2.0)
+# and CG-V2-22 (History, unified cross-vital list scoped to one patient).
+# This journey exercises the per-patient drill-down that scopes
+# subsequent operations (thresholds edit, alerts review) to a specific
+# patient — important once the caregiver has >1 linked patient.
+#
+# Nav: tap Jane's patient card → expands to reveal "View Logs" + "Alerts"
+# buttons → tap "View Logs" → `PatientLogScreen` mounts.
+#
+# Env vars:
+#   MATIKA_CAREGIVER_EMAIL    — sanyalsubhajit2010+cg@gmail.com
+#   MATIKA_CAREGIVER_PASSWORD — buri123@S (post-reset)
+#
+# Run:
+#   source ~/.matika-test-creds.env
+#   scripts/maestro-run.sh --no-install cg_v2_24_caregiver_patient_detail
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+# Caregiver login
+- extendedWaitUntil: { visible: { id: login_email }, timeout: 15000 }
+- tapOn: { id: login_email }
+- inputText: ${MATIKA_CAREGIVER_EMAIL}
+- tapOn: { id: login_password }
+- inputText: ${MATIKA_CAREGIVER_PASSWORD}
+- hideKeyboard
+- tapOn: { id: login_button }
+
+# Caregiver home — wait for History affordance to confirm the
+# CaregiverHomeScreen is fully rendered (FABs may take longer).
+- extendedWaitUntil: { visible: { id: caregiver_home_history }, timeout: 60000 }
+
+# Tap Jane's patient card to expand it. The PatientCard is a clickable
+# Card; tapping anywhere on it toggles the expand state. The patient
+# name "Jane PT" is the canonical bench fixture name (see
+# jane_dev_test_account memory + journeys_non_voice.md). The text-match
+# lands on the card row regardless of which header card position it's in.
+- tapOn: "Jane PT"
+
+# Expanded state reveals OutlinedButton labelled "View Logs"
+# (CaregiverHomeScreen.kt — OutlinedButton inside the AnimatedVisibility
+# block, no testTag yet; text-match is durable enough since only one
+# card can be expanded at a time).
+- extendedWaitUntil: { visible: "View Logs", timeout: 10000 }
+- tapOn: "View Logs"
+
+# PatientLogScreen mounts — `patient_log_screen` testTag added on the
+# root Scaffold (2026-05-23).
+- extendedWaitUntil: { visible: { id: patient_log_screen }, timeout: 15000 }
