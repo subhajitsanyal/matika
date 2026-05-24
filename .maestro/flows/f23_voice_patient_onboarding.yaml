@@ -68,11 +68,16 @@ appId: com.carelog
 - hideKeyboard
 - tapOn: { id: login_button }
 
-# ── Caregiver dashboard → voice FAB ───────────────────────
+# ── Caregiver dashboard → Add Patient FAB → chooser → Voice ──
+# Single Add Patient FAB (consolidated 2026-05-24); opens an
+# AlertDialog with Voice/Form radio + OK to confirm the choice.
 - extendedWaitUntil:
-    visible: { id: add_patient_voice_fab }
+    visible: { id: onboard_patient_fab }
     timeout: 60000
-- tapOn: { id: add_patient_voice_fab }
+- tapOn: { id: onboard_patient_fab }
+- extendedWaitUntil: { visible: { id: add_patient_dialog }, timeout: 5000 }
+- tapOn: { id: add_patient_choice_voice }
+- tapOn: { id: add_patient_confirm }
 
 # ── Voice conversation screen mounted ─────────────────────
 - extendedWaitUntil:

@@ -29,12 +29,12 @@ import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -47,25 +47,31 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -85,7 +91,7 @@ import com.carelog.ui.NavResults
  * - Pull-to-refresh for patient list and health status
  * - Full accessibility support with descriptive labels
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
 fun CaregiverHomeScreen(
     onNavigateToOnboarding: () -> Unit = {},
@@ -121,6 +127,8 @@ fun CaregiverHomeScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
+    var showAddPatientChooser by remember { mutableStateOf(false) }
+    var addPatientChoice by remember { mutableStateOf("voice") }
 
     LaunchedEffect(uiState.errorMessage) {
         uiState.errorMessage?.let { message ->
@@ -180,39 +188,20 @@ fun CaregiverHomeScreen(
             )
         },
         floatingActionButton = {
-            // F23 — two FABs stacked vertically. Voice-driven onboarding
-            // sits on top (primary v2 path for caregivers); the existing
-            // form-based onboarding sits beneath it. Tests target each
-            // testTag directly so reordering is safe.
-            Column(
-                horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                ExtendedFloatingActionButton(
-                    onClick = onNavigateToPatientVoiceOnboarding,
-                    icon = {
-                        Icon(Icons.Default.Mic, contentDescription = null)
-                    },
-                    text = { Text("Add Patient via Conversation") },
-                    modifier = Modifier
-                        .testTag("add_patient_voice_fab")
-                        .semantics {
-                            contentDescription = "Add a new patient through a voice conversation"
-                        }
-                )
-                ExtendedFloatingActionButton(
-                    onClick = onNavigateToOnboarding,
-                    icon = {
-                        Icon(Icons.Default.PersonAdd, contentDescription = null)
-                    },
-                    text = { Text("Add Patient") },
-                    modifier = Modifier
-                        .testTag("onboard_patient_fab")
-                        .semantics {
-                            contentDescription = "Onboard a new patient"
-                        }
-                )
-            }
+            // Single Add Patient FAB. Tapping opens a chooser dialog with
+            // voice vs form options (state hoisted to the parent for
+            // simplicity; mirrors the delete_patient_dialog pattern in
+            // SettingsScreen.kt:243-287).
+            ExtendedFloatingActionButton(
+                onClick = { showAddPatientChooser = true },
+                icon = { Icon(Icons.Default.PersonAdd, contentDescription = null) },
+                text = { Text("Add Patient") },
+                modifier = Modifier
+                    .testTag("onboard_patient_fab")
+                    .semantics {
+                        contentDescription = "Add a new patient"
+                    }
+            )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         modifier = modifier
@@ -330,6 +319,74 @@ fun CaregiverHomeScreen(
                 }
             }
         }
+    }
+
+    // Add Patient chooser dialog. AlertDialog renders in its own Popup
+    // window; per maestro_lessons.md #8 the root testTagsAsResourceId
+    // bridge does NOT propagate across that boundary, so we set it
+    // directly on the dialog's modifier. Same pattern as
+    // SettingsScreen.delete_patient_dialog.
+    if (showAddPatientChooser) {
+        AlertDialog(
+            modifier = Modifier
+                .semantics { testTagsAsResourceId = true }
+                .testTag("add_patient_dialog"),
+            onDismissRequest = { showAddPatientChooser = false },
+            title = { Text("How would you like to add a patient?") },
+            text = {
+                Column {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { addPatientChoice = "voice" }
+                            .testTag("add_patient_choice_voice")
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(
+                            selected = addPatientChoice == "voice",
+                            onClick = { addPatientChoice = "voice" },
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Voice (recommended)")
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { addPatientChoice = "form" }
+                            .testTag("add_patient_choice_form")
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(
+                            selected = addPatientChoice == "form",
+                            onClick = { addPatientChoice = "form" },
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Form")
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showAddPatientChooser = false
+                        if (addPatientChoice == "voice") {
+                            onNavigateToPatientVoiceOnboarding()
+                        } else {
+                            onNavigateToOnboarding()
+                        }
+                    },
+                    modifier = Modifier.testTag("add_patient_confirm"),
+                ) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showAddPatientChooser = false },
+                    modifier = Modifier.testTag("add_patient_cancel"),
+                ) { Text("Cancel") }
+            }
+        )
     }
 }
 

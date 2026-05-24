@@ -48,7 +48,7 @@ appId: com.carelog
 - tapOn: { id: login_button }
 
 # Caregiver dashboard reachable
-- extendedWaitUntil: { visible: { id: add_patient_voice_fab }, timeout: 60000 }
+- extendedWaitUntil: { visible: { id: onboard_patient_fab }, timeout: 60000 }
 
 # Open settings
 - tapOn:

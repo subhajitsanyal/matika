@@ -58,6 +58,15 @@ appId: com.carelog
 - tapOn:
     id: onboard_patient_fab
 
+# ── Chooser dialog (consolidated 2026-05-24) → Form path ────
+# The single Add Patient FAB opens an AlertDialog with Voice/Form
+# options. CG-V2-02 is the form smoke gate, so select Form + confirm.
+- extendedWaitUntil:
+    visible: { id: add_patient_dialog }
+    timeout: 5000
+- tapOn: { id: add_patient_choice_form }
+- tapOn: { id: add_patient_confirm }
+
 # ── Fill the patient profile form ───────────────────────────
 - extendedWaitUntil:
     visible:

@@ -61,6 +61,13 @@ appId: com.carelog
 - extendedWaitUntil: { visible: { id: onboard_patient_fab }, timeout: 60000 }
 - tapOn: { id: onboard_patient_fab }
 
+# Chooser dialog (consolidated 2026-05-24) → Form path. The voice
+# reminder config conversation begins AFTER the form-onboarded patient
+# is created — separate from CG-V2-04's voice onboarding entry path.
+- extendedWaitUntil: { visible: { id: add_patient_dialog }, timeout: 5000 }
+- tapOn: { id: add_patient_choice_form }
+- tapOn: { id: add_patient_confirm }
+
 # ── Patient onboarding form ─────────────────────────────────
 - extendedWaitUntil: { visible: { id: onboarding_name }, timeout: 10000 }
 - tapOn: { id: onboarding_name }
