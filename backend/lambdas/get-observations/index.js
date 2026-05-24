@@ -62,8 +62,8 @@ exports.handler = async (event) => {
   const cognitoSub = event.requestContext?.authorizer?.claims?.sub;
   if (!cognitoSub) return resp(401, { error: "Unauthorized" });
 
-  const patientId = event.pathParameters?.patientId;
-  if (!patientId) return resp(400, { error: "Patient ID required" });
+  const patientIdParam = event.pathParameters?.patientId;
+  if (!patientIdParam) return resp(400, { error: "Patient ID required" });
 
   const qs = event.queryStringParameters || {};
   const vitalTypeFilter = qs.vitalType?.toUpperCase();
@@ -76,39 +76,43 @@ exports.handler = async (event) => {
   try {
     dbClient = await createDbConnection();
 
-    // Check access
+    // Android client sends the short code (`CL-XXXXXX`) from
+    // custom:linked_patient_id; the access check needs the UUID. Same
+    // pattern as F52/F54. Also keep the short code in hand because
+    // sync-observation writes S3 objects at
+    // `observations/{short_code}/{YYYY}/...`.
+    const resolved = await resolvePatientDbId(dbClient, patientIdParam);
+    if (!resolved) return resp(404, { error: "Patient not found" });
+    const patientUuid = resolved.id;
+    const patientShortCode = resolved.patient_id;
+
+    // Check access against the resolved UUID.
     const access = await dbClient.query(
       `SELECT 1 FROM persona_links pl
-       JOIN patients p ON pl.patient_id = p.id
        JOIN users u ON pl.linked_user_id = u.id
-       WHERE p.id = $1::uuid AND u.cognito_sub = $2 AND pl.is_active = true`,
-      [patientId, cognitoSub]
+       WHERE pl.patient_id = $1 AND u.cognito_sub = $2 AND pl.is_active = true
+       UNION
+       SELECT 1 FROM patients p
+       JOIN users u ON p.user_id = u.id
+       WHERE p.id = $1 AND u.cognito_sub = $2`,
+      [patientUuid, cognitoSub]
     );
     if (access.rows.length === 0) return resp(403, { error: "Access denied" });
-
-    // Get all Cognito subs that could have logged observations
-    const subsResult = await dbClient.query(
-      `SELECT u.cognito_sub FROM users u
-       JOIN persona_links pl ON pl.linked_user_id = u.id
-       JOIN patients p ON pl.patient_id = p.id
-       WHERE p.id = $1::uuid AND pl.is_active = true
-       UNION
-       SELECT u.cognito_sub FROM users u
-       JOIN patients p ON p.user_id = u.id
-       WHERE p.id = $1::uuid`,
-      [patientId]
-    );
-    const allSubs = subsResult.rows.map((r) => r.cognito_sub);
 
     // Determine date range to scan
     const end = endDate || new Date();
     const start = startDate || new Date(end.getTime() - 7 * 86400000);
     const observations = [];
 
-    for (const sub of allSubs) {
+    // sync-observation writes to `observations/{patient_short_code}/...`
+    // (see sync-observation/index.js:72). We scan ONE prefix — the
+    // patient's short code — not per-Cognito-sub. Caregiver-logged obs
+    // also land under the same patient prefix because sync-observation
+    // keys on patientId (from the FHIR resource), not the logger sub.
+    {
       const d = new Date(end);
       while (d >= start) {
-        const prefix = `observations/${sub}/${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}/`;
+        const prefix = `observations/${patientShortCode}/${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}/`;
 
         try {
           const listResult = await s3Client.send(
@@ -182,4 +186,25 @@ function resp(statusCode, body) {
     },
     body: JSON.stringify(body),
   };
+}
+
+/**
+ * Resolve URL-supplied patient id (UUID or short code like `CL-012W6M`)
+ * to the internal patients row. Returns { id, patient_id } or null.
+ * Same pattern as alert-crud + manage-parameter-configs (F52/F54 class).
+ */
+async function resolvePatientDbId(client, patientIdParam) {
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (uuidRegex.test(patientIdParam)) {
+    const r = await client.query(
+      `SELECT id, patient_id FROM patients WHERE id = $1`,
+      [patientIdParam]
+    );
+    if (r.rows.length > 0) return r.rows[0];
+  }
+  const r = await client.query(
+    `SELECT id, patient_id FROM patients WHERE patient_id = $1`,
+    [patientIdParam]
+  );
+  return r.rows[0] || null;
 }
