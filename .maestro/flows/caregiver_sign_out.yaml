@@ -41,7 +41,7 @@ appId: com.carelog
 # Lambdas can push first render past 30s.
 - extendedWaitUntil:
     visible:
-      id: onboard_patient_fab
+      id: caregiver_home_history
     timeout: 60000
 
 # ── Open settings ────────────────────────────────────────────

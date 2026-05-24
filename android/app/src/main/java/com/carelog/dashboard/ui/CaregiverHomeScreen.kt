@@ -192,16 +192,29 @@ fun CaregiverHomeScreen(
             // voice vs form options (state hoisted to the parent for
             // simplicity; mirrors the delete_patient_dialog pattern in
             // SettingsScreen.kt:243-287).
-            ExtendedFloatingActionButton(
-                onClick = { showAddPatientChooser = true },
-                icon = { Icon(Icons.Default.PersonAdd, contentDescription = null) },
-                text = { Text("Add Patient") },
-                modifier = Modifier
-                    .testTag("onboard_patient_fab")
-                    .semantics {
-                        contentDescription = "Add a new patient"
-                    }
-            )
+            //
+            // One-caregiver-one-patient gate: the FAB is hidden entirely
+            // when the caregiver already has ≥1 linked patient. To add
+            // another patient they must first delete the current one via
+            // Settings → Delete Patient. Avoids the recurring
+            // bench-cycle dust-patient accumulation pattern. The probe
+            // testTag (`onboard_patient_fab`) is still used as a
+            // "dashboard ready" wait target by other flows — those wait
+            // for the FAB by id, so they need to hit the dashboard in
+            // the zero-patient state OR be adjusted to wait for a
+            // patient_card instead.
+            if (uiState.patients.isEmpty() && !uiState.isLoading) {
+                ExtendedFloatingActionButton(
+                    onClick = { showAddPatientChooser = true },
+                    icon = { Icon(Icons.Default.PersonAdd, contentDescription = null) },
+                    text = { Text("Add Patient") },
+                    modifier = Modifier
+                        .testTag("onboard_patient_fab")
+                        .semantics {
+                            contentDescription = "Add a new patient"
+                        }
+                )
+            }
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         modifier = modifier

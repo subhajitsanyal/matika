@@ -37,7 +37,7 @@ appId: com.carelog
 - tapOn: { id: login_button }
 
 # Caregiver dashboard reachable (FAB testTag is onboard_patient_fab — same as cg_v2_12).
-- extendedWaitUntil: { visible: { id: onboard_patient_fab }, timeout: 60000 }
+- extendedWaitUntil: { visible: { id: caregiver_home_history }, timeout: 60000 }
 
 # Settings — IconButton testTag added 2026-05-23 (maestro_lessons #13:
 # text-match on contentDescription was landing on the inner non-clickable Icon).

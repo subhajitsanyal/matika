@@ -18,5 +18,5 @@ appId: com.carelog
 
 # Caregiver home screen — assert we landed.
 - extendedWaitUntil:
-    visible: { id: onboard_patient_fab }
+    visible: { id: caregiver_home_history }
     timeout: 30000

@@ -46,7 +46,7 @@ appId: com.carelog
 # ── Reach CaregiverHomeScreen with patient list rendered ────
 - extendedWaitUntil:
     visible:
-      id: onboard_patient_fab
+      id: caregiver_home_history
     timeout: 60000
 
 # Jane's patient_id is CL-63NRGO (provisioned in dev). The card's
@@ -83,4 +83,4 @@ appId: com.carelog
 # Sanity: we're no longer on the dashboard. onboard_patient_fab is
 # the home-screen FAB; if it's still visible we never navigated.
 - assertNotVisible:
-    id: onboard_patient_fab
+    id: caregiver_home_history

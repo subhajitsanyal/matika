@@ -49,7 +49,7 @@ appId: com.carelog
 
 # Splash → caregiver dashboard (consent already pre-seeded; no detour).
 - extendedWaitUntil:
-    visible: { id: onboard_patient_fab }
+    visible: { id: caregiver_home_history }
     timeout: 30000
 
 # ── Open Settings ────────────────────────────────────────

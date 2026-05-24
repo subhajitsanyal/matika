@@ -42,7 +42,7 @@ appId: com.carelog
 
 # ── Reach Caregiver Home + scroll to Manage > Trends ───────
 - extendedWaitUntil:
-    visible: { id: onboard_patient_fab }
+    visible: { id: caregiver_home_history }
     timeout: 60000
 - scrollUntilVisible:
     element: { id: caregiver_trends }
