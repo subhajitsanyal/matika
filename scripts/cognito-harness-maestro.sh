@@ -29,25 +29,52 @@ source "$ROOT/test-automation/scripts/cognito-test-harness.sh"
 
 KEEP_USER=0
 INSTALL=1
+HARNESS_ENV="dev"
 JOURNEY=""
 for a in "$@"; do
     case "$a" in
         --keep-user) KEEP_USER=1 ;;
         --no-install) INSTALL=0 ;;
+        --env=*) HARNESS_ENV="${a#--env=}" ;;
         *) JOURNEY="$a" ;;
     esac
 done
 
 if [[ -z "$JOURNEY" ]]; then
-    echo "usage: $0 <journey> [--keep-user] [--no-install]" >&2
+    echo "usage: $0 <journey> [--env=dev|staging] [--keep-user] [--no-install]" >&2
     echo "  journeys: cg-v2-01, edge-v2-04, cg-v2-16, edge-v2-09" >&2
     exit 1
 fi
 
-# John CG identifiers (canonical dev caregiver, jane_dev_test_account memory).
-JOHN_CG_COGNITO_SUB="2193bdfa-d001-70da-aa9a-395dabbe8122"
+if [[ "$HARNESS_ENV" != "dev" && "$HARNESS_ENV" != "staging" ]]; then
+    echo "ERROR: --env must be 'dev' or 'staging' (got '$HARNESS_ENV')" >&2
+    exit 1
+fi
+
+# John CG / Jane PT identifiers per env. Both envs share the same test
+# emails (sanyalsubhajit2010+cg / +pt or +pt9), but cognito_sub and the
+# Jane short-code differ because each Cognito pool + RDS instance is
+# independent. Staging values captured live 2026-05-23 during the
+# CG-V2-22..24 + F54 bench cycle.
 JOHN_CG_USERNAME="sanyalsubhajit2010+cg@gmail.com"
-JANE_PATIENT_ID="CL-63NRGO"
+if [[ "$HARNESS_ENV" == "staging" ]]; then
+    JOHN_CG_COGNITO_SUB="21c36d3a-b0f1-7030-d066-7950326a70d2"
+    JANE_PATIENT_ID="CL-012W6M"
+    CREATE_PATIENT_LAMBDA="carelog-staging-create-patient"
+    # HARNESS_POOL_ID (not COGNITO_POOL_ID) — the harness library snapshots
+    # COGNITO_POOL_ID at source-time (line 34), so any later override is
+    # ignored. Setting HARNESS_POOL_ID directly short-circuits the lookup
+    # in harness_init().
+    export HARNESS_POOL_ID="ap-south-1_7cACPnKJn"
+    export HARNESS_CLIENT_ID=""
+else
+    JOHN_CG_COGNITO_SUB="2193bdfa-d001-70da-aa9a-395dabbe8122"
+    JANE_PATIENT_ID="CL-63NRGO"
+    CREATE_PATIENT_LAMBDA="carelog-dev-create-patient"
+    export HARNESS_POOL_ID="ap-south-1_1TcE4vTTi"
+    export HARNESS_CLIENT_ID=""
+fi
+echo "▸ Env: $HARNESS_ENV (pool=$HARNESS_POOL_ID, lambda=$CREATE_PATIENT_LAMBDA)" >&2
 
 # Source the matika-test-creds env so the wrapper can reach
 # MATIKA_CAREGIVER_EMAIL/_PASSWORD for the Maestro -e bridge.
@@ -155,7 +182,7 @@ case "$JOURNEY" in
 JSON
         RESPONSE_FILE="$(mktemp -t cg-v2-16-resp-XXXXXX.json)"
         aws lambda invoke \
-            --function-name carelog-dev-create-patient \
+            --function-name "$CREATE_PATIENT_LAMBDA" \
             --region "$HARNESS_REGION" \
             --cli-binary-format raw-in-base64-out \
             --payload "file://$PAYLOAD_FILE" \
