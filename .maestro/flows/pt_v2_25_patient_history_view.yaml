@@ -1,11 +1,17 @@
 # PT-V2-25 — patient-side History view affordance from home.
 #
-# Pre-condition: at least one observation already saved for Jane
-# (manual log journeys PT-V2-15..20 produce them).
+# Self-chained: logs in, writes a fresh BP observation (which lands in
+# the local Room DB via LocalFhirRepository), returns home, then taps
+# the new TopAppBar History icon and asserts the History list renders
+# without the empty-state copy. We don't rely on cloud round-trip
+# because HistoryViewModel.kt:70-84 reads from `localFhirRepository`
+# only — so a freshly-cleared Room DB (which `clearState: true`
+# produces) needs at least one local-save event before History has
+# any rows.
 #
-# Asserts: tapping caret-style History icon in the top bar navigates
-# to a History screen with at least one row. After-cleanup empty-state
-# is acceptable; the assertNotVisible guards the post-PT-V2-15..20 run.
+# Asserts: TopAppBar History icon nav works and the resulting screen
+# shows at least one observation (not the "No history yet" empty
+# state).
 
 appId: com.carelog
 ---
@@ -22,7 +28,29 @@ appId: com.carelog
 # if a future bench starts from a freshly-truncated consent_records.
 - tapOn: { id: consent_checkbox, optional: true }
 - tapOn: { id: consent_accept_button, optional: true }
-- extendedWaitUntil: { visible: { id: patient_home_history }, timeout: 60000 }
+
+# ── Seed a fresh BP observation so the History list has content ──
+# Mirrors patient_manual_log_blood_pressure.yaml; the save writes to
+# local Room (LocalFhirRepository) AND fires the sync-observation
+# lambda. Only the local Room write is load-bearing for this journey.
+- extendedWaitUntil: { visible: { id: patient_home_start_conversation }, timeout: 60000 }
+- scrollUntilVisible:
+    element: { id: vital_tile_blood_pressure }
+    direction: DOWN
+    timeout: 10000
+- tapOn: { id: vital_tile_blood_pressure }
+- extendedWaitUntil: { visible: { id: bp_save_button }, timeout: 10000 }
+- tapOn: { id: bp_systolic_input }
+- inputText: "128"
+- hideKeyboard
+- tapOn: { id: bp_diastolic_input }
+- inputText: "82"
+- hideKeyboard
+- tapOn: { id: bp_save_button }
+- extendedWaitUntil: { visible: { text: "(?i)Saved BP 128/82.*" }, timeout: 10000 }
+
+# ── Navigate to History via the new TopAppBar icon ──
+- extendedWaitUntil: { visible: { id: patient_home_history }, timeout: 15000 }
 - tapOn: { id: patient_home_history }
 - extendedWaitUntil: { visible: "History", timeout: 15000 }
 - assertNotVisible: "No history yet"
