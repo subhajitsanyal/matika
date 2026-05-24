@@ -240,9 +240,12 @@ private fun AlertCard(
             )
 
             Column(modifier = Modifier.weight(1f)) {
-                // Parameter name
+                // Parameter name. Falls back when the backend row has no
+                // vital_type (missed_measurement rows carry the name in
+                // `message` instead — see alert-crud.getAlerts).
                 Text(
-                    text = alert.parameter,
+                    text = alert.parameter
+                        ?: if (isThresholdBreach) "Threshold breach" else "Missed measurement",
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
                     color = if (alert.acknowledged) {

@@ -269,7 +269,7 @@ data class AlertItem(
     val patient_id: String,
     val patient_name: String?,
     val type: String,
-    val parameter: String,
+    val parameter: String?,
     val value: Double?,
     val unit: String?,
     val threshold_min: Double?,

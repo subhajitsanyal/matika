@@ -605,6 +605,34 @@ The Stream B hardening kept the patient's `users` row soft-deleted (`is_active=f
 
 **Owner:** `android` (fix shipped) + `qa-testing` (helper flow shipped). Closed.
 
+### F54 — alert-crud lambda deployed but unrouted; response shape + nullable mismatch made the caregiver Alerts screen non-functional end-to-end (RESOLVED — verified live 2026-05-23)
+
+**Severity:** High. The caregiver Alerts surface (CG-V2-23) was a four-layer failure: (a) `GET /patients/{patientId}/alerts` never existed in API GW — only a methodless `/alerts` resource was provisioned; (b) the lambda's response shape used `id/alertType/is_read` while Android's `AlertItem` expected `alert_id/type/acknowledged`; (c) the lambda treated the URL `patientId` as a UUID but Android sends the patient short code (`CL-012W6M`) — F52-class crash with PostgreSQL `string_to_uuid` 22P02; (d) once the data round-tripped, the Compose `Text(alert.parameter)` crashed with NPE for every `missed_measurement` row because `vital_type` is NULL in those rows and `AlertItem.parameter` was declared non-nullable.
+
+**Owner:** `infra` (terraform routes) + `backend` (lambda) + `android` (DTO + UI).
+
+**Status:** Fixed and verified end-to-end on staging 2026-05-23.
+
+**Discovery sequence.** Surfaced while wiring CG-V2-23 / E2E-V2-02. The flow looked like it was clicking through correctly (login → Jane PT card → Alerts button → screen mount), but the `alert_list` testTag assertion timed out and the failure screenshot showed the Android home launcher — i.e., the app process died. Logcat dump pinpointed `FATAL EXCEPTION` 1 second after the "Alerts" tap with an NPE inside `AndroidParagraphHelper_androidKt.createCharSequence` — a Compose `Text` rendering a null String. Tracing backwards: API GW resources list (`aws apigateway get-resources --rest-api-id 3mni7nx5bf`) showed no `/patients/{patientId}/alerts` path at all; alert-crud lambda existed but had zero invocations historically. After wiring the routes + redeploying the lambda + manually patching the staging stage to the new deployment, the next run got further but still crashed on the same NPE — direct RDS inspection of the `alerts` table showed 9-of-10 most-recent rows are `missed_measurement` type with `vital_type = NULL` (legitimately — the schema does not require a vital_type on missed_measurement, it's encoded in `message`).
+
+**Fixes (in order applied).**
+1. `infrastructure/terraform/modules/api_gateway/variables.tf` — added `alert_crud_invoke_arn` var.
+2. `infrastructure/terraform/main.tf` — passed `module.lambda.alert_crud_invoke_arn` into the api_gateway module.
+3. `infrastructure/terraform/modules/api_gateway/main.tf` — added 3 resources (`patient_alerts`, `patient_alert`, `patient_alert_acknowledge`) + 3 methods (`GET /patients/{patientId}/alerts`, `PUT /patients/{patientId}/alerts/{alertId}/acknowledge`, `DELETE /patients/{patientId}/alerts/{alertId}`) + AWS_PROXY integrations pointing at `var.alert_crud_invoke_arn`; deployment trigger updated.
+4. `backend/lambdas/alert-crud/index.js` — added `PUT` case in handler (synthesizes `{ read: true }` body and routes through existing `updateAlert`); added `resolvePatientDbId` helper to accept both UUID and short-code patient ids (same pattern as `manage-parameter-configs` per F52); wired the resolver into the handler before access check; reshaped `getAlerts` response to match Android `AlertItem` (`alert_id`, `type`, `parameter`, `value`, `unit`, `threshold_min`, `threshold_max`, `severity`, `timestamp`, `days_overdue`, `acknowledged`); joined to `users` for `patient_name`. Severity derived: `threshold_breach → critical`, `missed_measurement → warning`, else `info`.
+5. Staging apply with `terraform apply -refresh=false -target=…patient_alerts… -target=…deployment.main`. Stage stayed pinned to pre-fix deployment until manually re-pointed via `aws apigateway update-stage --patch-operations op=replace,path=/deploymentId,value=ye464u` (same stage-pin gotcha the F53 fix surfaced — record for runbook).
+6. `android/app/src/main/java/com/carelog/network/CloudApiService.kt:272` — `parameter: String` → `parameter: String?`.
+7. `android/app/src/main/java/com/carelog/dashboard/ui/AlertListScreen.kt:247` — fallback in `AlertCard`: `text = alert.parameter ?: if (isThresholdBreach) "Threshold breach" else "Missed measurement"`.
+
+**Live verification (2026-05-23, staging).** CG-V2-23 Maestro flow PASS end-to-end against staging caregiver `sanyalsubhajit2010+cg@gmail.com` for patient Jane PT (`CL-012W6M`). Screenshot `/tmp/cg-v2-23-pass.png` shows the alerts list rendering 5 missed_measurement rows ("Missed measurement" title, warning chip, timestamp) plus the threshold_breach row from E2E-V2-02 ("blood_pressure_systolic", "Value: 210 mmHg", "Threshold: Max: 180.0", critical chip). This is also the missing UI-level confirmation for E2E-V2-02 (which had backend-only evidence prior). CloudWatch confirmed clean alert-crud invokes (200) post-stage-repoint.
+
+**Lessons.**
+- Lambda-deployed-but-unrouted is a recurring failure mode — paired with F29 (delete-patient) and F53 (remove-team-member). Worth a one-time terraform audit: every `aws_lambda_function` should have at least one referencing `aws_api_gateway_integration` (or be flagged as event-driven).
+- `terraform apply -target=…deployment.main` does NOT auto-pin the stage to the new deployment; must `update-stage` separately. Same dance as F53 — promote into the runbook.
+- Compose `Text(nullable)` NPE crashes silently in release-style flows: the only signal is a process death and Maestro reaching the launcher screen. Lesson: when an assertion fails on a UI element AFTER an app-internal navigation, ALWAYS grep logcat for `FATAL EXCEPTION` before assuming the testTag is wrong.
+
+---
+
 ### F53 — DELETE /patients/{patientId}/team/{memberId} API GW route was a deliberate MOCK stub + `users.deactivated_at` column missing from v2 schema → remove-team-member feature was non-functional end-to-end (RESOLVED — verified live 2026-05-18)
 
 **Severity:** High. The caregiver-facing Manage Care Team "Remove" button was a server-side no-op (route returned 200 unconditionally, lambda never invoked, persona_link.is_active stayed `true`, no `audit_log` row, Cognito user not disabled). Even if the route had been wired, the lambda would have crashed on the `UPDATE users SET deactivated_at = NOW()` step (42703 column does not exist; v2 `users` schema has only `id, cognito_sub, email, name, phone_number, persona_type, is_active, created_at, updated_at, last_login_at`).

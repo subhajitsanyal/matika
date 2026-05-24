@@ -142,6 +142,10 @@ module "api_gateway" {
   manage_interactions_invoke_arn      = module.lambda.manage_interactions_invoke_arn
   manage_prompts_invoke_arn           = module.lambda.manage_prompts_invoke_arn
 
+  # F54 — alerts list/read/acknowledge (alert-crud lambda exists since 2026-05-16
+  # but the routes were never wired; CG-V2-23 surfaced the gap 2026-05-23).
+  alert_crud_invoke_arn = module.lambda.alert_crud_invoke_arn
+
   # v2 Bedrock-backed routes
   bedrock_router_invoke_arn = module.lambda.bedrock_router_invoke_arn
   bedrock_vision_invoke_arn = module.lambda.bedrock_vision_invoke_arn

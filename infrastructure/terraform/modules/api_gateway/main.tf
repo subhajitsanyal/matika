@@ -900,6 +900,91 @@ resource "aws_api_gateway_integration" "patient_interaction_transcript_get" {
 }
 
 # ============================================================
+# F54 — ALERTS (alert-crud lambda)
+# ============================================================
+# The alert-crud lambda was deployed 2026-05-16 but never wired to a
+# route. CG-V2-23 (2026-05-23) surfaced the gap: AlertListScreen calls
+# GET /patients/{patientId}/alerts which 404'd silently, so the
+# caregiver always saw an empty inbox even with real alerts in RDS.
+
+# /patients/{patientId}/alerts
+resource "aws_api_gateway_resource" "patient_alerts" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  parent_id   = aws_api_gateway_resource.patient.id
+  path_part   = "alerts"
+}
+
+# /patients/{patientId}/alerts/{alertId}
+resource "aws_api_gateway_resource" "patient_alert" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  parent_id   = aws_api_gateway_resource.patient_alerts.id
+  path_part   = "{alertId}"
+}
+
+# /patients/{patientId}/alerts/{alertId}/acknowledge
+resource "aws_api_gateway_resource" "patient_alert_acknowledge" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  parent_id   = aws_api_gateway_resource.patient_alert.id
+  path_part   = "acknowledge"
+}
+
+# GET /patients/{patientId}/alerts → alert-crud (list)
+resource "aws_api_gateway_method" "patient_alerts_get" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.patient_alerts.id
+  http_method   = "GET"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+}
+
+resource "aws_api_gateway_integration" "patient_alerts_get" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.patient_alerts.id
+  http_method             = aws_api_gateway_method.patient_alerts_get.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = var.alert_crud_invoke_arn
+}
+
+# PUT /patients/{patientId}/alerts/{alertId}/acknowledge → alert-crud
+# Used by AlertListScreen's onAcknowledge action.
+resource "aws_api_gateway_method" "patient_alert_acknowledge_put" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.patient_alert_acknowledge.id
+  http_method   = "PUT"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+}
+
+resource "aws_api_gateway_integration" "patient_alert_acknowledge_put" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.patient_alert_acknowledge.id
+  http_method             = aws_api_gateway_method.patient_alert_acknowledge_put.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = var.alert_crud_invoke_arn
+}
+
+# DELETE /patients/{patientId}/alerts/{alertId} → alert-crud
+# Used by AlertInboxScreen's swipe-to-delete action (relative dashboard).
+resource "aws_api_gateway_method" "patient_alert_delete" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.patient_alert.id
+  http_method   = "DELETE"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+}
+
+resource "aws_api_gateway_integration" "patient_alert_delete" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.patient_alert.id
+  http_method             = aws_api_gateway_method.patient_alert_delete.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = var.alert_crud_invoke_arn
+}
+
+# ============================================================
 # P3 DOCTOR PORTAL — PROMPTS
 # ============================================================
 
@@ -1124,6 +1209,16 @@ resource "aws_api_gateway_deployment" "main" {
       aws_api_gateway_integration.patient_interactions_get.id,
       aws_api_gateway_method.patient_interaction_transcript_get.id,
       aws_api_gateway_integration.patient_interaction_transcript_get.id,
+      # F54 — alerts list/acknowledge/delete (alert-crud)
+      aws_api_gateway_resource.patient_alerts.id,
+      aws_api_gateway_resource.patient_alert.id,
+      aws_api_gateway_resource.patient_alert_acknowledge.id,
+      aws_api_gateway_method.patient_alerts_get.id,
+      aws_api_gateway_integration.patient_alerts_get.id,
+      aws_api_gateway_method.patient_alert_acknowledge_put.id,
+      aws_api_gateway_integration.patient_alert_acknowledge_put.id,
+      aws_api_gateway_method.patient_alert_delete.id,
+      aws_api_gateway_integration.patient_alert_delete.id,
       aws_api_gateway_resource.prompts.id,
       aws_api_gateway_resource.prompt_type.id,
       aws_api_gateway_method.prompts_get.id,

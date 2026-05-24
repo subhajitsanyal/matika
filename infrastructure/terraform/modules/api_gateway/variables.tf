@@ -131,6 +131,16 @@ variable "manage_prompts_invoke_arn" {
   default = ""
 }
 
+# F54 — alert-crud was deployed but never routed. Wires
+# GET /patients/{patientId}/alerts (list),
+# PUT /patients/{patientId}/alerts/{alertId}/acknowledge,
+# PATCH /alerts/{alertId}/read.
+variable "alert_crud_invoke_arn" {
+  description = "Invoke ARN for carelog-<env>-alert-crud (alerts list/read/acknowledge)"
+  type        = string
+  default     = ""
+}
+
 # ============================================================
 # V2 — Bedrock-backed Lambdas
 # ============================================================

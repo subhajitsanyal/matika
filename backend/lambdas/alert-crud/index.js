@@ -63,10 +63,21 @@ exports.handler = async (event) => {
       return errorResponse(401, 'User not found');
     }
 
-    const patientId = event.pathParameters?.patientId;
+    const patientIdParam = event.pathParameters?.patientId;
     const alertId = event.pathParameters?.alertId;
 
-    if (patientId) {
+    // F54 — Android caregiver client passes the short code (`CL-012W6M`) from
+    // PatientListItem.patient_id, but persona_links/alerts FK against the
+    // patients.id UUID. Resolve once; downstream callers receive the UUID.
+    // Same pattern as manage-parameter-configs.resolvePatientDbId (F52 class).
+    let patientId = null;
+    if (patientIdParam) {
+      const resolved = await resolvePatientDbId(client, patientIdParam);
+      if (!resolved) {
+        return errorResponse(404, 'Patient not found');
+      }
+      patientId = resolved.id;
+
       const hasAccess = await checkPatientAccess(client, userId, patientId);
       if (!hasAccess) {
         return errorResponse(403, 'Access denied');
@@ -83,6 +94,17 @@ exports.handler = async (event) => {
       case 'PATCH':
         if (alertId) {
           return await updateAlert(client, event, alertId, userId);
+        }
+        return errorResponse(400, 'Alert ID required');
+
+      // F54 — PUT /patients/{patientId}/alerts/{alertId}/acknowledge.
+      // The Android CloudApiService.acknowledgeAlert wraps this endpoint
+      // (no body); we treat it as { read: true } against the existing
+      // updateAlert flow so the read state + read_at timestamp are stamped.
+      case 'PUT':
+        if (alertId) {
+          const synthEvent = { ...event, body: JSON.stringify({ read: true }) };
+          return await updateAlert(client, synthEvent, alertId, userId);
         }
         return errorResponse(400, 'Alert ID required');
 
@@ -115,9 +137,14 @@ async function getAlerts(client, event, patientId, userId) {
   const limit = Math.min(parseInt(queryParams.limit) || 50, 100);
   const offset = parseInt(queryParams.offset) || 0;
 
+  // F54 — response shape adapted to Android AlertItem (alert_id, type,
+  // parameter, value, acknowledged, patient_id, patient_name, severity,
+  // days_overdue). Joined to users for patient_name; severity + days_overdue
+  // are derived below.
   let query = `
     SELECT
       a.id,
+      a.patient_id,
       a.alert_type,
       a.vital_type,
       a.vital_value,
@@ -127,8 +154,11 @@ async function getAlerts(client, event, patientId, userId) {
       a.message,
       a.created_at AS timestamp,
       a.is_read,
-      a.read_at
+      a.read_at,
+      u_pat.name AS patient_name
     FROM alerts a
+    LEFT JOIN patients p ON p.id = a.patient_id
+    LEFT JOIN users u_pat ON u_pat.id = p.user_id
     WHERE a.patient_id = $1 AND a.recipient_user_id = $2
   `;
 
@@ -154,19 +184,30 @@ async function getAlerts(client, event, patientId, userId) {
     [patientId, userId]
   );
 
-  const alerts = result.rows.map((row) => ({
-    id: row.id,
-    alertType: row.alert_type,
-    vitalType: row.vital_type,
-    vitalValue: row.vital_value === null ? null : Number(row.vital_value),
-    vitalUnit: row.vital_unit,
-    thresholdMin: row.threshold_min === null ? null : Number(row.threshold_min),
-    thresholdMax: row.threshold_max === null ? null : Number(row.threshold_max),
-    message: row.message,
-    timestamp: row.timestamp,
-    read: row.is_read === true,
-    readAt: row.read_at,
-  }));
+  const alerts = result.rows.map((row) => {
+    // severity: threshold_breach → 'critical', missed_measurement → 'warning',
+    // anything else → 'info'. Matches the Android AlertItem.severity contract.
+    const severity =
+      row.alert_type === 'threshold_breach' ? 'critical'
+        : row.alert_type === 'missed_measurement' ? 'warning'
+          : 'info';
+    return {
+      alert_id: row.id,
+      patient_id: row.patient_id,
+      patient_name: row.patient_name,
+      type: row.alert_type,
+      parameter: row.vital_type,
+      value: row.vital_value === null ? null : Number(row.vital_value),
+      unit: row.vital_unit,
+      threshold_min: row.threshold_min === null ? null : Number(row.threshold_min),
+      threshold_max: row.threshold_max === null ? null : Number(row.threshold_max),
+      severity,
+      timestamp: row.timestamp,
+      days_overdue: null,
+      acknowledged: row.is_read === true,
+      message: row.message,
+    };
+  });
 
   return successResponse(200, {
     alerts,
@@ -247,6 +288,26 @@ async function resolveUserIdFromCognitoSub(client, cognitoSub) {
     [cognitoSub]
   );
   return result.rows[0]?.id || null;
+}
+
+/**
+ * Resolve URL-supplied patient id (UUID or short code like `CL-012W6M`)
+ * to the internal patients.id UUID. Returns null if not found.
+ */
+async function resolvePatientDbId(client, patientIdParam) {
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (uuidRegex.test(patientIdParam)) {
+    const r = await client.query(
+      `SELECT id, patient_id FROM patients WHERE id = $1`,
+      [patientIdParam]
+    );
+    if (r.rows.length > 0) return r.rows[0];
+  }
+  const r = await client.query(
+    `SELECT id, patient_id FROM patients WHERE patient_id = $1`,
+    [patientIdParam]
+  );
+  return r.rows[0] || null;
 }
 
 /**
