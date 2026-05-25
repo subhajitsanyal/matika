@@ -45,7 +45,21 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # and was silent on Samsung One UI, breaking the harness during the
 # 2026-05-09 voice sweep.
 TRIGGER='RecognitionListener.onReadyForSpeech'
+# Bench-harness sync — for turn 2+, wait for the app's TTS to finish
+# (TTS_DONE log from TtsManager.onDone) BEFORE we start blocking on
+# the mic-active trigger. Otherwise the runner can speak the next
+# utterance while the app's response audio is still playing — STT
+# hears overlapping audio and returns NO_MATCH (error 7).
+# Skippable via MATIKA_SKIP_TTS_WAIT=1.
+# `adb logcat -e` filters on the MESSAGE field only — the tag (e.g.
+# "TtsManager") is a separate field and is NOT covered by -e. So our
+# trigger has to be a substring of the message itself. The TtsManager
+# log line reads `TTS_DONE utteranceId=... inFlight=N` — "TTS_DONE" is
+# the unique prefix in the message portion. (Same gotcha bit the
+# mic-active trigger above.)
+TTS_DONE_TRIGGER='TTS_DONE'
 TURN_TIMEOUT_S="${MATIKA_TURN_TIMEOUT_S:-90}"
+TTS_DONE_TIMEOUT_S="${MATIKA_TTS_DONE_TIMEOUT_S:-60}"
 
 INSTALL_FLAGS=()
 TURNS=()
@@ -148,6 +162,44 @@ for spec in "${TURNS[@]}"; do
         exit 2
     fi
 
+    # Turn 2+ — wait for app TTS to finish before queueing the next
+    # utterance. Without this, the previous turn's response audio is
+    # still playing while we queue the next utterance through the
+    # remote-TTS server, the two overlap, and Soda STT returns NO_MATCH.
+    # Turn 1 has no prior TTS so we skip this wait.
+    # We use `adb logcat -t '<ts>' -e PATTERN` (read from a saved
+    # timestamp forward) instead of clearing the buffer between turns;
+    # that way the TTS_DONE event that fired AFTER the prior turn's say
+    # is still visible. SAY_DONE_TS is set after each say completes.
+    if (( turn_n > 1 )) && [[ "${MATIKA_SKIP_TTS_WAIT:-0}" != "1" ]]; then
+        echo "▸ turn $turn_n — waiting for app TTS_DONE since '$SAY_DONE_TS' (timeout ${TTS_DONE_TIMEOUT_S}s)"
+        # Tail with timestamp filter; -m 1 exits on first match. logcat
+        # -T accepts "MM-DD HH:MM:SS.mmm" format. SAY_DONE_TS is set
+        # below using `date '+%m-%d %H:%M:%S.%3N'` after each say.
+        ( adb logcat -T "$SAY_DONE_TS" -e "$TTS_DONE_TRIGGER" -m 1 >/dev/null 2>&1 ) &
+        TTS_GREP_PID=$!
+        elapsed=0
+        while kill -0 "$TTS_GREP_PID" 2>/dev/null; do
+            if ! kill -0 "$MAESTRO_PID" 2>/dev/null; then
+                kill "$TTS_GREP_PID" 2>/dev/null || true
+                echo "ERROR: maestro exited before turn $turn_n TTS_DONE" >&2
+                wait "$MAESTRO_PID" 2>/dev/null || true
+                exit 1
+            fi
+            if (( elapsed >= TTS_DONE_TIMEOUT_S )); then
+                kill "$TTS_GREP_PID" 2>/dev/null || true
+                echo "WARN: turn $turn_n TTS_DONE did not fire in ${TTS_DONE_TIMEOUT_S}s; proceeding anyway" >&2
+                break
+            fi
+            sleep 1
+            elapsed=$((elapsed + 1))
+        done
+        wait "$TTS_GREP_PID" 2>/dev/null || true
+        echo "▸ turn $turn_n — TTS_DONE after ${elapsed}s; proceeding to mic-active wait"
+        # Small buffer for audio tail / mic-deafened window.
+        sleep 1
+    fi
+
     echo "▸ turn $turn_n — waiting for mic-active trigger (timeout ${TURN_TIMEOUT_S}s)"
     ( adb logcat -e "$TRIGGER" -m 1 >/dev/null 2>&1 ) &
     GREP_PID=$!
@@ -172,8 +224,15 @@ for spec in "${TURNS[@]}"; do
 
     echo "▸ turn $turn_n — mic active after ${elapsed}s; speaking ($lang @ $rate r/m): $utter"
     "$ROOT/scripts/matika-say.sh" "$lang" "$rate" "$utter" "$predelay"
+    # Stamp the wall-clock right after our say finishes; the NEXT turn's
+    # TTS_DONE wait uses this as the `-T` cutoff so it only picks up
+    # TTS_DONE events that fire AFTER the app has processed this turn's
+    # response (not the previous turn's stale TTS_DONE).
+    SAY_DONE_TS="$(date '+%m-%d %H:%M:%S.000')"
 
-    # Clear so the next --turn's wait doesn't see this turn's trigger.
+    # Clear so the next --turn's mic-active wait doesn't see this turn's
+    # onReadyForSpeech trigger. TTS_DONE wait uses timestamp filter so
+    # the clear here doesn't lose anything we need.
     adb logcat -c
 done
 

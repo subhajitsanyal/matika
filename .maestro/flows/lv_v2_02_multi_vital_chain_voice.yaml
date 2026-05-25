@@ -1,0 +1,128 @@
+# LV-V2-02 (voice) — Multi-vital chain via F57 handler-guard.
+#
+# Verifies the F57 patient-logging guard:
+#  1. Turn 1: patient says BP — backend extracts systolic+diastolic, asks
+#     to confirm.
+#  2. Turn 2: patient confirms — Haiku tries to close (per docs/F57); the
+#     handler guard SUPPRESSES `complete_session`, overrides response to
+#     "Saved. Next, what is your blood glucose?" and rewrites
+#     stateTransition so the badge stays out of COMPLETE.
+#  3. Turn 3: patient says glucose — backend extracts, walks to next
+#     vital. This turn proves the session did NOT close after BP.
+#
+# Pre-conditions:
+#  - Jane (patient) seeded with 7 active parameter_configs on staging:
+#    blood_glucose, blood_pressure_diastolic, blood_pressure_systolic,
+#    body_temperature_c, body_weight, heart_rate, spo2.
+#  - F57 handler guard live in matika-staging-bedrock-router
+#    (CodeSha256 OJkwTBp5amdMJ6gN+5pw6VsmkGBhH5iw6+mgjpVPXok= or newer).
+#  - APK installed with TTS_DONE log + visible-then-invisible
+#    speaking_indicator wait (the patient_voice_bp_en flow has the same
+#    pattern; we mirror it here).
+#
+# Run:
+#   source ~/.matika-test-creds.env
+#   export MATIKA_SAY_REMOTE_URL=http://10.0.0.171:8765
+#   scripts/matika-voice-run.sh lv_v2_02_multi_vital_chain_voice --no-install \
+#       --turn "en|175|My blood pressure is one thirty over eighty five.|600" \
+#       --turn "en|175|Yes, that is correct.|400" \
+#       --turn "en|175|My blood glucose is one twenty.|600"
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+# Sign in as the patient. Same shape as patient_voice_bp_en.
+- extendedWaitUntil:
+    visible:
+      id: login_email
+    timeout: 15000
+- tapOn:
+    id: login_email
+- inputText: ${MATIKA_PATIENT_EMAIL}
+- tapOn:
+    id: login_password
+- inputText: ${MATIKA_PATIENT_PASSWORD}
+- hideKeyboard
+- tapOn:
+    id: login_button
+
+- extendedWaitUntil:
+    visible:
+      id: patient_home_start_conversation
+    timeout: 30000
+- tapOn:
+    id: patient_home_start_conversation
+
+- tapOn:
+    text: "Allow|While using the app"
+    optional: true
+
+# === Turn 1 — patient reports BP ===
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+
+- extendedWaitUntil:
+    visible:
+      id: matika_response_card
+    timeout: 60000
+
+# === Turn 2 — patient confirms ===
+# Two-phase wait — see patient_voice_bp_en.yaml for the rationale
+# (must wait for TTS_DONE before opening mic, otherwise STT captures
+# the app's own response audio).
+- extendedWaitUntil:
+    visible:
+      id: matika_speaking_indicator
+    timeout: 15000
+- extendedWaitUntil:
+    notVisible:
+      id: matika_speaking_indicator
+    timeout: 30000
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+- extendedWaitUntil:
+    visible:
+      id: matika_turn_counter
+      text: "turn 2"
+    timeout: 60000
+
+# === Turn 3 — patient reports glucose ===
+# The F57 handler guard's override should have set the response to
+# "Saved. Next, what is your blood glucose?" and the badge to EXTRACTING.
+# Wait through the TTS playback and then tap mic for turn 3.
+- extendedWaitUntil:
+    visible:
+      id: matika_speaking_indicator
+    timeout: 15000
+- extendedWaitUntil:
+    notVisible:
+      id: matika_speaking_indicator
+    timeout: 30000
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+- extendedWaitUntil:
+    visible:
+      id: matika_turn_counter
+      text: "turn 3"
+    timeout: 60000
+
+# Final sanity — mic re-armed = turn 3 round-tripped. The session
+# is now expected to ask for the next unlogged vital (heart rate,
+# weight, temp, or SpO2). Either is a pass for this flow; we just
+# need to confirm the session did NOT close after BP.
+- assertVisible:
+    id: matika_mic

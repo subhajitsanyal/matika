@@ -397,7 +397,10 @@ export async function handleTurn(event: TurnRequest, deps: HandlerDeps): Promise
   }
 
   // 7. Apply state transition (validates FROM matches current state).
-  const newFsmState = applyTransition(turnCtx.sessionState.fsmState, parsed.stateTransition);
+  // `let` rather than `const` — the F57 patient-logging guard below
+  // may rewrite parsed.stateTransition (and therefore the resolved
+  // newFsmState) after suppressing a premature complete_session.
+  let newFsmState = applyTransition(turnCtx.sessionState.fsmState, parsed.stateTransition);
 
   // 7a. F23 — caregiver_onboarding mid-session pivot. When the LLM
   //     finishes the profile readback and emits complete_session,
@@ -443,6 +446,64 @@ export async function handleTurn(event: TurnRequest, deps: HandlerDeps): Promise
     parsed.responseText =
       "I'm sorry — I lost the profile details just then. Could you say her name and age one more time so I can confirm and save?";
   }
+
+  // F57 handler-side guard — for patient_logging sessions, suppress
+  // `complete_session` if any active parameter in the patient's
+  // monitoring protocol has no confirmed value captured yet in this
+  // session. Prompt-side fix alone (system_v2.md rule 12) is unreliable
+  // because Haiku tends to wrap up after a single confirm; this
+  // programmatic guard ensures the session walks the full protocol.
+  // Computed from `patientCtx.protocol` (active configured set) +
+  // session capturedThisSession + this turn's parsed.extractedValues.
+  if (
+    turnCtx.sessionState.sessionType === 'patient_logging' &&
+    parsed.actions.some((a) => a.type === 'complete_session') &&
+    patientCtx.protocol &&
+    patientCtx.protocol.length > 0
+  ) {
+    const activeParams = patientCtx.protocol
+      .filter((p) => p.active)
+      .map((p) => p.parameterName);
+    const confirmedThisSession = new Set<string>([
+      ...turnCtx.sessionState.capturedThisSession
+        .filter((v) => v.status === 'confirmed')
+        .map((v) => v.parameter),
+      ...parsed.extractedValues
+        .filter((v) => v.status === 'confirmed')
+        .map((v) => v.parameter),
+    ]);
+    const stillUnlogged = activeParams.filter(
+      (p) => !confirmedThisSession.has(p),
+    );
+    if (stillUnlogged.length > 0) {
+      console.warn('patient_logging_premature_complete_session_suppressed', {
+        sessionId: event.sessionId,
+        activeParams,
+        confirmedThisSession: Array.from(confirmedThisSession),
+        stillUnlogged,
+        llmResponseText: parsed.responseText?.slice(0, 200),
+      });
+      parsed.actions = parsed.actions.filter(
+        (a) => a.type !== 'complete_session',
+      );
+      // Replace the LLM's close-out response with a prompt for the next
+      // unlogged vital. Use the first remaining parameter as the prompt
+      // target — the LLM will refine wording on the next turn.
+      const nextParam = stillUnlogged[0];
+      const friendly = nextParam.replace(/_/g, ' ');
+      parsed.responseText = `Saved. Next, what is your ${friendly}?`;
+      // Rewrite stateTransition so the client FSM badge doesn't render
+      // "COMPLETE" while the session is actually continuing. Drop to
+      // EXTRACTING — the next user utterance will move it back through
+      // PENDING_CONFIRMATION naturally. Recompute newFsmState so the
+      // override actually lands on what gets persisted + returned to the
+      // client (without this, the badge still showed COMPLETE because
+      // newFsmState was locked in at step 7 above).
+      parsed.stateTransition = `${turnCtx.sessionState.fsmState} -> EXTRACTING`;
+      newFsmState = applyTransition(turnCtx.sessionState.fsmState, parsed.stateTransition);
+    }
+  }
+
   const isPivotTurn =
     patientCtx.placeholder &&
     parsed.actions.some((a) => a.type === 'complete_session');

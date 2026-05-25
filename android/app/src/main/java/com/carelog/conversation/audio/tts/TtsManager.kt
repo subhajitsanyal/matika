@@ -73,6 +73,12 @@ class TtsManager @Inject constructor(
             if (utteranceId == null) return
             inFlight.remove(utteranceId)
             _isSpeaking.value = inFlight.isNotEmpty()
+            // Bench-harness sync — matika-voice-run.sh blocks on this
+            // grep before speaking the next turn so it doesn't talk
+            // over the app's still-audible TTS. Cheap log line, kept
+            // in release builds so multi-turn runs from a CI box also
+            // benefit. See voice_harness_lessons.md.
+            Log.i(TAG, "TTS_DONE utteranceId=$utteranceId inFlight=${inFlight.size}")
         }
 
         // Deprecated overload — older platforms only call this one. We

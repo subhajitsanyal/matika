@@ -92,8 +92,18 @@ appId: com.carelog
 # F6 — must wait for TTS playback to finish before tapping mic again.
 # Otherwise Soda hears both the app's response audio AND our utterance,
 # returns error 7 (NO_MATCH), and the turn never reaches Bedrock.
-# matika_speaking_indicator only renders while ttsManager.isSpeaking,
-# so notVisible is the right signal.
+#
+# Two-phase wait — first wait for the indicator to APPEAR (TTS started),
+# then wait for it to disappear (TTS finished). The single notVisible
+# check alone races against the gap between "thinking" hiding and
+# "speaking" appearing — at that moment notVisible passes immediately
+# and the runner taps mic before any TTS plays, so the mic captures
+# the about-to-start response audio as user input (F57 multi-turn
+# bench session 2026-05-24 — "you said" rendered as the app's echo).
+- extendedWaitUntil:
+    visible:
+      id: matika_speaking_indicator
+    timeout: 15000
 - extendedWaitUntil:
     notVisible:
       id: matika_speaking_indicator
