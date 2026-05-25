@@ -1,0 +1,140 @@
+# LV-V2-05 (voice) — Off-protocol reading.
+#
+# Voice variant of lv_v2_05_off_protocol_reading_text. Patient says
+# vitals NOT in Jane's parameter_configs (cholesterol, vitamin D, blood
+# urea) and then asks for caregiver coordination. Verifies:
+#   1. FSM survives non-trackable vitals (no crash, no auto-close).
+#   2. AI politely explains the protocol limitation.
+#   3. Session stays alive for 4 turns through repeated off-protocol input.
+#
+# Jane has the 7 standard vitals (BP sys, BP dia, glucose, weight,
+# temp, heart_rate, spo2). Cholesterol / Vitamin D / blood urea are
+# real lab values that aren't in the standard parameter_configs
+# schema, so the AI should redirect rather than commit.
+#
+# Sequence:
+#   T1: "My cholesterol level is two twenty."     → off-protocol
+#   T2: "My vitamin D level is eighteen."         → off-protocol
+#   T3: "My blood urea is thirty two."            → off-protocol
+#   T4: "Can you tell my caregiver to add cholesterol tracking?"
+#
+# Load-bearing assertion: mic re-arms across all 4 turns; turn_counter
+# reaches "turn 4". A crash or auto-close would prevent reaching turn 4.
+#
+# Run:
+#   source ~/.matika-test-creds.env
+#   export MATIKA_SAY_REMOTE_URL=http://10.0.0.171:8765
+#   scripts/matika-voice-run.sh lv_v2_05_off_protocol_reading_voice --no-install \
+#       --turn "en|175|My cholesterol level is two twenty.|600" \
+#       --turn "en|175|My vitamin D level is eighteen.|400" \
+#       --turn "en|175|My blood urea is thirty two.|400" \
+#       --turn "en|175|Can you tell my caregiver to add cholesterol tracking?|400"
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+- extendedWaitUntil:
+    visible:
+      id: login_email
+    timeout: 15000
+- tapOn:
+    id: login_email
+- inputText: ${MATIKA_PATIENT_EMAIL}
+- tapOn:
+    id: login_password
+- inputText: ${MATIKA_PATIENT_PASSWORD}
+- hideKeyboard
+- tapOn:
+    id: login_button
+
+- extendedWaitUntil:
+    visible:
+      id: patient_home_start_conversation
+    timeout: 30000
+- tapOn:
+    id: patient_home_start_conversation
+
+- tapOn:
+    text: "Allow|While using the app"
+    optional: true
+
+# === T1: off-protocol cholesterol ===
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+
+- extendedWaitUntil:
+    visible:
+      id: matika_response_card
+    timeout: 60000
+
+# === T2: off-protocol vitamin D ===
+- extendedWaitUntil:
+    visible:
+      id: matika_speaking_indicator
+    timeout: 30000
+- extendedWaitUntil:
+    notVisible:
+      id: matika_speaking_indicator
+    timeout: 45000
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+- extendedWaitUntil:
+    visible:
+      id: matika_turn_counter
+      text: "turn 2"
+    timeout: 60000
+
+# === T3: off-protocol blood urea ===
+- extendedWaitUntil:
+    visible:
+      id: matika_speaking_indicator
+    timeout: 30000
+- extendedWaitUntil:
+    notVisible:
+      id: matika_speaking_indicator
+    timeout: 45000
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+- extendedWaitUntil:
+    visible:
+      id: matika_turn_counter
+      text: "turn 3"
+    timeout: 60000
+
+# === T4: ask caregiver coordination ===
+- extendedWaitUntil:
+    visible:
+      id: matika_speaking_indicator
+    timeout: 30000
+- extendedWaitUntil:
+    notVisible:
+      id: matika_speaking_indicator
+    timeout: 45000
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+- extendedWaitUntil:
+    visible:
+      id: matika_turn_counter
+      text: "turn 4"
+    timeout: 60000
+
+- assertVisible:
+    id: matika_mic

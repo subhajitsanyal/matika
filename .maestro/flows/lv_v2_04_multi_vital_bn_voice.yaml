@@ -1,0 +1,113 @@
+# LV-V2-04 (Bengali voice) — Multi-vital chain in Bengali.
+#
+# Three turns in Bengali exercising STT bn-IN (Google online fallback;
+# Soda has no offline bn pack) + Bedrock multilingual extraction +
+# gTTS bn TTS via the remote-TTS server.
+#
+#   T1: "আমার রক্তচাপ একশো ত্রিশ বাই পঁচাশি।"   (BP 130/85)
+#   T2: "হ্যাঁ, এটা ঠিক।"                       (Yes, correct)
+#   T3: "আমার রক্তের চিনি একশো বিশ।"            (Glucose 120)
+#
+# **F22 workaround.** AppLanguage must be primed to `bn` via
+# `_bench_set_language_bn.yaml` BEFORE this flow runs.
+#
+# **F25 / F41 note.** Bengali TTS is gTTS-only (no local Mac voice for
+# bn-IN). The remote-TTS server handles bn via gtts_langs (verified
+# 2026-05-25 via /health). This sidesteps the F41 Core Audio wedge
+# that hits local `say` on long sessions — gTTS streams audio bytes
+# through the HTTP server without using the Mac's say queue.
+#
+# Run (two-step):
+#   source ~/.matika-test-creds.env
+#   export MATIKA_SAY_REMOTE_URL=http://10.0.0.171:8765
+#   scripts/maestro-run.sh --no-install _bench_set_language_bn
+#   scripts/matika-voice-run.sh lv_v2_04_multi_vital_bn_voice --no-install \
+#       --turn "bn|150|আমার রক্তচাপ একশো ত্রিশ বাই পঁচাশি।|600" \
+#       --turn "bn|150|হ্যাঁ, এটা ঠিক।|400" \
+#       --turn "bn|150|আমার রক্তের চিনি একশো বিশ।|400"
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: false
+
+- runFlow:
+    when:
+      visible:
+        id: login_email
+    commands:
+      - tapOn: { id: login_email }
+      - inputText: ${MATIKA_PATIENT_EMAIL}
+      - tapOn: { id: login_password }
+      - inputText: ${MATIKA_PATIENT_PASSWORD}
+      - hideKeyboard
+      - tapOn: { id: login_button }
+
+- extendedWaitUntil:
+    visible:
+      id: patient_home_start_conversation
+    timeout: 30000
+- tapOn:
+    id: patient_home_start_conversation
+
+- tapOn:
+    text: "Allow|While using the app"
+    optional: true
+
+# === T1: BP statement ===
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+
+- extendedWaitUntil:
+    visible:
+      id: matika_response_card
+    timeout: 90000
+
+# === T2: confirm ===
+- extendedWaitUntil:
+    visible:
+      id: matika_speaking_indicator
+    timeout: 30000
+- extendedWaitUntil:
+    notVisible:
+      id: matika_speaking_indicator
+    timeout: 45000
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+- extendedWaitUntil:
+    visible:
+      id: matika_turn_counter
+      text: "turn 2"
+    timeout: 60000
+
+# === T3: glucose statement ===
+- extendedWaitUntil:
+    visible:
+      id: matika_speaking_indicator
+    timeout: 30000
+- extendedWaitUntil:
+    notVisible:
+      id: matika_speaking_indicator
+    timeout: 45000
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+- extendedWaitUntil:
+    visible:
+      id: matika_turn_counter
+      text: "turn 3"
+    timeout: 60000
+
+- assertVisible:
+    id: matika_mic

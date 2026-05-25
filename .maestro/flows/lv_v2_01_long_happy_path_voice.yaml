@@ -1,0 +1,113 @@
+# LV-V2-01 (voice) — Long happy-path, single-vital, single-config patient.
+#
+# Voice variant of e2e_long_conversation_text. Three turns:
+#   T1: "My blood pressure is one thirty over eighty five." → PENDING
+#   T2: "Is that in the normal range for me?"  (non-committing clarify)
+#   T3: "Yes, please save it."                  (explicit confirm)
+#
+# Load-bearing assertion: turn 2 is a plain-language question with no
+# new numeric value — the FSM must stay in PENDING_CONFIRMATION (not
+# crash, not auto-commit). The voice path forces the LLM through STT
+# transcription of natural language ("in the normal range for me") so
+# the test is non-trivial vs the text variant.
+#
+# Pre-conditions:
+#   - Jane on staging with blood_pressure_{systolic,diastolic} active.
+#   - F57 handler guard live on matika-staging-bedrock-router.
+#   - APK installed with TTS_DONE log + speaking_indicator testTag.
+#
+# Run:
+#   source ~/.matika-test-creds.env
+#   export MATIKA_SAY_REMOTE_URL=http://10.0.0.171:8765
+#   scripts/matika-voice-run.sh lv_v2_01_long_happy_path_voice --no-install \
+#       --turn "en|175|My blood pressure is one thirty over eighty five.|600" \
+#       --turn "en|175|Is that in the normal range for me?|400" \
+#       --turn "en|175|Yes, please save it.|400"
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+- extendedWaitUntil:
+    visible:
+      id: login_email
+    timeout: 15000
+- tapOn:
+    id: login_email
+- inputText: ${MATIKA_PATIENT_EMAIL}
+- tapOn:
+    id: login_password
+- inputText: ${MATIKA_PATIENT_PASSWORD}
+- hideKeyboard
+- tapOn:
+    id: login_button
+
+- extendedWaitUntil:
+    visible:
+      id: patient_home_start_conversation
+    timeout: 30000
+- tapOn:
+    id: patient_home_start_conversation
+
+- tapOn:
+    text: "Allow|While using the app"
+    optional: true
+
+# === T1: BP statement ===
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+
+- extendedWaitUntil:
+    visible:
+      id: matika_response_card
+    timeout: 60000
+
+# === T2: non-committing clarifying question ===
+- extendedWaitUntil:
+    visible:
+      id: matika_speaking_indicator
+    timeout: 15000
+- extendedWaitUntil:
+    notVisible:
+      id: matika_speaking_indicator
+    timeout: 30000
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+- extendedWaitUntil:
+    visible:
+      id: matika_turn_counter
+      text: "turn 2"
+    timeout: 60000
+
+# === T3: explicit confirm ===
+- extendedWaitUntil:
+    visible:
+      id: matika_speaking_indicator
+    timeout: 15000
+- extendedWaitUntil:
+    notVisible:
+      id: matika_speaking_indicator
+    timeout: 30000
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+- extendedWaitUntil:
+    visible:
+      id: matika_turn_counter
+      text: "turn 3"
+    timeout: 60000
+
+- assertVisible:
+    id: matika_mic

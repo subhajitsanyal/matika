@@ -1,0 +1,109 @@
+# LV-V2-03 (Hindi voice) — Multi-vital chain in Hindi.
+#
+# Three turns in Hindi exercising STT hi-IN + Bedrock multilingual
+# extraction + Lekha hi-IN TTS:
+#   T1: "मेरा रक्तचाप एक सौ तीस बटा पचासी है।"  (BP 130/85)
+#   T2: "हां, यह सही है।"                       (Yes, correct)
+#   T3: "मेरा रक्त शर्करा एक सौ बीस है।"        (Glucose 120)
+#
+# **F22 workaround.** AppLanguage must be primed to `hi` via
+# `_bench_set_language_hi.yaml` BEFORE this flow runs. clearState=false
+# below preserves the DataStore seed across launchApp.
+#
+# Run (two-step):
+#   source ~/.matika-test-creds.env
+#   export MATIKA_SAY_REMOTE_URL=http://10.0.0.171:8765
+#   scripts/maestro-run.sh --no-install _bench_set_language_hi
+#   scripts/matika-voice-run.sh lv_v2_03_multi_vital_hi_voice --no-install \
+#       --turn "hi|165|मेरा रक्तचाप एक सौ तीस बटा पचासी है।|600" \
+#       --turn "hi|165|हां, यह सही है।|400" \
+#       --turn "hi|165|मेरा रक्त शर्करा एक सौ बीस है।|400"
+#
+# clearState: false — see patient_voice_bp_hi_single_turn.yaml.
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: false
+
+# Login conditional — helper flow may have left us signed in.
+- runFlow:
+    when:
+      visible:
+        id: login_email
+    commands:
+      - tapOn: { id: login_email }
+      - inputText: ${MATIKA_PATIENT_EMAIL}
+      - tapOn: { id: login_password }
+      - inputText: ${MATIKA_PATIENT_PASSWORD}
+      - hideKeyboard
+      - tapOn: { id: login_button }
+
+- extendedWaitUntil:
+    visible:
+      id: patient_home_start_conversation
+    timeout: 30000
+- tapOn:
+    id: patient_home_start_conversation
+
+- tapOn:
+    text: "Allow|While using the app"
+    optional: true
+
+# === T1: BP statement ===
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+
+- extendedWaitUntil:
+    visible:
+      id: matika_response_card
+    timeout: 90000
+
+# === T2: confirm ===
+- extendedWaitUntil:
+    visible:
+      id: matika_speaking_indicator
+    timeout: 30000
+- extendedWaitUntil:
+    notVisible:
+      id: matika_speaking_indicator
+    timeout: 45000
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+- extendedWaitUntil:
+    visible:
+      id: matika_turn_counter
+      text: "turn 2"
+    timeout: 60000
+
+# === T3: glucose statement ===
+- extendedWaitUntil:
+    visible:
+      id: matika_speaking_indicator
+    timeout: 30000
+- extendedWaitUntil:
+    notVisible:
+      id: matika_speaking_indicator
+    timeout: 45000
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+- extendedWaitUntil:
+    visible:
+      id: matika_turn_counter
+      text: "turn 3"
+    timeout: 60000
+
+- assertVisible:
+    id: matika_mic

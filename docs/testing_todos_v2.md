@@ -509,6 +509,32 @@ The four, updated:
 
 **Cross-reference:** `docs/runbook_oncall_v2.md` for the inline TARGET sections + diagnostic steps that future alarm wiring should preserve.
 
+### F59 — Patient daily-logging cross-maps off-protocol numeric onto a configured vital (NEW — 2026-05-24, voice)
+
+**Severity:** **Medium / clinical safety** — risk of committing an unrelated lab number as a configured vital if the patient confirms reflexively.
+
+**Discovered while running LV-V2-05 voice (off-protocol reading).** The patient said three lab values not in Jane's `parameter_configs` (cholesterol 220, vitamin D 18, blood urea 32). On turn 4 ("Can you tell my caregiver to add cholesterol tracking?"), the LLM responded:
+
+> "Jane, that's a great idea to track cholesterol — your doctor or caregiver can set that up for you. But right now, let me make sure I have your blood sugar reading correct. **You mentioned it was two twenty earlier — is that right?**"
+
+The badge was PENDING_CONFIRMATION at this point. "Two twenty" was the cholesterol value from turn 1; the LLM took the off-protocol number and pre-populated a confirmation for `blood_glucose` (which IS in Jane's config). A patient saying "yes" would commit 220 mg/dL as their blood sugar reading.
+
+**Live evidence:** screenshot `/tmp/lv05_voice_pass.png` from 2026-05-24 21:40Z run. Maestro run rc=0; the harness PASSED because session FSM did not crash and turn_counter reached 4 — the finding is on the AI semantic behavior, not the state machine.
+
+**Root cause (hypothesis):** the patient-logging system prompt prioritizes "extract a configured vital from any numeric mention" too strongly relative to "respect the originating parameter the patient named." When the patient mentions an unconfigured parameter with a number, the LLM falls back to mapping the number to the nearest-fitting configured vital instead of declining.
+
+**Fix options:**
+1. **Prompt change (recommended).** Add a stage to the patient-logging system prompt explicitly forbidding cross-parameter inference: "If the patient names a parameter NOT in `configured_parameters`, do not map the value to any other parameter — politely note it's not currently tracked and ask if the caregiver should add it." Test: re-run LV-V2-05 voice and verify the AI does not pre-populate a PENDING_CONFIRMATION for a different vital.
+2. **Handler guard.** Detect when the proposed pending parameter (`blood_glucose` here) does not match any parameter the user has named in the recent turns (`cholesterol`, `vitamin D`, `blood urea`). Reject the proposed extraction and force re-prompt. Adds complexity.
+
+Prefer option 1.
+
+**Workaround pending fix.** None safe for clinical use; if a beta patient hits this, manual review of the committed observation would be required. The beta-instructions doc should warn caregivers that off-protocol mentions can produce unexpected confirmations.
+
+**Open question:** does the same cross-mapping behavior happen in text-fallback? The text-version flow (`lv_v2_05_off_protocol_reading_text.yaml`) didn't capture this — but it asserts only on `matika_text_fallback` visibility, not on the actual AI response text. Worth re-running text version with response inspection.
+
+**Owner:** founder. **ETA:** before beta cohort opens — pre-flight prompt audit recommended.
+
 ### F58 — PLAUSIBILITY_CHALLENGE → PENDING_CONFIRMATION direct transition rejected by state machine; recovery turn errors (NEW — 2026-05-24)
 
 **Severity:** **Medium** — blocks the natural one-turn recovery from an implausible reading. User experience: after the AI challenges an outlier reading and the patient says "Sorry, I meant 132 over 86", the next turn 500s and the conversation appears wedged.
