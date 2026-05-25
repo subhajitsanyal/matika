@@ -509,6 +509,34 @@ The four, updated:
 
 **Cross-reference:** `docs/runbook_oncall_v2.md` for the inline TARGET sections + diagnostic steps that future alarm wiring should preserve.
 
+### F58 — PLAUSIBILITY_CHALLENGE → PENDING_CONFIRMATION direct transition rejected by state machine; recovery turn errors (NEW — 2026-05-24)
+
+**Severity:** **Medium** — blocks the natural one-turn recovery from an implausible reading. User experience: after the AI challenges an outlier reading and the patient says "Sorry, I meant 132 over 86", the next turn 500s and the conversation appears wedged.
+
+**Discovered while running LV-V2-07 voice (implausibility mid-chain).**
+
+**Repro:**
+1. T1: "My blood pressure is one thirty over eighty five." → FSM lands in PENDING_CONFIRMATION.
+2. T2: "Actually, it's four hundred over three hundred." → FSM transitions to PLAUSIBILITY_CHALLENGE.
+3. T3: "Sorry, I meant one thirty two over eighty six." → backend `StateTransitionError: Transition PLAUSIBILITY_CHALLENGE -> PENDING_CONFIRMATION is not in the allowed set.` Lambda 500s; client surfaces "submitTurn failed seq=3".
+
+**Live evidence (staging, 2026-05-24):** session `880d748c-d289-4f7b-8d8f-c2fd62534d22`, CloudWatch request id `b38b4681-5256-4c46-9974-42a93b4b60a7`. Logged error verbatim: `handleTurn failed StateTransitionError: Transition PLAUSIBILITY_CHALLENGE -> PENDING_CONFIRMATION is not in the allowed set.`
+
+**Root cause.** `backend/lambdas/bedrock-router/src/state_machine.ts` ALLOWED_TRANSITIONS for `PLAUSIBILITY_CHALLENGE` is `new Set(['EXTRACTING', 'EMERGENCY', 'PAUSED', 'TERMINAL'])` — does NOT include PENDING_CONFIRMATION. The LLM correctly proposes PLAUSIBILITY_CHALLENGE → PENDING_CONFIRMATION when the patient supplies a plausible replacement value, but the state machine throws. The intended recovery path is two-hop (CHALLENGE → EXTRACTING → PENDING_CONFIRMATION), but the prompt doesn't force the EXTRACTING hop and Haiku skips it.
+
+**Fix options:**
+1. **State machine change (recommended).** Add `PENDING_CONFIRMATION` to PLAUSIBILITY_CHALLENGE's allowed set. The single-turn recovery is semantically correct: a new plausible value supplied during a challenge should be treated as a fresh pending value. Symmetric to GREETING → PENDING_CONFIRMATION which IS allowed (line 32 of state_machine.ts).
+2. **Prompt change.** Force the LLM to emit CHALLENGE → EXTRACTING first, then EXTRACTING → PENDING_CONFIRMATION on the same response. Brittle; Haiku already fails to follow similar two-hop directives (see F57 lineage).
+3. **Handler guard.** Detect a CHALLENGE → PENDING_CONFIRMATION rejection and silently retry as CHALLENGE → EXTRACTING + emit a fresh extractedValue. Adds complexity vs option 1.
+
+Option 1 is one line in `state_machine.ts` plus a unit-test addition. Prefer it.
+
+**Workaround pending fix.** Patient must say a different recovery phrase, e.g., "Let me start over with my BP" — the LLM will likely emit CHALLENGE → EXTRACTING then extract again. Untested.
+
+**Open question:** does the same gap exist on caregiver-onboarding state graph? Audit other `_CHALLENGE`-class states for matching missing edges.
+
+**Owner:** founder. **ETA:** unscoped; the multi-turn sweep can route around this with the workaround for now.
+
 ### F57 — Patient daily-logging session aggressively auto-closes within 1-2 turns regardless of content (NEW — 2026-05-24)
 
 **Severity:** **Medium / open question** — affects beta user experience. Either intentional UX choice that should be documented for beta cohort onboarding, or a bug where the FSM closes sessions when it shouldn't.

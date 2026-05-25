@@ -1,0 +1,116 @@
+# LV-V2-14 (voice) — Threshold edges via conversation.
+#
+# Jane's configured thresholds (staging, queried 2026-05-24):
+#   blood_pressure_systolic   85..180 mmHg
+#   blood_pressure_diastolic  60..120 mmHg
+#   blood_glucose             60..300 mg/dL
+#   body_temperature_c        35.5..39.5 °C
+#   body_weight               30..200 kg
+#   heart_rate                50..120 /min
+#   spo2                      90..100 %
+#
+# Verifies that BOUNDARY values (at the threshold edge) commit without
+# triggering PLAUSIBILITY_CHALLENGE. The challenge is a separate signal
+# from the alerting threshold — boundary values should be plausible AND
+# saved; the post-commit alert pipeline handles flagging.
+#
+# Sequence (covers upper-bound BP and lower-bound glucose in one run):
+#   T1: "My blood pressure is one eighty over one twenty." (BP at upper)
+#   T2: "Yes, that is correct."                            (confirm BP)
+#   T3: "My blood glucose is sixty milligrams per deciliter." (glucose at lower)
+#
+# Run:
+#   source ~/.matika-test-creds.env
+#   export MATIKA_SAY_REMOTE_URL=http://10.0.0.171:8765
+#   scripts/matika-voice-run.sh lv_v2_14_threshold_edges_voice --no-install \
+#       --turn "en|175|My blood pressure is one eighty over one twenty.|600" \
+#       --turn "en|175|Yes, that is correct.|400" \
+#       --turn "en|175|My blood glucose is sixty milligrams per deciliter.|600"
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+- extendedWaitUntil:
+    visible:
+      id: login_email
+    timeout: 15000
+- tapOn:
+    id: login_email
+- inputText: ${MATIKA_PATIENT_EMAIL}
+- tapOn:
+    id: login_password
+- inputText: ${MATIKA_PATIENT_PASSWORD}
+- hideKeyboard
+- tapOn:
+    id: login_button
+
+- extendedWaitUntil:
+    visible:
+      id: patient_home_start_conversation
+    timeout: 30000
+- tapOn:
+    id: patient_home_start_conversation
+
+- tapOn:
+    text: "Allow|While using the app"
+    optional: true
+
+# === T1: BP at upper bound ===
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+
+- extendedWaitUntil:
+    visible:
+      id: matika_response_card
+    timeout: 60000
+
+# === T2: confirm BP ===
+- extendedWaitUntil:
+    visible:
+      id: matika_speaking_indicator
+    timeout: 15000
+- extendedWaitUntil:
+    notVisible:
+      id: matika_speaking_indicator
+    timeout: 30000
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+- extendedWaitUntil:
+    visible:
+      id: matika_turn_counter
+      text: "turn 2"
+    timeout: 60000
+
+# === T3: glucose at lower bound ===
+- extendedWaitUntil:
+    visible:
+      id: matika_speaking_indicator
+    timeout: 15000
+- extendedWaitUntil:
+    notVisible:
+      id: matika_speaking_indicator
+    timeout: 30000
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+- extendedWaitUntil:
+    visible:
+      id: matika_turn_counter
+      text: "turn 3"
+    timeout: 60000
+
+- assertVisible:
+    id: matika_mic

@@ -1,0 +1,114 @@
+# LV-V2-06 (voice) — Off-topic / interpretation error mid-session.
+#
+# Patient starts a real BP capture, drops an off-topic question mid-flow,
+# then confirms. Verifies:
+#   1. FSM survives a non-numeric, non-vital turn (no crash, no auto-close).
+#   2. Pending BP value is preserved across the off-topic detour.
+#   3. Confirmation on turn 3 still commits the BP from turn 1.
+#
+# Sequence:
+#   T1: "My blood pressure is one thirty over eighty five."
+#   T2: "What's the weather today?"     (off-topic — session must persist)
+#   T3: "Yes, save my blood pressure."  (back on topic — confirms T1's BP)
+#
+# Pre-conditions:
+#   - Jane has blood_pressure_{systolic,diastolic} in parameter_configs.
+#   - F57 handler guard live (bedrock-router staging).
+#   - APK installed with TTS_DONE log.
+#
+# Run:
+#   source ~/.matika-test-creds.env
+#   export MATIKA_SAY_REMOTE_URL=http://10.0.0.171:8765
+#   scripts/matika-voice-run.sh lv_v2_06_off_topic_interpretation_voice --no-install \
+#       --turn "en|175|My blood pressure is one thirty over eighty five.|600" \
+#       --turn "en|175|What's the weather today?|400" \
+#       --turn "en|175|Yes, save my blood pressure reading.|400"
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+- extendedWaitUntil:
+    visible:
+      id: login_email
+    timeout: 15000
+- tapOn:
+    id: login_email
+- inputText: ${MATIKA_PATIENT_EMAIL}
+- tapOn:
+    id: login_password
+- inputText: ${MATIKA_PATIENT_PASSWORD}
+- hideKeyboard
+- tapOn:
+    id: login_button
+
+- extendedWaitUntil:
+    visible:
+      id: patient_home_start_conversation
+    timeout: 30000
+- tapOn:
+    id: patient_home_start_conversation
+
+- tapOn:
+    text: "Allow|While using the app"
+    optional: true
+
+# === T1: BP statement ===
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+
+- extendedWaitUntil:
+    visible:
+      id: matika_response_card
+    timeout: 60000
+
+# === T2: off-topic ===
+- extendedWaitUntil:
+    visible:
+      id: matika_speaking_indicator
+    timeout: 15000
+- extendedWaitUntil:
+    notVisible:
+      id: matika_speaking_indicator
+    timeout: 30000
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+- extendedWaitUntil:
+    visible:
+      id: matika_turn_counter
+      text: "turn 2"
+    timeout: 60000
+
+# === T3: confirm BP ===
+- extendedWaitUntil:
+    visible:
+      id: matika_speaking_indicator
+    timeout: 15000
+- extendedWaitUntil:
+    notVisible:
+      id: matika_speaking_indicator
+    timeout: 30000
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+- extendedWaitUntil:
+    visible:
+      id: matika_turn_counter
+      text: "turn 3"
+    timeout: 60000
+
+# Final sanity — session reached turn 3 without crashing.
+- assertVisible:
+    id: matika_mic

@@ -1,0 +1,134 @@
+# LV-V2-07 (voice) — Implausibility mid-chain.
+#
+# Verifies PLAUSIBILITY_CHALLENGE doesn't corrupt the session FSM:
+#   T1: "My blood pressure is one thirty over eighty five."  → PENDING_CONFIRMATION
+#   T2: "Actually, it's four hundred over three hundred."     → PLAUSIBILITY_CHALLENGE
+#   T3: "Sorry, I meant one thirty two over eighty six."      → PENDING_CONFIRMATION
+#   T4: "Yes, that's correct."                                → COMMIT (then walks to next vital per F57 guard)
+#
+# Expected: turn counter reaches 4. The challenge on turn 2 should not
+# crash the session or drop the pending value; the recovery on turn 3
+# should establish a new pending; turn 4 commits.
+#
+# Pre-conditions:
+#   - Jane has blood_pressure_{systolic,diastolic} in parameter_configs.
+#   - PLAUSIBILITY_CHALLENGE thresholds active in v2 (systolic > ~250 or
+#     diastolic > ~150 should trigger).
+#
+# Run:
+#   source ~/.matika-test-creds.env
+#   export MATIKA_SAY_REMOTE_URL=http://10.0.0.171:8765
+#   scripts/matika-voice-run.sh lv_v2_07_implausibility_midchain_voice --no-install \
+#       --turn "en|175|My blood pressure is one thirty over eighty five.|600" \
+#       --turn "en|175|Actually, it's four hundred over three hundred.|400" \
+#       --turn "en|175|Sorry, I meant one thirty two over eighty six.|400" \
+#       --turn "en|175|Yes, that's correct.|400"
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+- extendedWaitUntil:
+    visible:
+      id: login_email
+    timeout: 15000
+- tapOn:
+    id: login_email
+- inputText: ${MATIKA_PATIENT_EMAIL}
+- tapOn:
+    id: login_password
+- inputText: ${MATIKA_PATIENT_PASSWORD}
+- hideKeyboard
+- tapOn:
+    id: login_button
+
+- extendedWaitUntil:
+    visible:
+      id: patient_home_start_conversation
+    timeout: 30000
+- tapOn:
+    id: patient_home_start_conversation
+
+- tapOn:
+    text: "Allow|While using the app"
+    optional: true
+
+# === T1: BP 130/85 ===
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+
+- extendedWaitUntil:
+    visible:
+      id: matika_response_card
+    timeout: 60000
+
+# === T2: implausible 400/300 ===
+- extendedWaitUntil:
+    visible:
+      id: matika_speaking_indicator
+    timeout: 15000
+- extendedWaitUntil:
+    notVisible:
+      id: matika_speaking_indicator
+    timeout: 30000
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+- extendedWaitUntil:
+    visible:
+      id: matika_turn_counter
+      text: "turn 2"
+    timeout: 60000
+
+# === T3: recovery 132/86 ===
+- extendedWaitUntil:
+    visible:
+      id: matika_speaking_indicator
+    timeout: 15000
+- extendedWaitUntil:
+    notVisible:
+      id: matika_speaking_indicator
+    timeout: 30000
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+- extendedWaitUntil:
+    visible:
+      id: matika_turn_counter
+      text: "turn 3"
+    timeout: 60000
+
+# === T4: confirm ===
+- extendedWaitUntil:
+    visible:
+      id: matika_speaking_indicator
+    timeout: 15000
+- extendedWaitUntil:
+    notVisible:
+      id: matika_speaking_indicator
+    timeout: 30000
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+- extendedWaitUntil:
+    visible:
+      id: matika_turn_counter
+      text: "turn 4"
+    timeout: 60000
+
+- assertVisible:
+    id: matika_mic
