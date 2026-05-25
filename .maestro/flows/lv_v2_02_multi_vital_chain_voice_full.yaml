@@ -1,0 +1,387 @@
+# LV-V2-02 (voice, full protocol) — Multi-vital chain via F57 handler-guard,
+# walking Jane's complete 7-vital protocol end-to-end in one voice session.
+#
+# Extends `lv_v2_02_multi_vital_chain_voice.yaml` (the 3-turn predecessor that
+# proves the F57 handler-guard suppresses `complete_session` after BP and
+# walks to glucose). This file pushes the same guard out to FULL protocol
+# depth — BP → glucose → weight → temperature → heart rate → SpO2 — and
+# verifies the session DOES close cleanly with a SessionCompleteCard once
+# every protocol entry has been captured + confirmed and the patient says
+# "that's all".
+#
+# Why this matters:
+#  - The 3-turn variant only proves the guard walks ONCE (BP→glucose).
+#    It can't catch a regression where the guard mis-fires at the wrong
+#    depth (e.g. suppresses the LEGITIMATE complete_session after the
+#    final vital) or where Bedrock context-window degradation past ~10
+#    turns destabilises the FSM.
+#  - This is also the only patient-logging flow that exercises the
+#    "session complete" code path (PatientLoggingSummary render with
+#    all 7 captured values) — the rest of the catalog stops short of
+#    completion.
+#
+# Sequence (13 turns):
+#   T1:  "My blood pressure is one thirty over eighty five." → PENDING
+#   T2:  "Yes, that's correct."                              → guard walks to glucose
+#   T3:  "My blood sugar is one ten."                         → PENDING
+#   T4:  "Yes, that's correct."                              → guard walks to weight
+#   T5:  "My weight is sixty five kilos today."              → PENDING
+#   T6:  "Yes, that's correct."                              → guard walks to temp
+#   T7:  "My temperature is thirty six point eight degrees." → PENDING
+#   T8:  "Yes, that's correct."                              → guard walks to HR
+#   T9:  "My pulse is seventy two."                          → PENDING
+#   T10: "Yes, that's correct."                              → guard walks to SpO2
+#   T11: "My oxygen is ninety seven percent."                → PENDING
+#   T12: "Yes, that's correct."                              → final commit; guard MUST allow complete
+#   T13: "That's all for today."                             → closing → SessionCompleteCard
+#
+# Pre-conditions:
+#  - Jane (patient) seeded with ALL 7 active parameter_configs on staging:
+#    blood_pressure_systolic, blood_pressure_diastolic, blood_glucose,
+#    body_weight, body_temperature_c, heart_rate, spo2. Verify via the
+#    dev RDS SSM tunnel (memory: dev_rds_ssm_tunnel) before running:
+#      SELECT parameter, active FROM parameter_configs
+#       WHERE patient_id = '<Jane>' AND active = true;
+#    Must return 7 rows. If fewer rows, run `scripts/seed-jane-multi-param-staging.sh`
+#    against the staging RDS first (per docs/voice_multi_turn_journeys.md
+#    Phase B prep).
+#  - F57 handler guard live in matika-staging-bedrock-router
+#    (CodeSha256 OJkwTBp5amdMJ6gN+5pw6VsmkGBhH5iw6+mgjpVPXok= or newer).
+#  - APK installed with TTS_DONE log + visible-then-invisible
+#    speaking_indicator wait. Same APK that runs the 3-turn predecessor.
+#
+# Run:
+#   source ~/.matika-test-creds.env
+#   export MATIKA_SAY_REMOTE_URL=http://10.0.0.171:8765
+#   scripts/matika-voice-run.sh lv_v2_02_multi_vital_chain_voice_full --no-install \
+#       --turn "en|175|My blood pressure is one thirty over eighty five.|600" \
+#       --turn "en|175|Yes, that is correct.|400" \
+#       --turn "en|175|My blood sugar is one ten.|600" \
+#       --turn "en|175|Yes, that is correct.|400" \
+#       --turn "en|175|My weight is sixty five kilos today.|600" \
+#       --turn "en|175|Yes, that is correct.|400" \
+#       --turn "en|175|My temperature is thirty six point eight degrees.|600" \
+#       --turn "en|175|Yes, that is correct.|400" \
+#       --turn "en|175|My pulse is seventy two.|600" \
+#       --turn "en|175|Yes, that is correct.|400" \
+#       --turn "en|175|My oxygen is ninety seven percent.|600" \
+#       --turn "en|175|Yes, that is correct.|400" \
+#       --turn "en|175|That's all for today.|400"
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+# Sign in as the patient. Same shape as patient_voice_bp_en.
+- extendedWaitUntil:
+    visible:
+      id: login_email
+    timeout: 15000
+- tapOn:
+    id: login_email
+- inputText: ${MATIKA_PATIENT_EMAIL}
+- tapOn:
+    id: login_password
+- inputText: ${MATIKA_PATIENT_PASSWORD}
+- hideKeyboard
+- tapOn:
+    id: login_button
+
+- extendedWaitUntil:
+    visible:
+      id: patient_home_start_conversation
+    timeout: 30000
+- tapOn:
+    id: patient_home_start_conversation
+
+- tapOn:
+    text: "Allow|While using the app"
+    optional: true
+
+# === Turn 1 — patient reports BP ===
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+
+- extendedWaitUntil:
+    visible:
+      id: matika_response_card
+    timeout: 60000
+
+# === Turn 2 — patient confirms BP (guard walks to glucose) ===
+- extendedWaitUntil:
+    visible:
+      id: matika_speaking_indicator
+    timeout: 15000
+- extendedWaitUntil:
+    notVisible:
+      id: matika_speaking_indicator
+    timeout: 30000
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+- extendedWaitUntil:
+    visible:
+      id: matika_turn_counter
+      text: "turn 2"
+    timeout: 60000
+
+# === Turn 3 — patient reports blood glucose ===
+- extendedWaitUntil:
+    visible:
+      id: matika_speaking_indicator
+    timeout: 15000
+- extendedWaitUntil:
+    notVisible:
+      id: matika_speaking_indicator
+    timeout: 30000
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+- extendedWaitUntil:
+    visible:
+      id: matika_turn_counter
+      text: "turn 3"
+    timeout: 60000
+
+# === Turn 4 — patient confirms glucose (guard walks to weight) ===
+- extendedWaitUntil:
+    visible:
+      id: matika_speaking_indicator
+    timeout: 15000
+- extendedWaitUntil:
+    notVisible:
+      id: matika_speaking_indicator
+    timeout: 30000
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+- extendedWaitUntil:
+    visible:
+      id: matika_turn_counter
+      text: "turn 4"
+    timeout: 60000
+
+# === Turn 5 — patient reports body weight ===
+- extendedWaitUntil:
+    visible:
+      id: matika_speaking_indicator
+    timeout: 15000
+- extendedWaitUntil:
+    notVisible:
+      id: matika_speaking_indicator
+    timeout: 30000
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+- extendedWaitUntil:
+    visible:
+      id: matika_turn_counter
+      text: "turn 5"
+    timeout: 60000
+
+# === Turn 6 — patient confirms weight (guard walks to temperature) ===
+- extendedWaitUntil:
+    visible:
+      id: matika_speaking_indicator
+    timeout: 15000
+- extendedWaitUntil:
+    notVisible:
+      id: matika_speaking_indicator
+    timeout: 30000
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+- extendedWaitUntil:
+    visible:
+      id: matika_turn_counter
+      text: "turn 6"
+    timeout: 60000
+
+# === Turn 7 — patient reports body temperature ===
+- extendedWaitUntil:
+    visible:
+      id: matika_speaking_indicator
+    timeout: 15000
+- extendedWaitUntil:
+    notVisible:
+      id: matika_speaking_indicator
+    timeout: 30000
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+- extendedWaitUntil:
+    visible:
+      id: matika_turn_counter
+      text: "turn 7"
+    timeout: 60000
+
+# === Turn 8 — patient confirms temperature (guard walks to heart rate) ===
+- extendedWaitUntil:
+    visible:
+      id: matika_speaking_indicator
+    timeout: 15000
+- extendedWaitUntil:
+    notVisible:
+      id: matika_speaking_indicator
+    timeout: 30000
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+- extendedWaitUntil:
+    visible:
+      id: matika_turn_counter
+      text: "turn 8"
+    timeout: 60000
+
+# === Turn 9 — patient reports heart rate ===
+- extendedWaitUntil:
+    visible:
+      id: matika_speaking_indicator
+    timeout: 15000
+- extendedWaitUntil:
+    notVisible:
+      id: matika_speaking_indicator
+    timeout: 30000
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+- extendedWaitUntil:
+    visible:
+      id: matika_turn_counter
+      text: "turn 9"
+    timeout: 60000
+
+# === Turn 10 — patient confirms heart rate (guard walks to SpO2) ===
+- extendedWaitUntil:
+    visible:
+      id: matika_speaking_indicator
+    timeout: 15000
+- extendedWaitUntil:
+    notVisible:
+      id: matika_speaking_indicator
+    timeout: 30000
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+- extendedWaitUntil:
+    visible:
+      id: matika_turn_counter
+      text: "turn 10"
+    timeout: 60000
+
+# === Turn 11 — patient reports SpO2 ===
+- extendedWaitUntil:
+    visible:
+      id: matika_speaking_indicator
+    timeout: 15000
+- extendedWaitUntil:
+    notVisible:
+      id: matika_speaking_indicator
+    timeout: 30000
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+- extendedWaitUntil:
+    visible:
+      id: matika_turn_counter
+      text: "turn 11"
+    timeout: 60000
+
+# === Turn 12 — patient confirms SpO2 (final vital; guard MUST allow close) ===
+# After this turn the protocol is fully satisfied (7 vitals captured +
+# confirmed). The F57 guard's walk-protocol logic should now find NO
+# remaining unlogged vital and therefore NOT override the LLM's
+# complete_session. The session may transition to COMPLETE on this turn
+# or on T13 — both are acceptable. We don't assert SessionCompleteCard
+# here yet because the LLM may pose a final summary turn first.
+- extendedWaitUntil:
+    visible:
+      id: matika_speaking_indicator
+    timeout: 15000
+- extendedWaitUntil:
+    notVisible:
+      id: matika_speaking_indicator
+    timeout: 30000
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+- extendedWaitUntil:
+    visible:
+      id: matika_turn_counter
+      text: "turn 12"
+    timeout: 60000
+
+# === Turn 13 — patient explicitly closes the session ===
+# Belt-and-braces: even if the LLM didn't auto-close on T12, the user's
+# "that's all for today" cue should drive complete_session.
+- extendedWaitUntil:
+    visible:
+      id: matika_speaking_indicator
+    timeout: 15000
+- extendedWaitUntil:
+    notVisible:
+      id: matika_speaking_indicator
+    timeout: 30000
+- extendedWaitUntil:
+    visible:
+      id: matika_mic
+    timeout: 30000
+- tapOn:
+    id: matika_mic
+
+# Final assertion — SessionCompleteCard rendered. SessionCompleteCard
+# has no testTag (it's gated by uiState.sessionEnded inside the same
+# Column as the rest of MatikaConversationScreen — see
+# MatikaConversationScreen.kt:177). Both the title text "Session
+# complete" and the "Done" button are unique to that card, so asserting
+# either one is sufficient evidence the card mounted. We assert the
+# title text because it's the load-bearing signal — "Done" buttons
+# appear on several other screens (caregiver_protocol_setup,
+# cg_v2_invite_attendant_email, etc.) and could in theory be confused
+# with a stale match if a future refactor reuses the screen.
+- extendedWaitUntil:
+    visible: "Session complete"
+    timeout: 120000
+
+# Sanity — Done button is also visible (= card fully composed, not
+# just a transient text node). Tapping is out of scope; the operator
+# can dismiss manually after inspecting captured values on-screen.
+- assertVisible: "Done"

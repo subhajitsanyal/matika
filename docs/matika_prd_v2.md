@@ -301,6 +301,44 @@ Replaces v1's Mac Mini health check. App periodically pings `GET /health` on the
 - [ ] On health failure, app displays a status message and disables session start
 - [ ] On recovery, status clears within one poll cycle
 
+### 6.9 Care Notes (Patient → Caregiver) — NEW
+
+During a daily logging session a patient often surfaces things that are not numeric vitals: a request that their caregiver add cholesterol to the tracking set, a complaint about a medication side effect, a question they'd like passed on to their doctor at the next visit. v1 dropped these on the floor. v2 captures them as **care notes** — a per-patient timeline of structured asides that the caregiver browses on a dedicated screen.
+
+The feature is shaped as a **generic notes substrate** rather than a one-off "patient requests" pipe. The same store holds:
+
+- **Patient-originated asides** captured during a conversational session (v2.0 scope).
+- **Matika-originated observations** the agent surfaces on the patient's behalf — e.g. "Mrs. Sharma seemed disoriented in turns 2–3 today" or "Patient mentioned chest discomfort in passing on 2026-06-12; emergency keywords did not trigger but the mention is worth a caregiver review." (Wired in v2.1; the data model and screen ship in v2.0 so the surface is ready.)
+- **Doctor-to-caregiver notes** (deferred to Phase 2 with the doctor portal).
+
+**Recipient resolution + disambiguation.** Patients refer to care-team members by first name, nickname, relationship, or role ("tell my daughter Priya", "ask Bittu to bring my pills", "let Dr. Mehta know"). When the agent detects a directed aside, it resolves the spoken referent against the patient's active care team (`persona_links`) plus any doctor mentioned in the patient profile:
+
+| Resolution outcome | Agent behavior | Storage |
+|---|---|---|
+| Exactly one match | Capture silently; brief acknowledgment in prose ("I'll let Priya know.") | `recipient_user_id` populated, `disambiguation_status = 'resolved'` |
+| Multiple matches (e.g. two caregivers named "Priya") | Ask back: "Did you mean Priya Sharma or Priya Mehta?" within the same session | After follow-up turn: resolved; if patient skips: `disambiguation_status = 'ambiguous'` with all candidate ids |
+| No match (name not in care team) | Capture anyway with `disambiguation_status = 'no_match'`; brief acknowledgment that the agent will pass it along; raw spoken name preserved | `recipient_user_id = null`, `mentioned_name` populated |
+| No name spoken (generic "tell my caregiver") | Defaults to the patient's primary caregiver (most-recent active link) | `recipient_user_id` populated, `disambiguation_status = 'resolved_default'` |
+
+Disambiguation never blocks the daily-logging flow — at worst the note lands with `ambiguous` or `no_match` status and the caregiver-side UI surfaces the raw spoken name so a human can sort it out.
+
+**Caregiver-side surface.** A new **Notes** entry under the existing caregiver navigation lists notes for each linked patient, descending by date. Each row shows: patient initials, capture date + session link, source badge (patient / Matika / doctor), recipient (self / "ambiguous — Priya" / "named: Bittu (not in care team)"), and the note text in the patient's primary language with an inline translation toggle. Tap-to-detail shows the surrounding transcript snippet (3 turns before/after). The caregiver can **acknowledge** a note (timestamp + ack-by user), which moves it to the "Resolved" tab; an unread badge on the navigation entry shows the count of unacknowledged notes across all linked patients.
+
+**Out of scope for v2.0.**
+- Doctor-recipient notes — surfaces only inside the caregiver UI in v2.0; doctor portal pipe lands with Phase 2.
+- Agent-originated observations — the data model and screen support them but no Matika prompt path emits them yet; v2.1.
+- Free-form caregiver replies to notes — v2.0 captures only the caregiver acknowledgment; reply-back to patient is a separate v2.1 feature.
+- Push-notification fan-out on new notes — v2.0 surfaces a badge on next caregiver app open; FCM push for high-signal notes is v2.1 once Matika starts emitting its own observations.
+
+**Acceptance criteria:**
+- [ ] Agent detects a directed aside during a `patient_logging` session and emits a `record_note` action in the structured output.
+- [ ] Handler resolves the recipient against `persona_links` for the patient; if ambiguous, the LLM follow-up turn asks for disambiguation in-session.
+- [ ] Note row persists with: patient_id, session_id, source = `patient_request`, recipient role + resolved user_id (or status + raw name on ambiguous/no_match), note text, language tag.
+- [ ] Caregiver opens the Notes screen on the linked patient and sees the captured note with the source badge + disambiguation status visible.
+- [ ] Caregiver acknowledges a note; ack row persists with caregiver user_id + timestamp; the unread badge decrements.
+- [ ] Notes are filterable by patient (for multi-patient caregivers) and by date range.
+- [ ] No note is dropped on the floor: even when disambiguation fails, the row lands with `disambiguation_status` set and the raw name preserved.
+
 ---
 
 ## 7. Core Components

@@ -438,6 +438,74 @@ Backs the voice-onboarding path defined in PRD §6.3.1 / §8.1. Distinct from th
 
 **Atomicity.** All four side effects — `patients` row, `users` row, `persona_links` row linking the caregiver, Cognito user creation, SMS/email invite enqueue — happen in one transaction with rollback on any failure. The synthetic `pending-<sessionId>` `interaction_sessions` row created at session-start gets its `patient_id` updated to the new `patients.id` in the same transaction.
 
+### 4.6 Care Notes API — `care-notes` Lambda (NEW)
+
+Backs the caregiver-side surface defined in PRD §6.9. Three endpoints, all Cognito-authenticated as the caregiver user; auth handler enforces `persona_links` membership before any patient row is dereferenced.
+
+#### `GET /patients/{patientId}/care-notes`
+
+List care notes for the given patient. Caregiver-scoped — the auth handler 403s if the requester is not in an active `persona_links` row for `patientId`.
+
+**Query params:**
+- `status` — `unacknowledged` (default) | `acknowledged` | `all`
+- `from` / `to` — ISO date bounds (inclusive); defaults to last 30 days
+- `limit` — page size (default 50, max 200)
+- `cursor` — opaque pagination cursor
+
+**Response (200):**
+```json
+{
+  "items": [
+    {
+      "id": "uuid-v4",
+      "patientId": "uuid-v4",
+      "patientShortId": "CL-012W6M",
+      "sessionId": "uuid-v4",
+      "turnIndex": 4,
+      "source": "patient_request",
+      "recipientRole": "caregiver",
+      "recipientUserId": "uuid-v4",
+      "recipientDisplayName": "Priya Sharma",
+      "candidateUserIds": null,
+      "mentionedName": "Priya",
+      "disambiguationStatus": "resolved",
+      "noteText": "Patient asked her caregiver to add cholesterol to the tracked vitals.",
+      "noteLanguage": "en-IN",
+      "acknowledgedAt": null,
+      "acknowledgedBy": null,
+      "createdAt": "2026-05-25T17:48:37Z"
+    }
+  ],
+  "nextCursor": null,
+  "unacknowledgedCount": 1
+}
+```
+
+#### `POST /patients/{patientId}/care-notes/{noteId}/acknowledge`
+
+Marks the note acknowledged by the calling caregiver. Idempotent — re-acking is a no-op (returns 200 with existing `acknowledgedAt`).
+
+**Response (200):**
+```json
+{ "id": "uuid-v4", "acknowledgedAt": "2026-05-25T18:00:00Z", "acknowledgedBy": "uuid-v4" }
+```
+
+**Errors:**
+- `403 not_in_care_team` — caller has no active `persona_links` row for the patient
+- `404 note_not_found` — note does not exist OR belongs to a different patient
+- `409 already_acknowledged_by_other` (informational, still 200 with `acknowledgedBy` set to the other user — UI shows "Acked by X on Y")
+
+#### `GET /caregivers/{caregiverUserId}/care-notes/unread-count`
+
+Tiny endpoint backing the home-screen badge — aggregates unacknowledged notes across **all** linked patients in one query against `idx_care_notes_recipient_unacked`.
+
+**Response (200):**
+```json
+{ "count": 4, "perPatient": [ { "patientShortId": "CL-012W6M", "count": 2 }, { "patientShortId": "CL-PNDN1P", "count": 2 } ] }
+```
+
+Lambda named `matika-{env}-care-notes`, deployed via Terraform. Shares the `lambda_rds_cognito` IAM role pattern (adds the `care_notes` table to the SELECT/INSERT/UPDATE grant). Cold-start budget: < 1.5s P95.
+
 ---
 
 ## 5. Data Schemas
@@ -486,6 +554,72 @@ CREATE TABLE cost_telemetry (
 );
 
 CREATE INDEX idx_cost_telemetry_day ON cost_telemetry (day);
+
+-- V016 (Care Notes — patient-originated asides during a session; built as a
+-- generic notes substrate so future Matika-agent observations and doctor
+-- notes can share the same table without re-shaping. PRD §6.9.)
+CREATE TYPE care_note_source AS ENUM (
+    'patient_request',     -- captured from a patient session turn (v2.0)
+    'matika_observation',  -- agent-surfaced; emitted by Matika prompts (v2.1)
+    'doctor_note'          -- written from the doctor portal (Phase 2)
+);
+
+CREATE TYPE care_note_recipient_role AS ENUM ('caregiver', 'doctor');
+
+CREATE TYPE care_note_disambiguation_status AS ENUM (
+    'resolved',          -- exactly one match in the care team
+    'resolved_default',  -- no name spoken; defaulted to primary caregiver
+    'ambiguous',         -- multiple matches; candidate_user_ids populated
+    'no_match'           -- spoken name not in the care team
+);
+
+CREATE TABLE care_notes (
+    id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    patient_id              UUID NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+    session_id              UUID REFERENCES interaction_sessions(id) ON DELETE SET NULL,
+    -- nullable to allow non-session origin (future: doctor portal, scheduled jobs)
+    turn_index              INTEGER,  -- which turn in the session emitted this, if applicable
+    source                  care_note_source NOT NULL,
+    recipient_role          care_note_recipient_role NOT NULL DEFAULT 'caregiver',
+    recipient_user_id       UUID REFERENCES users(id) ON DELETE SET NULL,
+    -- The resolved-to user. Null when disambiguation_status IN ('ambiguous', 'no_match').
+    candidate_user_ids      UUID[] DEFAULT NULL,
+    -- Populated only when disambiguation_status = 'ambiguous'; the list of users
+    -- that matched the spoken referent.
+    mentioned_name          TEXT,
+    -- Raw spoken name/nickname as the LLM heard it ("Priya", "Bittu", "Dr. Mehta").
+    -- Always populated when source = 'patient_request' AND a name was spoken,
+    -- regardless of resolution outcome — so the caregiver UI can show the raw
+    -- referent on ambiguous/no_match rows.
+    disambiguation_status   care_note_disambiguation_status NOT NULL,
+    note_text               TEXT NOT NULL,
+    -- The structured note content (NOT the raw transcript snippet — that's
+    -- joinable via session_id + turn_index against interaction_sessions.transcript_history).
+    note_language           VARCHAR(8) NOT NULL DEFAULT 'en-IN',
+    -- Match the patient session language so the caregiver UI can show with
+    -- the right script + optional translation.
+    acknowledged_at         TIMESTAMPTZ,
+    acknowledged_by         UUID REFERENCES users(id),
+    -- Caregiver who hit "Acknowledge" in the UI. Null until acked.
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_care_notes_patient_unacked
+    ON care_notes (patient_id, created_at DESC)
+    WHERE acknowledged_at IS NULL;
+-- Hot path: caregiver opening the Notes screen for a patient — list unacked
+-- newest-first. Partial index keeps it small as resolved notes accumulate.
+
+CREATE INDEX idx_care_notes_recipient_unacked
+    ON care_notes (recipient_user_id, created_at DESC)
+    WHERE acknowledged_at IS NULL;
+-- For the unread-count badge: caregiver dashboard fans out across all linked
+-- patients with one query keyed by recipient_user_id.
+
+CREATE INDEX idx_care_notes_session ON care_notes (session_id)
+    WHERE session_id IS NOT NULL;
+-- For the detail view: pull the surrounding transcript turns by session_id.
 ```
 
 ### 5.2 Modified Tables
@@ -611,6 +745,58 @@ Claude returns JSON within `<output>` tags:
 
 Parsed by `bedrock-router` and enforced (regex + JSON schema validation). On parse failure, retry once with a stricter system prompt; on second failure, return error 503 to client.
 
+**Action types** (subset of `actions[].type`):
+
+| Type | When | Payload | Handler effect |
+|---|---|---|---|
+| `complete_session` | All configured vitals captured OR patient explicitly opts to stop | `{ reason: string }` | Sets `interaction_session.status='complete'`; closes the session |
+| `request_photo` | Patient mentions a measurement but not the value | `{ parameter: string }` | Surfaces photo-capture UI on the client |
+| `escalate_emergency` | Emergency keyword detected (rule 11 of `system_v2.md`) | `{ reason: string }` | FCM alert to caregiver; halts logging flow |
+| `pause_session` | Patient confused/unresponsive across two turns | `{ reason: string }` | Sets FSM to `PAUSED`; offers to resume next launch |
+| `record_note` **(NEW — care notes)** | Patient surfaces a directed aside ("tell my daughter Priya to…") | See below | Inserts a `care_notes` row; resolves recipient against `persona_links` |
+
+#### `record_note` action shape
+
+```json
+{
+  "type": "record_note",
+  "noteText": "Patient asked her caregiver to add cholesterol to the tracked vitals.",
+  "mentionedName": "Priya",
+  "recipientRole": "caregiver",
+  "noteLanguage": "en-IN"
+}
+```
+
+Field semantics:
+- `noteText` — the LLM's structured summary of the aside, in the same language as the patient's session. **Not** the raw transcript — the LLM rewrites the patient's mention as a third-person actionable note. The full transcript snippet is reconstructable in the caregiver UI by joining `care_notes.session_id` + `turn_index` against `interaction_sessions.transcript_history`.
+- `mentionedName` — the literal name/nickname/role the patient spoke (`"Priya"`, `"Bittu"`, `"my daughter"`, `"Dr. Mehta"`). Null if the patient said "tell my caregiver" with no specific name.
+- `recipientRole` — `"caregiver"` (v2.0 default) or `"doctor"` (allowed in the schema but Phase 2 surface).
+- `noteLanguage` — IETF language tag, matches `interaction_session.language` at the time of capture.
+
+The handler post-processes this into a `care_notes` row. Recipient resolution flow (in `handler.ts`, after the LLM response is validated):
+
+1. Look up the patient's active care team:
+   ```sql
+   SELECT u.id, u.full_name, u.preferred_name, pl.relationship
+     FROM persona_links pl
+     JOIN users u ON u.id = pl.user_id
+    WHERE pl.patient_id = $1 AND pl.is_active = true
+      AND pl.relationship IN ('caregiver', 'relative');
+   ```
+   (Plus a doctor lookup when `recipientRole = 'doctor'` — Phase 2.)
+2. Match `mentionedName` against the result set (case-insensitive substring match against `full_name`, `preferred_name`, AND `relationship` — so "my daughter" can resolve via `relationship` even when no name is spoken).
+3. Apply the disambiguation outcome table from PRD §6.9:
+   - 1 match → `disambiguation_status='resolved'`, set `recipient_user_id`
+   - 0 matches AND `mentionedName` IS NOT NULL → `disambiguation_status='no_match'`
+   - 0 matches AND `mentionedName` IS NULL → `disambiguation_status='resolved_default'`, set `recipient_user_id` to the patient's primary caregiver (most-recent active `persona_links` row)
+   - 2+ matches → `disambiguation_status='ambiguous'`, populate `candidate_user_ids`, and re-emit the next system response with a clarifying question generated by a follow-up Haiku call OR by an inline prompt directive (see §6.11)
+4. Insert the `care_notes` row before returning the lambda response.
+
+**Validation rules:**
+- The handler enforces a max of **2 `record_note` actions per turn** (defends against runaway capture from a single noisy utterance). Subsequent records in the same turn are dropped and logged as `care_notes_capacity_exceeded` WARN.
+- Empty `noteText` is rejected — the LLM is expected to produce a usable summary even for terse asides.
+- `noteText` is hard-capped at 1000 characters before insert.
+
 ### 6.5 Escalation Logic (T2 → T3)
 
 `bedrock-router` triggers Sonnet on these signals (computed before the model call where possible):
@@ -721,6 +907,45 @@ Two new states added to the §6.2 state machine, valid only on `caregiver_onboar
 - `create-patient-from-voice` returns `409 patient_already_exists` → bedrock-router emits a special turn surfacing the disambiguation prompt (PRD §6.5 row); session stays in `AWAITING_PROFILE_CONFIRMATION` until caregiver resolves.
 - `create-patient-from-voice` returns `502 cognito_create_failed` → bedrock-router emits a turn explaining the email may be in use, and offers the form-fallback escape. Session stays in `AWAITING_PROFILE_CONFIRMATION`.
 - App-side bail-out via "Use form instead" → app fires `POST /sessions/{sessionId}/end` (F2's explicit-close endpoint), then routes to the form-based onboarding screen pre-populated from whatever fields the LLM had captured up to that point.
+
+### 6.10 Care Notes Capture (patient_logging session)
+
+PRD §6.9 surface; the conversation engine path that produces `care_notes` rows.
+
+**Per-turn context injection.** When a `patient_logging` session is loaded by `bedrock-router`, the per-patient context block now includes a `## Care team` section listing each active care-team member with name, preferred name (if set), and relationship:
+
+```
+## Care team
+
+Active caregivers and family members linked to Jane:
+- Priya Sharma — relationship: caregiver (daughter)
+- John Doe — relationship: relative (son)
+- Dr. Mehta — relationship: doctor (referenced in profile; doctor-portal Phase 2)
+```
+
+This block is fed into the system prompt before each turn so the LLM can resolve named referents in-context. The block is regenerated on each turn (cheap query against `persona_links` + `patients.primary_doctor`) to stay current with care-team changes.
+
+**Prompt rule (new in `system_v2.md`).** A new conversation rule directs the LLM to detect directed asides and emit `record_note` actions:
+
+> **N. If the patient asks the agent to relay something to a member of their care team** (e.g. "tell my daughter to bring my pills", "ask the doctor about my dose", "can you let my caregiver know I'm out of strips") OR makes a request that needs caregiver action (e.g. "please add cholesterol to my tracking"), **capture it as a care note** in addition to your spoken acknowledgment. Emit `actions: [{ type: "record_note", noteText: "<third-person actionable summary>", mentionedName: "<spoken referent or null>", recipientRole: "caregiver", noteLanguage: "<session language>" }]`. Your spoken response should acknowledge briefly ("I'll let Priya know.") and then return to the configured protocol — capturing the note is silent from the patient's point of view beyond the brief ack.
+
+The rule explicitly does NOT instruct the LLM to perform name-resolution itself — that's the handler's job after the action lands. The LLM only emits the raw `mentionedName` it heard.
+
+**Handler post-processing flow** (in `bedrock-router/src/handler.ts`):
+
+1. After structured-output validation, scan `actions[]` for `type === 'record_note'`.
+2. Enforce the 2-actions-per-turn cap from §6.4.
+3. Run the recipient-resolution algorithm from §6.4 against the care-team list. The same list was injected into the prompt block, so the handler queries the same underlying `persona_links` set — keeps prompt-context and handler-resolution in sync.
+4. If `disambiguation_status === 'ambiguous'`:
+   a. The note row is inserted with `recipient_user_id = null` + `candidate_user_ids = [...]` + `disambiguation_status = 'ambiguous'`.
+   b. The handler appends a synthetic system message to `transcript_history` for the **next turn** that says "Earlier the patient mentioned a name that matched multiple people: Priya Sharma, Priya Mehta. Politely ask which one before continuing." On the next patient turn, the LLM picks this up from context and emits a clarifying question.
+   c. When the patient answers, the LLM emits a follow-up `record_note` with the disambiguating answer in `noteText` and the resolved `mentionedName` populated. The handler detects the prior ambiguous note via `session_id + recent within 5 minutes`, **updates** it (does not insert a new row) with the resolved `recipient_user_id` + `disambiguation_status = 'resolved'`, and clears `candidate_user_ids`. Sentinel pattern, keeps the note count honest.
+5. Insert (or update) the `care_notes` row.
+6. Lambda response payload is unchanged — `record_note` is silent to the client beyond the spoken `responseText` the LLM already produced.
+
+**Idempotency.** The handler stores a `care_notes_idempotency` key per (`session_id`, `turn_index`, `noteText` hash). On lambda retry (which `bedrock-router` handler-level retry can do on parse failure), duplicate inserts are no-ops.
+
+**Cost.** The care-team block adds ~80–150 input tokens per `patient_logging` turn (typically 1–4 care-team members). Prompt-cache breakpoint lives just above the `## Active monitoring protocol` block so the care-team block sits IN the cached region — net cost is ~0 after the first turn of the session. Verified via `model_call.cached_input_tokens` post-deploy.
 
 ---
 

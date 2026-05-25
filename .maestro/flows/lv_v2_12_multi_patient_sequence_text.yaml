@@ -1,0 +1,216 @@
+# LV-V2-12 — Multi-patient onboarding sequence (text fallback).
+#
+# Caregiver onboards 3 distinct patients in sequence. Between patients
+# the FAB is hidden (one-caregiver-one-patient gate — see
+# `CaregiverHomeScreen.kt:206` and catalog Phase E note), so the
+# sequence pattern is:
+#
+#   Login → Onboard P1 → (logged in)
+#   → Settings → Delete P1 → (auto sign-out) → Login
+#   → Onboard P2 → (logged in)
+#   → Settings → Delete P2 → (auto sign-out) → Login
+#   → Onboard P3
+#
+# The 3 patients are NOT live simultaneously — we delete between each
+# to clear the FAB gate. The journey still characterizes the unique
+# value: that a fresh caregiver can sequentially provision multiple
+# patients without re-registering the caregiver itself, and that
+# delete-cascade fully unblocks the FAB on the next login.
+#
+# Each patient onboarding uses the FORM path (PatientOnboardingScreen)
+# then a single text-fallback turn into MatikaConversationScreen to
+# configure BP only (for speed). The 7-vital protocol drill is
+# covered by LV-V2-10 — here the load-bearing assertion is the
+# multi-patient SEQUENCE itself, not protocol depth.
+#
+# Pre-conditions:
+#   - Fresh caregiver Cognito account (MATIKA_CAREGIVER2_*).
+#   - APK installed; backend dev /health green.
+#   - The caregiver MUST already have consent_records pre-seeded by
+#     the operator (idempotent INSERT) — same pattern as CG-V2-16.
+#     Otherwise the splash detours through the consent screen on the
+#     first login and breaks the deterministic flow.
+#
+# Run:
+#   source ~/.matika-test-creds.env
+#   scripts/maestro-run.sh --no-install lv_v2_12_multi_patient_sequence_text
+#
+# Final assertion (operator-side, RDS):
+#   - users WHERE role='patient' AND created_by=<caregiver2 sub>
+#       → 3 rows total (P1 and P2 with is_active=false post-delete-cascade,
+#         P3 with is_active=true since not deleted).
+#   - parameter_configs WHERE patient_cognito_sub IN (P1, P2, P3)
+#       → at least 1 BP row per patient (P1, P2 may still have rows
+#         pending the lambda cascade semantics; P3 must have ≥1).
+#   - audit_log WHERE action='DELETE_CASCADE' → 2 rows (one per delete).
+#
+# Cross-references:
+#   - CG-V2-16 (cascade delete): `cg_v2_16_delete_patient_cascade.yaml`
+#   - CG-V2-02 (form onboarding baseline): see `caregiver_protocol_setup.yaml`
+#   - Catalog: `docs/voice_multi_turn_journeys.md` LV-V2-12
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+# ═══════════════════════════════════════════════════════════
+# PATIENT 1
+# ═══════════════════════════════════════════════════════════
+
+# Generate a fresh email for P1.
+- runScript: ../scripts/generate_patient_email.js
+
+- extendedWaitUntil: { visible: { id: login_email }, timeout: 15000 }
+- tapOn: { id: login_email }
+- inputText: ${MATIKA_CAREGIVER2_EMAIL}
+- tapOn: { id: login_password }
+- inputText: ${MATIKA_CAREGIVER2_PASSWORD}
+- hideKeyboard
+- tapOn: { id: login_button }
+
+- extendedWaitUntil: { visible: { id: onboard_patient_fab }, timeout: 60000 }
+- tapOn: { id: onboard_patient_fab }
+- extendedWaitUntil: { visible: { id: add_patient_dialog }, timeout: 5000 }
+- tapOn: { id: add_patient_choice_form }
+- tapOn: { id: add_patient_confirm }
+
+- extendedWaitUntil: { visible: { id: onboarding_name }, timeout: 10000 }
+- tapOn: { id: onboarding_name }
+- inputText: ${output.patientName}
+- tapOn: { id: onboarding_email }
+- inputText: ${output.patientEmail}
+- hideKeyboard
+- scrollUntilVisible: { element: { id: onboarding_create_button }, direction: DOWN }
+- tapOn: { id: onboarding_create_button }
+
+- extendedWaitUntil: { visible: "Patient Account Created", timeout: 30000 }
+- tapOn: "Done"
+
+# Single BP-only protocol turn on the v2 conversation screen.
+- extendedWaitUntil: { visible: { id: matika_text_fallback }, timeout: 30000 }
+- tapOn: { id: matika_text_fallback }
+- inputText: "Please track her blood pressure every morning."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+
+# Back out of the conversation screen → caregiver dashboard.
+- back
+- extendedWaitUntil:
+    visible:
+      text: "(?i).*Open settings.*"
+    timeout: 30000
+
+# ── Delete P1 to free the FAB gate for P2 ──────────────────
+- tapOn:
+    text: "(?i).*Open settings.*"
+- extendedWaitUntil: { visible: { id: settings_primary_patient_card }, timeout: 15000 }
+- scrollUntilVisible:
+    element: { id: delete_patient_button }
+    direction: DOWN
+- tapOn: { id: delete_patient_button }
+- extendedWaitUntil: { visible: { id: delete_patient_dialog }, timeout: 5000 }
+- tapOn: { id: delete_patient_confirm }
+
+# Cascade lambda signs us out → back to LOGIN.
+- extendedWaitUntil: { visible: { id: login_email }, timeout: 30000 }
+
+# ═══════════════════════════════════════════════════════════
+# PATIENT 2
+# ═══════════════════════════════════════════════════════════
+
+# Generate a fresh email for P2 (timestamp suffix makes it unique).
+- runScript: ../scripts/generate_patient_email.js
+
+- tapOn: { id: login_email }
+- inputText: ${MATIKA_CAREGIVER2_EMAIL}
+- tapOn: { id: login_password }
+- inputText: ${MATIKA_CAREGIVER2_PASSWORD}
+- hideKeyboard
+- tapOn: { id: login_button }
+
+- extendedWaitUntil: { visible: { id: onboard_patient_fab }, timeout: 60000 }
+- tapOn: { id: onboard_patient_fab }
+- extendedWaitUntil: { visible: { id: add_patient_dialog }, timeout: 5000 }
+- tapOn: { id: add_patient_choice_form }
+- tapOn: { id: add_patient_confirm }
+
+- extendedWaitUntil: { visible: { id: onboarding_name }, timeout: 10000 }
+- tapOn: { id: onboarding_name }
+- inputText: ${output.patientName}
+- tapOn: { id: onboarding_email }
+- inputText: ${output.patientEmail}
+- hideKeyboard
+- scrollUntilVisible: { element: { id: onboarding_create_button }, direction: DOWN }
+- tapOn: { id: onboarding_create_button }
+
+- extendedWaitUntil: { visible: "Patient Account Created", timeout: 30000 }
+- tapOn: "Done"
+
+- extendedWaitUntil: { visible: { id: matika_text_fallback }, timeout: 30000 }
+- tapOn: { id: matika_text_fallback }
+- inputText: "Please track his blood pressure every morning."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+
+- back
+- extendedWaitUntil:
+    visible:
+      text: "(?i).*Open settings.*"
+    timeout: 30000
+
+# ── Delete P2 to free the FAB gate for P3 ──────────────────
+- tapOn:
+    text: "(?i).*Open settings.*"
+- extendedWaitUntil: { visible: { id: settings_primary_patient_card }, timeout: 15000 }
+- scrollUntilVisible:
+    element: { id: delete_patient_button }
+    direction: DOWN
+- tapOn: { id: delete_patient_button }
+- extendedWaitUntil: { visible: { id: delete_patient_dialog }, timeout: 5000 }
+- tapOn: { id: delete_patient_confirm }
+
+- extendedWaitUntil: { visible: { id: login_email }, timeout: 30000 }
+
+# ═══════════════════════════════════════════════════════════
+# PATIENT 3 (final — leave live for RDS inspection)
+# ═══════════════════════════════════════════════════════════
+
+- runScript: ../scripts/generate_patient_email.js
+
+- tapOn: { id: login_email }
+- inputText: ${MATIKA_CAREGIVER2_EMAIL}
+- tapOn: { id: login_password }
+- inputText: ${MATIKA_CAREGIVER2_PASSWORD}
+- hideKeyboard
+- tapOn: { id: login_button }
+
+- extendedWaitUntil: { visible: { id: onboard_patient_fab }, timeout: 60000 }
+- tapOn: { id: onboard_patient_fab }
+- extendedWaitUntil: { visible: { id: add_patient_dialog }, timeout: 5000 }
+- tapOn: { id: add_patient_choice_form }
+- tapOn: { id: add_patient_confirm }
+
+- extendedWaitUntil: { visible: { id: onboarding_name }, timeout: 10000 }
+- tapOn: { id: onboarding_name }
+- inputText: ${output.patientName}
+- tapOn: { id: onboarding_email }
+- inputText: ${output.patientEmail}
+- hideKeyboard
+- scrollUntilVisible: { element: { id: onboarding_create_button }, direction: DOWN }
+- tapOn: { id: onboarding_create_button }
+
+- extendedWaitUntil: { visible: "Patient Account Created", timeout: 30000 }
+- tapOn: "Done"
+
+- extendedWaitUntil: { visible: { id: matika_text_fallback }, timeout: 30000 }
+- tapOn: { id: matika_text_fallback }
+- inputText: "Please track her blood pressure every morning."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+
+# Sanity — P3 conversation alive, sequence completed.
+- assertVisible: { id: matika_text_fallback }

@@ -110,6 +110,10 @@ describe('isAllowedTransition', () => {
     expect(isAllowedTransition('GREETING', 'PLAUSIBILITY_CHALLENGE')).toBe(true);
   });
 
+  it('allows PLAUSIBILITY_CHALLENGE -> PENDING_CONFIRMATION (F58 — patient reaffirms plausible-on-retake value)', () => {
+    expect(isAllowedTransition('PLAUSIBILITY_CHALLENGE', 'PENDING_CONFIRMATION')).toBe(true);
+  });
+
   it('allows PAUSED to resume to most non-terminal states', () => {
     expect(isAllowedTransition('PAUSED', 'EXTRACTING')).toBe(true);
     expect(isAllowedTransition('PAUSED', 'GREETING')).toBe(true);

@@ -1,0 +1,197 @@
+# LV-V2-11 (Hindi voice) — Caregiver protocol-config in Hindi, ~8 turns.
+#
+# Hindi-language caregiver-onboarding voice flow. Walks the
+# caregiver_onboarding conversation through BP + glucose + weight
+# configuration in Hindi via Lekha hi_IN TTS:
+#
+#   T1: "मैं अपनी माँ के लिए मॉनिटरिंग सेट अप करना चाहता हूँ।"
+#       (I want to set up monitoring for my mother.)
+#   T2: "उनका रक्तचाप हर सुबह नापें।"
+#       (Track her blood pressure every morning.)
+#   T3: "अगर सिस्टोलिक एक सौ साठ से ऊपर हो तो मुझे सूचित करें।"
+#       (Alert me if systolic goes above 160.)
+#   T4: "रक्त शर्करा हफ़्ते में दो बार, मंगलवार और शुक्रवार सुबह।"
+#       (Blood sugar twice a week, Tuesday and Friday morning.)
+#   T5: "एक सौ अस्सी से ऊपर रीडिंग पर अलर्ट करें।"
+#       (Alert on readings above 180.)
+#   T6: "वज़न हर रविवार सुबह नापें।"
+#       (Weigh every Sunday morning.)
+#   T7: "क्या आप पूरा प्लान दोहरा सकते हैं?"
+#       (Can you read back the full plan?)
+#   T8: "हाँ, यह सही है। कृपया सेव करें।"
+#       (Yes, that's correct. Please save.)
+#
+# === F22 + F41 PREREQUISITES ===
+#
+# 1. AppLanguage must be primed to `hi` via the helper flow BEFORE
+#    this flow launches. Per `voice_harness_lessons.md` (memory)
+#    lessons 3 + 8 — DataStore language override is what makes
+#    SpeechRecognizer use hi-IN. The `clearState: false` below
+#    preserves that DataStore seed across launchApp.
+#
+#    HOWEVER: the existing `_bench_set_language_hi.yaml` logs in as
+#    PATIENT (MATIKA_PATIENT_EMAIL). For this caregiver flow we need
+#    the language seeded on the CAREGIVER2 account. Operator must
+#    either:
+#      (a) Author a sibling `_bench_set_language_hi_caregiver2.yaml`
+#          that mirrors `_bench_set_language_hi.yaml` but logs in
+#          with MATIKA_CAREGIVER2_* and walks
+#          caregiver_dashboard → settings icon → Hindi pick;
+#      OR
+#      (b) Manually set Hindi in Settings on the caregiver account
+#          via the device UI before running this flow.
+#    (a) is the cleaner long-term answer. Update the catalog when done.
+#
+# 2. F41 remote-TTS workaround — Lekha hi_IN goes through the SAME
+#    local-`say` path that wedges Core Audio after ~25 min. Operator
+#    MUST export MATIKA_SAY_REMOTE_URL pointing at the remote-TTS
+#    server (LV-V2-04 Bengali validated this exact path 2026-05-24).
+#
+# 3. Voice rate = 140 (NOT the 175 used for Rishi en_IN). Per
+#    F22-pre-fix evidence in `voice_harness_lessons.md`, rate 175
+#    on Lekha caused STT NO_MATCH — the synthesized speech was too
+#    fast for the hi-IN Soda model to keep up. The existing
+#    `lv_v2_03_multi_vital_hi_voice.yaml` uses 165 as a working
+#    compromise; we drop further to 140 because protocol-config
+#    utterances are longer than vital statements and the safety
+#    margin matters more than wall-clock.
+#
+# Pre-conditions:
+#   - Fresh caregiver account (MATIKA_CAREGIVER2_*).
+#   - DataStore primed with `language=hi` for the caregiver account
+#     (see above).
+#   - MATIKA_SAY_REMOTE_URL exported and remote-TTS server reachable
+#     with hi_IN support (`gtts_langs` includes "hi" OR the host has
+#     Lekha installed).
+#   - APK installed; backend dev /health green.
+#
+# Run:
+#   source ~/.matika-test-creds.env
+#   export MATIKA_SAY_REMOTE_URL=http://10.0.0.171:8765
+#   # 1) Seed language for caregiver:
+#   scripts/maestro-run.sh --no-install _bench_set_language_hi_caregiver2  # TBA
+#   # 2) Run the voice flow:
+#   scripts/matika-voice-run.sh lv_v2_11_protocol_config_hi_voice --no-install \
+#       --turn "hi|140|मैं अपनी माँ के लिए मॉनिटरिंग सेट अप करना चाहता हूँ।|700" \
+#       --turn "hi|140|उनका रक्तचाप हर सुबह नापें।|600" \
+#       --turn "hi|140|अगर सिस्टोलिक एक सौ साठ से ऊपर हो तो मुझे सूचित करें।|700" \
+#       --turn "hi|140|रक्त शर्करा हफ़्ते में दो बार, मंगलवार और शुक्रवार सुबह।|700" \
+#       --turn "hi|140|एक सौ अस्सी से ऊपर रीडिंग पर अलर्ट करें।|600" \
+#       --turn "hi|140|वज़न हर रविवार सुबह नापें।|500" \
+#       --turn "hi|140|क्या आप पूरा प्लान दोहरा सकते हैं?|600" \
+#       --turn "hi|140|हाँ, यह सही है। कृपया सेव करें।|500"
+#
+# Cross-references:
+#   - LV-V2-03 (patient Hindi voice multi-vital): `lv_v2_03_multi_vital_hi_voice.yaml`
+#   - LV-V2-10 (caregiver protocol-config voice, English): `lv_v2_10_long_protocol_config_voice.yaml`
+#   - Catalog: `docs/voice_multi_turn_journeys.md` LV-V2-11
+#
+# clearState: false — preserve the DataStore Hindi language override.
+# Same pattern as `lv_v2_03_multi_vital_hi_voice.yaml`.
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: false
+
+- runScript: ../scripts/generate_patient_email.js
+
+# Login conditional — helper may have left us signed in.
+- runFlow:
+    when:
+      visible: { id: login_email }
+    commands:
+      - tapOn: { id: login_email }
+      - inputText: ${MATIKA_CAREGIVER2_EMAIL}
+      - tapOn: { id: login_password }
+      - inputText: ${MATIKA_CAREGIVER2_PASSWORD}
+      - hideKeyboard
+      - tapOn: { id: login_button }
+
+# ── Caregiver dashboard → Add Patient FAB → Form path ─────
+- extendedWaitUntil: { visible: { id: onboard_patient_fab }, timeout: 60000 }
+- tapOn: { id: onboard_patient_fab }
+- extendedWaitUntil: { visible: { id: add_patient_dialog }, timeout: 5000 }
+- tapOn: { id: add_patient_choice_form }
+- tapOn: { id: add_patient_confirm }
+
+# ── Patient profile form ───────────────────────────────────
+- extendedWaitUntil: { visible: { id: onboarding_name }, timeout: 10000 }
+- tapOn: { id: onboarding_name }
+- inputText: ${output.patientName}
+- tapOn: { id: onboarding_email }
+- inputText: ${output.patientEmail}
+- hideKeyboard
+- scrollUntilVisible: { element: { id: onboarding_create_button }, direction: DOWN }
+- tapOn: { id: onboarding_create_button }
+
+- extendedWaitUntil: { visible: "Patient Account Created", timeout: 30000 }
+- tapOn: "Done"
+
+# ── v2 caregiver_onboarding conversation mounts ────────────
+- extendedWaitUntil: { visible: { id: matika_text_fallback }, timeout: 30000 }
+
+# === T1: open in Hindi ===
+- extendedWaitUntil: { visible: { id: matika_mic }, timeout: 30000 }
+- tapOn: { id: matika_mic }
+- tapOn: { text: "Allow|While using the app", optional: true }
+- extendedWaitUntil: { visible: { id: matika_response_card }, timeout: 90000 }
+
+# === T2: BP frequency ===
+- extendedWaitUntil: { visible: { id: matika_speaking_indicator }, timeout: 30000 }
+- extendedWaitUntil: { notVisible: { id: matika_speaking_indicator }, timeout: 60000 }
+- extendedWaitUntil: { visible: { id: matika_mic }, timeout: 30000 }
+- tapOn: { id: matika_mic }
+- extendedWaitUntil: { visible: { id: matika_turn_counter, text: "turn 2" }, timeout: 90000 }
+
+# === T3: BP threshold ===
+- extendedWaitUntil: { visible: { id: matika_speaking_indicator }, timeout: 30000 }
+- extendedWaitUntil: { notVisible: { id: matika_speaking_indicator }, timeout: 60000 }
+- extendedWaitUntil: { visible: { id: matika_mic }, timeout: 30000 }
+- tapOn: { id: matika_mic }
+- extendedWaitUntil: { visible: { id: matika_turn_counter, text: "turn 3" }, timeout: 90000 }
+
+# === T4: glucose frequency ===
+- extendedWaitUntil: { visible: { id: matika_speaking_indicator }, timeout: 30000 }
+- extendedWaitUntil: { notVisible: { id: matika_speaking_indicator }, timeout: 60000 }
+- extendedWaitUntil: { visible: { id: matika_mic }, timeout: 30000 }
+- tapOn: { id: matika_mic }
+- extendedWaitUntil: { visible: { id: matika_turn_counter, text: "turn 4" }, timeout: 90000 }
+
+# === T5: glucose threshold ===
+- extendedWaitUntil: { visible: { id: matika_speaking_indicator }, timeout: 30000 }
+- extendedWaitUntil: { notVisible: { id: matika_speaking_indicator }, timeout: 60000 }
+- extendedWaitUntil: { visible: { id: matika_mic }, timeout: 30000 }
+- tapOn: { id: matika_mic }
+- extendedWaitUntil: { visible: { id: matika_turn_counter, text: "turn 5" }, timeout: 90000 }
+
+# === T6: weight frequency ===
+- extendedWaitUntil: { visible: { id: matika_speaking_indicator }, timeout: 30000 }
+- extendedWaitUntil: { notVisible: { id: matika_speaking_indicator }, timeout: 60000 }
+- extendedWaitUntil: { visible: { id: matika_mic }, timeout: 30000 }
+- tapOn: { id: matika_mic }
+- extendedWaitUntil: { visible: { id: matika_turn_counter, text: "turn 6" }, timeout: 90000 }
+
+# === T7: ask for readback ===
+- extendedWaitUntil: { visible: { id: matika_speaking_indicator }, timeout: 30000 }
+- extendedWaitUntil: { notVisible: { id: matika_speaking_indicator }, timeout: 60000 }
+- extendedWaitUntil: { visible: { id: matika_mic }, timeout: 30000 }
+- tapOn: { id: matika_mic }
+- extendedWaitUntil: { visible: { id: matika_turn_counter, text: "turn 7" }, timeout: 90000 }
+
+# === T8: confirm save ===
+- extendedWaitUntil: { visible: { id: matika_speaking_indicator }, timeout: 30000 }
+- extendedWaitUntil: { notVisible: { id: matika_speaking_indicator }, timeout: 60000 }
+- extendedWaitUntil: { visible: { id: matika_mic }, timeout: 30000 }
+- tapOn: { id: matika_mic }
+- extendedWaitUntil: { visible: { id: matika_turn_counter, text: "turn 8" }, timeout: 90000 }
+
+# Sanity — mic re-armed = T8 round-tripped.
+- assertVisible: { id: matika_mic }
+
+# Operator verifies in RDS:
+#   - 3 parameter_configs rows (BP sys/dia, glucose, weight) for the
+#     new patient — the BP turns produce 2 rows (systolic + diastolic),
+#     glucose 1, weight 1 → 4 if BP both bounds parsed, but at
+#     minimum 3 distinct vital types.
+#   - interaction_sessions.language='hi' and session_type='caregiver_onboarding'.

@@ -1,0 +1,212 @@
+# LV-V2-10 (voice) — Long caregiver protocol-config via voice, 15 turns.
+#
+# Voice variant of `lv_v2_10_long_protocol_config_text.yaml`. Same
+# 15-turn shape (one turn per vital frequency + threshold across all
+# 7 vitals + final readback + confirm) but driven through the mic via
+# `scripts/matika-voice-run.sh` and Rishi en_IN (`en|175`).
+#
+# === F41 PREREQUISITE — remote-TTS workaround ===
+# The Mac mini local-`say` path wedges Core Audio after ~25 min of
+# sustained voice activity (F41 in `docs/testing_todos_v2.md`). For a
+# 15-turn voice flow this is essentially guaranteed to trip. Operator
+# MUST run from a second Mac with the remote-TTS server reachable:
+#
+#   export MATIKA_SAY_REMOTE_URL=http://10.0.0.171:8765  # remote TTS host
+#
+# When set, matika-voice-run.sh routes utterances through the remote
+# `gtts`/`say` server instead of the local audio path, sidestepping
+# the Core Audio wedge. See `voice_harness_lessons.md` (memory) for
+# the broader voice-harness gotcha list.
+#
+# Pre-conditions:
+#   - Fresh caregiver Cognito account (MATIKA_CAREGIVER2_*) — same
+#     gate as text variant.
+#   - Speaker placement near phone mic; low ambient noise.
+#   - `MATIKA_SAY_REMOTE_URL` exported (mandatory for this 15-turn run).
+#   - Reboot the test Mac before running if Phase D/E voice work has
+#     already happened in the same session (F41 cooldown).
+#
+# Run:
+#   source ~/.matika-test-creds.env
+#   export MATIKA_SAY_REMOTE_URL=http://10.0.0.171:8765
+#   scripts/matika-voice-run.sh lv_v2_10_long_protocol_config_voice --no-install \
+#       --turn "en|175|I want to set up a full monitoring protocol for her across all the major vitals.|600" \
+#       --turn "en|175|Track her blood pressure every morning after she wakes up.|600" \
+#       --turn "en|175|Alert me if her systolic goes above 160 or below 90, or diastolic above 100 or below 60.|800" \
+#       --turn "en|175|Her fasting blood sugar should be checked twice a week, on Tuesday and Friday morning.|700" \
+#       --turn "en|175|Flag readings under 70 milligrams per deciliter or over 180.|600" \
+#       --turn "en|175|Weigh her every Sunday morning.|500" \
+#       --turn "en|175|Alert if her weight changes by more than two kilograms week to week.|600" \
+#       --turn "en|175|Check her temperature once a day, in the evening before dinner.|600" \
+#       --turn "en|175|Notify me if her temperature is above 38 degrees Celsius or below 35.|600" \
+#       --turn "en|175|Take her heart rate every morning along with the blood pressure reading.|600" \
+#       --turn "en|175|Flag pulse below 50 or above 110.|500" \
+#       --turn "en|175|Check her oxygen saturation every morning as well.|500" \
+#       --turn "en|175|Alert me if her oxygen saturation drops below 94 percent.|600" \
+#       --turn "en|175|Can you read back the complete monitoring plan you have for her?|600" \
+#       --turn "en|175|Yes, that all looks correct. Please save the protocol.|500"
+#
+# Cross-references:
+#   - Text variant: `lv_v2_10_long_protocol_config_text.yaml`
+#   - CG-V2-03 voice baseline: `caregiver_protocol_voice.yaml`
+#   - Catalog: `docs/voice_multi_turn_journeys.md` LV-V2-10
+#
+# Final assertion: same as text variant — operator runs
+#   SELECT COUNT(*) FROM parameter_configs WHERE patient_cognito_sub = ...
+# expecting 7.
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+# Cognito-unique patient email so re-runs don't conflict.
+- runScript: ../scripts/generate_patient_email.js
+
+# ── Caregiver login (CAREGIVER2 — fresh account) ───────────
+- extendedWaitUntil: { visible: { id: login_email }, timeout: 15000 }
+- tapOn: { id: login_email }
+- inputText: ${MATIKA_CAREGIVER2_EMAIL}
+- tapOn: { id: login_password }
+- inputText: ${MATIKA_CAREGIVER2_PASSWORD}
+- hideKeyboard
+- tapOn: { id: login_button }
+
+# ── Caregiver dashboard → Add Patient FAB → Form path ─────
+- extendedWaitUntil: { visible: { id: onboard_patient_fab }, timeout: 60000 }
+- tapOn: { id: onboard_patient_fab }
+- extendedWaitUntil: { visible: { id: add_patient_dialog }, timeout: 5000 }
+- tapOn: { id: add_patient_choice_form }
+- tapOn: { id: add_patient_confirm }
+
+# ── Patient profile form ───────────────────────────────────
+- extendedWaitUntil: { visible: { id: onboarding_name }, timeout: 10000 }
+- tapOn: { id: onboarding_name }
+- inputText: ${output.patientName}
+- tapOn: { id: onboarding_email }
+- inputText: ${output.patientEmail}
+- hideKeyboard
+- scrollUntilVisible: { element: { id: onboarding_create_button }, direction: DOWN }
+- tapOn: { id: onboarding_create_button }
+
+# ── Credentials dialog → dismiss ───────────────────────────
+- extendedWaitUntil: { visible: "Patient Account Created", timeout: 30000 }
+- tapOn: "Done"
+
+# ── v2 caregiver_onboarding conversation mounts ────────────
+- extendedWaitUntil: { visible: { id: matika_text_fallback }, timeout: 30000 }
+
+# ── Turn 1: overall protocol intent ────────────────────────
+- extendedWaitUntil: { visible: { id: matika_mic }, timeout: 30000 }
+- tapOn: { id: matika_mic }
+# Mic permission may prompt on first acoustic test of a fresh-state
+# run — usually pre-granted from prior caregiver flows.
+- tapOn: { text: "Allow|While using the app", optional: true }
+- extendedWaitUntil: { visible: { id: matika_response_card }, timeout: 90000 }
+
+# === Turns 2..15 ===
+# Two-phase wait per turn — see `patient_voice_bp_en.yaml` for
+# rationale (must wait for TTS_DONE before re-arming mic, otherwise
+# STT captures the app's own response audio).
+
+# ── Turn 2: BP frequency ───────────────────────────────────
+- extendedWaitUntil: { visible: { id: matika_speaking_indicator }, timeout: 15000 }
+- extendedWaitUntil: { notVisible: { id: matika_speaking_indicator }, timeout: 45000 }
+- extendedWaitUntil: { visible: { id: matika_mic }, timeout: 30000 }
+- tapOn: { id: matika_mic }
+- extendedWaitUntil: { visible: { id: matika_turn_counter, text: "turn 2" }, timeout: 60000 }
+
+# ── Turn 3: BP thresholds ──────────────────────────────────
+- extendedWaitUntil: { visible: { id: matika_speaking_indicator }, timeout: 15000 }
+- extendedWaitUntil: { notVisible: { id: matika_speaking_indicator }, timeout: 45000 }
+- extendedWaitUntil: { visible: { id: matika_mic }, timeout: 30000 }
+- tapOn: { id: matika_mic }
+- extendedWaitUntil: { visible: { id: matika_turn_counter, text: "turn 3" }, timeout: 60000 }
+
+# ── Turn 4: glucose frequency ──────────────────────────────
+- extendedWaitUntil: { visible: { id: matika_speaking_indicator }, timeout: 15000 }
+- extendedWaitUntil: { notVisible: { id: matika_speaking_indicator }, timeout: 45000 }
+- extendedWaitUntil: { visible: { id: matika_mic }, timeout: 30000 }
+- tapOn: { id: matika_mic }
+- extendedWaitUntil: { visible: { id: matika_turn_counter, text: "turn 4" }, timeout: 60000 }
+
+# ── Turn 5: glucose thresholds ─────────────────────────────
+- extendedWaitUntil: { visible: { id: matika_speaking_indicator }, timeout: 15000 }
+- extendedWaitUntil: { notVisible: { id: matika_speaking_indicator }, timeout: 45000 }
+- extendedWaitUntil: { visible: { id: matika_mic }, timeout: 30000 }
+- tapOn: { id: matika_mic }
+- extendedWaitUntil: { visible: { id: matika_turn_counter, text: "turn 5" }, timeout: 60000 }
+
+# ── Turn 6: weight frequency ───────────────────────────────
+- extendedWaitUntil: { visible: { id: matika_speaking_indicator }, timeout: 15000 }
+- extendedWaitUntil: { notVisible: { id: matika_speaking_indicator }, timeout: 45000 }
+- extendedWaitUntil: { visible: { id: matika_mic }, timeout: 30000 }
+- tapOn: { id: matika_mic }
+- extendedWaitUntil: { visible: { id: matika_turn_counter, text: "turn 6" }, timeout: 60000 }
+
+# ── Turn 7: weight thresholds ──────────────────────────────
+- extendedWaitUntil: { visible: { id: matika_speaking_indicator }, timeout: 15000 }
+- extendedWaitUntil: { notVisible: { id: matika_speaking_indicator }, timeout: 45000 }
+- extendedWaitUntil: { visible: { id: matika_mic }, timeout: 30000 }
+- tapOn: { id: matika_mic }
+- extendedWaitUntil: { visible: { id: matika_turn_counter, text: "turn 7" }, timeout: 60000 }
+
+# ── Turn 8: temperature frequency ──────────────────────────
+- extendedWaitUntil: { visible: { id: matika_speaking_indicator }, timeout: 15000 }
+- extendedWaitUntil: { notVisible: { id: matika_speaking_indicator }, timeout: 45000 }
+- extendedWaitUntil: { visible: { id: matika_mic }, timeout: 30000 }
+- tapOn: { id: matika_mic }
+- extendedWaitUntil: { visible: { id: matika_turn_counter, text: "turn 8" }, timeout: 60000 }
+
+# ── Turn 9: temperature thresholds ─────────────────────────
+- extendedWaitUntil: { visible: { id: matika_speaking_indicator }, timeout: 15000 }
+- extendedWaitUntil: { notVisible: { id: matika_speaking_indicator }, timeout: 45000 }
+- extendedWaitUntil: { visible: { id: matika_mic }, timeout: 30000 }
+- tapOn: { id: matika_mic }
+- extendedWaitUntil: { visible: { id: matika_turn_counter, text: "turn 9" }, timeout: 60000 }
+
+# ── Turn 10: heart rate frequency ──────────────────────────
+- extendedWaitUntil: { visible: { id: matika_speaking_indicator }, timeout: 15000 }
+- extendedWaitUntil: { notVisible: { id: matika_speaking_indicator }, timeout: 45000 }
+- extendedWaitUntil: { visible: { id: matika_mic }, timeout: 30000 }
+- tapOn: { id: matika_mic }
+- extendedWaitUntil: { visible: { id: matika_turn_counter, text: "turn 10" }, timeout: 60000 }
+
+# ── Turn 11: heart rate thresholds ─────────────────────────
+- extendedWaitUntil: { visible: { id: matika_speaking_indicator }, timeout: 15000 }
+- extendedWaitUntil: { notVisible: { id: matika_speaking_indicator }, timeout: 45000 }
+- extendedWaitUntil: { visible: { id: matika_mic }, timeout: 30000 }
+- tapOn: { id: matika_mic }
+- extendedWaitUntil: { visible: { id: matika_turn_counter, text: "turn 11" }, timeout: 60000 }
+
+# ── Turn 12: SpO2 frequency ────────────────────────────────
+- extendedWaitUntil: { visible: { id: matika_speaking_indicator }, timeout: 15000 }
+- extendedWaitUntil: { notVisible: { id: matika_speaking_indicator }, timeout: 45000 }
+- extendedWaitUntil: { visible: { id: matika_mic }, timeout: 30000 }
+- tapOn: { id: matika_mic }
+- extendedWaitUntil: { visible: { id: matika_turn_counter, text: "turn 12" }, timeout: 60000 }
+
+# ── Turn 13: SpO2 thresholds ───────────────────────────────
+- extendedWaitUntil: { visible: { id: matika_speaking_indicator }, timeout: 15000 }
+- extendedWaitUntil: { notVisible: { id: matika_speaking_indicator }, timeout: 45000 }
+- extendedWaitUntil: { visible: { id: matika_mic }, timeout: 30000 }
+- tapOn: { id: matika_mic }
+- extendedWaitUntil: { visible: { id: matika_turn_counter, text: "turn 13" }, timeout: 60000 }
+
+# ── Turn 14: ask for readback ──────────────────────────────
+- extendedWaitUntil: { visible: { id: matika_speaking_indicator }, timeout: 15000 }
+- extendedWaitUntil: { notVisible: { id: matika_speaking_indicator }, timeout: 60000 }
+- extendedWaitUntil: { visible: { id: matika_mic }, timeout: 30000 }
+- tapOn: { id: matika_mic }
+- extendedWaitUntil: { visible: { id: matika_turn_counter, text: "turn 14" }, timeout: 90000 }
+
+# ── Turn 15: confirm save ──────────────────────────────────
+- extendedWaitUntil: { visible: { id: matika_speaking_indicator }, timeout: 15000 }
+- extendedWaitUntil: { notVisible: { id: matika_speaking_indicator }, timeout: 60000 }
+- extendedWaitUntil: { visible: { id: matika_mic }, timeout: 30000 }
+- tapOn: { id: matika_mic }
+- extendedWaitUntil: { visible: { id: matika_turn_counter, text: "turn 15" }, timeout: 90000 }
+
+# Sanity — mic re-armed = turn 15 round-tripped. Operator verifies
+# 7 parameter_configs rows in RDS post-run.
+- assertVisible: { id: matika_mic }

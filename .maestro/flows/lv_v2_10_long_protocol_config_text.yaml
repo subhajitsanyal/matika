@@ -1,0 +1,215 @@
+# LV-V2-10 — Long caregiver protocol-config (text fallback, 15 turns).
+#
+# Extends CG-V2-03 (the 6-turn caregiver protocol-config baseline in
+# `caregiver_protocol_setup.yaml`) into a 15-turn drill that configures
+# ALL SEVEN vitals end-to-end:
+#   blood_pressure_systolic, blood_pressure_diastolic, blood_glucose,
+#   body_weight, body_temperature_c, heart_rate, spo2.
+#
+# Why text not voice: voice variant is the sibling
+# `lv_v2_10_long_protocol_config_voice.yaml`. This text flow runs
+# deterministically without acoustic infra so the 15-turn FSM walk is
+# decoupled from STT/TTS noise.
+#
+# Pre-conditions:
+#   - Fresh caregiver Cognito account provisioned by the operator.
+#     Creds in `~/.matika-test-creds.env` as:
+#       MATIKA_CAREGIVER2_EMAIL
+#       MATIKA_CAREGIVER2_PASSWORD
+#     The dedicated CAREGIVER2 namespace exists because the parked
+#     LV-V2-10..13 cohort blocks on the one-caregiver-one-patient FAB
+#     gate (`docs/voice_multi_turn_journeys.md` Phase E note), so John CG
+#     can't be reused — he's already linked to Jane.
+#   - APK installed; backend dev /health green.
+#
+# Run:
+#   source ~/.matika-test-creds.env
+#   scripts/maestro-run.sh --no-install lv_v2_10_long_protocol_config_text
+#
+# Cross-references:
+#   - CG-V2-03 baseline: `caregiver_protocol_setup.yaml`
+#   - Voice variant: `lv_v2_10_long_protocol_config_voice.yaml`
+#   - Catalog entry: `docs/voice_multi_turn_journeys.md` LV-V2-10
+#
+# Final assertion: after the 15th turn the operator verifies
+# `SELECT COUNT(*) FROM parameter_configs WHERE patient_cognito_sub = ...`
+# returns 7. The flow itself can only assert UI state (text fallback
+# remains mounted = session still alive); the 7-row truth lives in RDS.
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+# Cognito-unique patient email — fresh patient created per run.
+- runScript: ../scripts/generate_patient_email.js
+
+# ── Caregiver login (CAREGIVER2 — fresh account) ───────────
+- extendedWaitUntil:
+    visible: { id: login_email }
+    timeout: 15000
+- tapOn: { id: login_email }
+- inputText: ${MATIKA_CAREGIVER2_EMAIL}
+- tapOn: { id: login_password }
+- inputText: ${MATIKA_CAREGIVER2_PASSWORD}
+- hideKeyboard
+- tapOn: { id: login_button }
+
+# ── Caregiver dashboard → Add Patient FAB → Form path ──────
+# The fresh caregiver has zero patients linked, so the FAB is
+# unblocked. Form path lands on PatientOnboardingScreen → fast.
+- extendedWaitUntil:
+    visible: { id: onboard_patient_fab }
+    timeout: 60000
+- tapOn: { id: onboard_patient_fab }
+- extendedWaitUntil:
+    visible: { id: add_patient_dialog }
+    timeout: 5000
+- tapOn: { id: add_patient_choice_form }
+- tapOn: { id: add_patient_confirm }
+
+# ── Patient profile form ───────────────────────────────────
+- extendedWaitUntil:
+    visible: { id: onboarding_name }
+    timeout: 10000
+- tapOn: { id: onboarding_name }
+- inputText: ${output.patientName}
+- tapOn: { id: onboarding_email }
+- inputText: ${output.patientEmail}
+- hideKeyboard
+- scrollUntilVisible:
+    element: { id: onboarding_create_button }
+    direction: DOWN
+- tapOn: { id: onboarding_create_button }
+
+# ── Credentials dialog → dismiss ───────────────────────────
+- extendedWaitUntil:
+    visible: "Patient Account Created"
+    timeout: 30000
+- tapOn: "Done"
+
+# ── v2 caregiver_onboarding conversation mounts ────────────
+- extendedWaitUntil:
+    visible: { id: matika_text_fallback }
+    timeout: 30000
+
+# ── Turn 1: open with overall protocol intent ──────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "I want to set up a full monitoring protocol for her across all the major vitals."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+
+# ── Turn 2: BP — frequency ─────────────────────────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "Track her blood pressure every morning after she wakes up."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+
+# ── Turn 3: BP — thresholds ───────────────────────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "Alert me if her systolic goes above 160 or below 90, or diastolic above 100 or below 60."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+
+# ── Turn 4: glucose — frequency ───────────────────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "Her fasting blood sugar should be checked twice a week, on Tuesday and Friday morning."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+
+# ── Turn 5: glucose — thresholds ──────────────────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "Flag readings under 70 milligrams per deciliter or over 180."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+
+# ── Turn 6: weight — frequency ────────────────────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "Weigh her every Sunday morning."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+
+# ── Turn 7: weight — thresholds ───────────────────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "Alert if her weight changes by more than two kilograms week to week."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+
+# ── Turn 8: temperature — frequency ───────────────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "Check her temperature once a day, in the evening before dinner."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+
+# ── Turn 9: temperature — thresholds ──────────────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "Notify me if her temperature is above 38 degrees Celsius or below 35."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+
+# ── Turn 10: heart rate — frequency ───────────────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "Take her heart rate every morning along with the blood pressure reading."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+
+# ── Turn 11: heart rate — thresholds ──────────────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "Flag pulse below 50 or above 110."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+
+# ── Turn 12: SpO2 — frequency ─────────────────────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "Check her oxygen saturation every morning as well."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+
+# ── Turn 13: SpO2 — thresholds ────────────────────────────
+- tapOn: { id: matika_text_fallback }
+- inputText: "Alert me if her oxygen saturation drops below 94 percent."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 60000 }
+
+# ── Turn 14: ask for full readback ────────────────────────
+# Push the LLM to summarize all 7 vital configs before commit. This
+# is the load-bearing turn for the Bedrock context-retention claim —
+# if the model has dropped earlier turns, the readback won't list 7.
+- tapOn: { id: matika_text_fallback }
+- inputText: "Can you read back the complete monitoring plan you have for her?"
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 90000 }
+
+# ── Turn 15: confirm and save ─────────────────────────────
+# Session should reach a protocol-confirmed terminal state and the
+# caregiver-onboarding handler should persist 7 parameter_configs
+# rows for the new patient.
+- tapOn: { id: matika_text_fallback }
+- inputText: "Yes, that all looks correct. Please save the protocol."
+- hideKeyboard
+- tapOn: { id: matika_text_send }
+- extendedWaitUntil: { notVisible: "thinking", timeout: 90000 }
+
+# Sanity — still on the conversation screen, session didn't crash.
+- assertVisible: { id: matika_text_fallback }
+
+# Final RDS assertion is operator-side (Maestro can't run SQL):
+#   SELECT parameter_type, frequency, threshold_high, threshold_low
+#   FROM parameter_configs
+#   WHERE patient_cognito_sub = '<new patient sub from output.patientEmail>'
+#   AND is_active = true;
+# Expect 7 rows covering all configured vitals.
