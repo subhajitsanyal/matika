@@ -72,10 +72,30 @@
               "escalate_emergency",
               "pause_session",
               "complete_session",
-              "confirm_value"
+              "confirm_value",
+              "record_note"
             ]
           },
-          "reason": { "type": "string" }
+          "reason": { "type": "string" },
+          "noteText": {
+            "type": "string",
+            "minLength": 1,
+            "description": "PRD §6.9 / Spec §6.10 — third-person actionable summary of the patient's directed aside. Present iff type='record_note'."
+          },
+          "mentionedName": {
+            "type": ["string", "null"],
+            "description": "Spec §6.10 — the raw spoken referent ('Priya', 'Bittu', 'caregiver'), or null when no name was spoken. The handler does the resolution against care-team."
+          },
+          "recipientRole": {
+            "type": "string",
+            "enum": ["caregiver", "doctor"],
+            "description": "Spec §6.10 — v2.0 always emits 'caregiver'; 'doctor' is reserved for Phase 2."
+          },
+          "noteLanguage": {
+            "type": "string",
+            "enum": ["en-IN", "hi-IN", "bn-IN"],
+            "description": "Spec §6.10 — should match the session language so caregiver UI renders the right script."
+          }
         }
       }
     },

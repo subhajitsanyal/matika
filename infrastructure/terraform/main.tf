@@ -146,6 +146,9 @@ module "api_gateway" {
   # but the routes were never wired; CG-V2-23 surfaced the gap 2026-05-23).
   alert_crud_invoke_arn = module.lambda.alert_crud_invoke_arn
 
+  # PRD §6.9 / Spec §4.6 — Care Notes (caregiver-facing list/ack/unread-count).
+  care_notes_invoke_arn = module.lambda.care_notes_invoke_arn
+
   # v2 Bedrock-backed routes
   bedrock_router_invoke_arn = module.lambda.bedrock_router_invoke_arn
   bedrock_vision_invoke_arn = module.lambda.bedrock_vision_invoke_arn

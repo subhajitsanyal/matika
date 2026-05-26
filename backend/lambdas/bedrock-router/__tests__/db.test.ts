@@ -32,7 +32,7 @@ function matchKey(text: string, map: Map<string, unknown[]>): string {
 }
 
 describe('PgPatientContextLoader', () => {
-  it('resolves cognito_sub then issues four parallel queries and assembles the PatientContext', async () => {
+  it('resolves cognito_sub then issues five parallel queries and assembles the PatientContext', async () => {
     const rows = new Map<string, unknown[]>();
     // Phase 1 query — JOIN users on cognito_sub → patients.id + profile fields.
     rows.set('FROM patients p', [
@@ -89,17 +89,22 @@ describe('PgPatientContextLoader', () => {
         requires_gentle_introduction: false, // v1 has no such column; loader returns false
       },
     ]);
+    // PRD §6.9 / Spec §6.10 — active caregivers via persona_links.linked_user_id.
+    rows.set('FROM persona_links pl', [
+      { user_id: 'cg-user-1', name: 'John CG' },
+      { user_id: 'cg-user-2', name: 'Priya Sharma' },
+    ]);
 
     const { client, calls } = stubClient(rows);
     const loader = new PgPatientContextLoader(client);
     const ctx = await loader.load('cognito-sub-abc');
 
-    // Phase 1 (sequential) + Phase 2 (four parallel) = 5 query calls total.
-    expect(calls).toHaveLength(5);
+    // Phase 1 (sequential) + Phase 2 (five parallel) = 6 query calls total.
+    expect(calls).toHaveLength(6);
     expect(calls[0].text).toContain('FROM patients p');
     expect(calls[0].params).toEqual(['cognito-sub-abc']);
-    // The next four use the resolved internal patients.id.
-    for (let i = 1; i <= 4; i++) {
+    // The next five use the resolved internal patients.id.
+    for (let i = 1; i <= 5; i++) {
       expect(calls[i].params).toEqual(['patient-1']);
     }
     expect(ctx.patient.id).toBe('patient-1'); // internal UUID surfaced for model_call.patient_id
@@ -113,6 +118,10 @@ describe('PgPatientContextLoader', () => {
     expect(ctx.topics[0].summary).toBeNull();
     expect(ctx.recentSessions[0].capturedValues).toEqual([]);
     expect(ctx.pendingRecommendations[0].requiresGentleIntroduction).toBe(false);
+    expect(ctx.careTeam).toEqual([
+      { userId: 'cg-user-1', name: 'John CG', relationship: 'caregiver' },
+      { userId: 'cg-user-2', name: 'Priya Sharma', relationship: 'caregiver' },
+    ]);
   });
 
   it('throws when the patient row is missing', async () => {
@@ -140,10 +149,12 @@ describe('PgPatientContextLoader', () => {
     rows.set('FROM patient_topics', []);
     rows.set('FROM interaction_sessions', []);
     rows.set('FROM recommendations', []);
+    rows.set('FROM persona_links pl', []);
     const { client } = stubClient(rows);
     const ctx = await new PgPatientContextLoader(client).load('cognito-sub-test');
     expect(ctx.patient.conditions).toEqual([]);
     expect(ctx.patient.medicalHistorySummary).toBeNull();
+    expect(ctx.careTeam).toEqual([]);
   });
 });
 

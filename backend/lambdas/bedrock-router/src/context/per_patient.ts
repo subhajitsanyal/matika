@@ -10,6 +10,7 @@ import type {
   SessionSummary,
   Recommendation,
   PatientProfile,
+  CareTeamMember,
 } from './types';
 
 const CACHE_BREAKPOINT = '<!-- CACHE_BREAKPOINT -->';
@@ -17,12 +18,31 @@ const CACHE_BREAKPOINT = '<!-- CACHE_BREAKPOINT -->';
 export function renderPatientContext(ctx: PatientContext): string {
   const sections = [
     renderPatient(ctx.patient),
+    renderCareTeam(ctx.patient.name, ctx.careTeam),
     renderProtocol(ctx.protocol),
     renderTopics(ctx.topics),
     renderRecentSessions(ctx.recentSessions),
     renderRecommendations(ctx.pendingRecommendations),
   ];
   return `${sections.join('\n\n')}\n\n${CACHE_BREAKPOINT}`;
+}
+
+// Spec §6.10 — names + relationships the LLM can resolve "tell my X" against.
+// The handler does the actual resolution against `patientCtx.careTeam`; this
+// block is here so the LLM understands who's in the patient's circle.
+function renderCareTeam(patientName: string, members: CareTeamMember[]): string {
+  if (members.length === 0) {
+    return '## Care team\n\n_(no active care-team members linked yet)_';
+  }
+  const lines: string[] = [
+    '## Care team',
+    '',
+    `Active care-team members linked to ${patientName}:`,
+  ];
+  for (const m of members) {
+    lines.push(`- ${m.name} — relationship: ${m.relationship}`);
+  }
+  return lines.join('\n');
 }
 
 function renderPatient(p: PatientProfile): string {

@@ -185,6 +185,9 @@ object CareLogRoutes {
     const val PATIENT_LOGS = "patient_logs/{patientId}"
     const val CAREGIVER_ALERTS = "caregiver_alerts/{patientId}"
 
+    // PRD §6.9 / Spec §4.6 — caregiver Care Notes inbox per patient.
+    const val CAREGIVER_CARE_NOTES = "caregiver_care_notes/{patientId}"
+
     fun verification(email: String) = "verification/$email"
     fun camera(fileType: FileType) = "media/camera/${fileType.name}"
     fun conversation(patientId: String) = "conversation/$patientId"
@@ -204,6 +207,7 @@ object CareLogRoutes {
         "caregiver_invite/$patientId/$patientName/$temporaryPassword"
     fun patientLogs(patientId: String) = "patient_logs/$patientId"
     fun caregiverAlerts(patientId: String) = "caregiver_alerts/$patientId"
+    fun caregiverCareNotes(patientId: String) = "caregiver_care_notes/$patientId"
 }
 
 /**
@@ -565,6 +569,9 @@ fun CareLogNavHost() {
                 onNavigateToAlerts = { patientId ->
                     navController.navigate(CareLogRoutes.caregiverAlerts(patientId))
                 },
+                onNavigateToCareNotes = { patientId ->
+                    navController.navigate(CareLogRoutes.caregiverCareNotes(patientId))
+                },
                 onNavigateToSettings = {
                     navController.navigate(CareLogRoutes.SETTINGS)
                 },
@@ -778,6 +785,16 @@ fun CareLogNavHost() {
             arguments = listOf(navArgument("patientId") { type = NavType.StringType })
         ) {
             AlertListScreen(
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+
+        // ── Caregiver Care Notes (PRD §6.9 / Spec §4.6) ─────────
+        composable(
+            route = CareLogRoutes.CAREGIVER_CARE_NOTES,
+            arguments = listOf(navArgument("patientId") { type = NavType.StringType })
+        ) {
+            com.carelog.ui.relative.CareNotesScreen(
                 onNavigateBack = { navController.popBackStack() }
             )
         }

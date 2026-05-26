@@ -66,14 +66,36 @@ function fullContext(overrides: Partial<PatientContext> = {}): PatientContext {
         requiresGentleIntroduction: true,
       },
     ],
+    careTeam: [],
     ...overrides,
   };
 }
 
 describe('renderPatientContext', () => {
-  it('renders all five sections in order, ending with cache breakpoint', () => {
+  it('renders all six sections in order, ending with cache breakpoint', () => {
     const out = renderPatientContext(fullContext());
-    expect(out).toMatch(/## Patient[\s\S]*## Active monitoring protocol[\s\S]*## Active topics[\s\S]*## Recent sessions[\s\S]*## Pending recommendations[\s\S]*<!-- CACHE_BREAKPOINT -->\s*$/);
+    expect(out).toMatch(/## Patient[\s\S]*## Care team[\s\S]*## Active monitoring protocol[\s\S]*## Active topics[\s\S]*## Recent sessions[\s\S]*## Pending recommendations[\s\S]*<!-- CACHE_BREAKPOINT -->\s*$/);
+  });
+
+  it('care-team section lists active caregivers (Spec §6.10)', () => {
+    const ctx = fullContext({
+      careTeam: [
+        { userId: 'u-cg1', name: 'Priya Sharma', relationship: 'caregiver' },
+        { userId: 'u-cg2', name: 'John CG', relationship: 'caregiver' },
+      ],
+    });
+    const out = renderPatientContext(ctx);
+    expect(out).toContain('## Care team');
+    expect(out).toContain('Priya Sharma — relationship: caregiver');
+    expect(out).toContain('John CG — relationship: caregiver');
+    // The patient name should be in the block header so the LLM knows the
+    // care team is bound to *this* patient.
+    expect(out).toMatch(/Active care-team members linked to Ramesh Sharma/);
+  });
+
+  it('renders empty-state placeholder when no caregivers are linked', () => {
+    const ctx = fullContext({ careTeam: [] });
+    expect(renderPatientContext(ctx)).toContain('_(no active care-team members linked yet)_');
   });
 
   it('includes patient core fields', () => {

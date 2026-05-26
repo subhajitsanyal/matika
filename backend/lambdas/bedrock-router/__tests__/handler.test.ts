@@ -55,6 +55,7 @@ function basePatientCtx(): PatientContext {
     topics: [],
     recentSessions: [],
     pendingRecommendations: [],
+    careTeam: [],
   };
 }
 

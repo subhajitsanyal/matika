@@ -26,6 +26,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ShowChart
 import androidx.compose.material.icons.filled.Alarm
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.History
@@ -103,6 +104,8 @@ fun CaregiverHomeScreen(
     onNavigateToPatientVoiceOnboarding: () -> Unit = {},
     onNavigateToPatientLogs: (patientId: String) -> Unit = {},
     onNavigateToAlerts: (patientId: String) -> Unit = {},
+    // PRD §6.9 / Spec §4.6 — Care Notes inbox for this caregiver, scoped per patient.
+    onNavigateToCareNotes: (patientId: String) -> Unit = {},
     onNavigateToSettings: () -> Unit = {},
     onNavigateToThresholds: () -> Unit = {},
     onNavigateToTrends: () -> Unit = {},
@@ -277,7 +280,8 @@ fun CaregiverHomeScreen(
                         isExpanded = isExpanded,
                         onToggleExpand = { viewModel.togglePatientExpanded(patient.patient_id) },
                         onViewLogs = { onNavigateToPatientLogs(patient.patient_id) },
-                        onViewAlerts = { onNavigateToAlerts(patient.patient_id) }
+                        onViewAlerts = { onNavigateToAlerts(patient.patient_id) },
+                        onViewCareNotes = { onNavigateToCareNotes(patient.patient_id) }
                     )
                 }
 
@@ -463,6 +467,7 @@ private fun PatientCard(
     onToggleExpand: () -> Unit,
     onViewLogs: () -> Unit,
     onViewAlerts: () -> Unit,
+    onViewCareNotes: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     // Color-coded urgency
@@ -666,6 +671,29 @@ private fun PatientCard(
                                 }
                             }
                         }
+                    }
+
+                    // PRD §6.9 — Care Notes entry. Placed on its own row so
+                    // the existing Logs/Alerts row stays compact; a later
+                    // increment can promote it once we have an unread-count
+                    // badge to surface here.
+                    OutlinedButton(
+                        onClick = onViewCareNotes,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("caregiver_care_notes_${patient.patient_id}")
+                            .semantics {
+                                contentDescription = "View care notes for ${patient.name}"
+                            }
+                    ) {
+                        Icon(
+                            Icons.Default.Description,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Notes")
                     }
                 }
             }

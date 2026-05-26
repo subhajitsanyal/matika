@@ -71,6 +71,17 @@ export interface Recommendation {
   requiresGentleIntroduction: boolean;
 }
 
+// PRD §6.9 / Spec §6.10 — members of the patient's active care team that the
+// LLM can address by name when the patient says "tell my caregiver / Priya /
+// Dad to ...". v2.0 lists active caregivers only (recipient_role='caregiver'
+// is the only target the handler can resolve to). Both rendered into the
+// per-patient prompt block AND consumed by handler.processCareNoteActions().
+export interface CareTeamMember {
+  userId: string; // internal users.id UUID
+  name: string;
+  relationship: 'caregiver';
+}
+
 export interface PatientContext {
   patient: PatientProfile;
   // Internal users.id resolved from the cognito sub. Used by the handler when
@@ -81,6 +92,7 @@ export interface PatientContext {
   topics: PatientTopic[];
   recentSessions: SessionSummary[]; // most recent first; up to 3 entries
   pendingRecommendations: Recommendation[];
+  careTeam: CareTeamMember[]; // active caregivers linked via persona_links
   // F23 — true when this context is the synthetic stub used during the
   // pre-pivot profile-extraction phase of a caregiver_onboarding
   // session. The patient row doesn't exist yet (and `patient.id` /

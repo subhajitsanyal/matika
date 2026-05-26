@@ -20,6 +20,7 @@ import {
   PgSessionPersister,
   PgModelCallRecorder,
   PgPivotedPatientLookup,
+  PgCareNotesRecorder,
 } from './db';
 import { LambdaClient } from '@aws-sdk/client-lambda';
 import { LambdaPatientFromVoiceCreator } from './patient_from_voice';
@@ -121,6 +122,7 @@ async function buildDeps(): Promise<HandlerDeps> {
       : undefined,
     patientFromVoiceCreator,
     pivotedPatientLookup: new PgPivotedPatientLookup(pool),
+    careNotesRecorder: new PgCareNotesRecorder(pool),
     config: {
       haikuModelId,
       sonnetModelId,

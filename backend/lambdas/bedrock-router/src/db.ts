@@ -31,6 +31,11 @@
 
 import type { ExtractedValue } from './parser';
 import type {
+  CareNotesRecorder,
+  CareNotesRecordInput,
+  RecentAmbiguousNote,
+} from './care_notes_recorder';
+import type {
   PatientContext,
   PatientContextLoader,
   TurnContext,
@@ -45,6 +50,7 @@ import type {
   SessionSummary,
   Recommendation,
   CapturedValueSummary,
+  CareTeamMember,
 } from './context/types';
 import type { ModelCallRecord } from './telemetry';
 
@@ -105,6 +111,11 @@ interface RecommendationRow {
   requires_gentle_introduction: boolean;
 }
 
+interface CareTeamMemberRow {
+  user_id: string;
+  name: string;
+}
+
 export class PgPatientContextLoader implements PatientContextLoader {
   constructor(private client: PgClient) {}
 
@@ -134,8 +145,8 @@ export class PgPatientContextLoader implements PatientContextLoader {
     const p = patientResult.rows[0];
     const internalPatientId = p.id;
 
-    // Phase 2: four parallel queries against the internal patient ID.
-    const [configRows, topicRows, sessionRows, recRows] = await Promise.all([
+    // Phase 2: five parallel queries against the internal patient ID.
+    const [configRows, topicRows, sessionRows, recRows, careTeamRows] = await Promise.all([
       this.client.query<ParameterConfigRow>(
         `SELECT parameter_name,
                 COALESCE(loinc_codes[1], '') AS loinc_code,
@@ -189,6 +200,20 @@ export class PgPatientContextLoader implements PatientContextLoader {
          ORDER BY created_at`,
         [internalPatientId],
       ),
+      // PRD §6.9 / Spec §6.10 — active caregivers for record_note resolution.
+      // Filtering on relationship='caregiver' (not 'relative') keeps the
+      // recipient-resolution scope aligned with v2.0's caregiver-only target.
+      this.client.query<CareTeamMemberRow>(
+        `SELECT u.id AS user_id, u.name
+         FROM persona_links pl
+         JOIN users u ON u.id = pl.linked_user_id
+         WHERE pl.patient_id = $1
+           AND pl.is_active = TRUE
+           AND pl.relationship = 'caregiver'
+           AND u.is_active = TRUE
+         ORDER BY pl.created_at`,
+        [internalPatientId],
+      ),
     ]);
 
     return {
@@ -206,8 +231,13 @@ export class PgPatientContextLoader implements PatientContextLoader {
       topics: topicRows.rows.map(mapPatientTopic),
       recentSessions: sessionRows.rows.map(mapSessionSummary),
       pendingRecommendations: recRows.rows.map(mapRecommendation),
+      careTeam: careTeamRows.rows.map(mapCareTeamMember),
     };
   }
+}
+
+function mapCareTeamMember(row: CareTeamMemberRow): CareTeamMember {
+  return { userId: row.user_id, name: row.name, relationship: 'caregiver' };
 }
 
 // ---------- Session creator ----------
@@ -475,5 +505,100 @@ export class PgModelCallRecorder implements ModelCallRecorder {
         record.costUsd,
       ],
     );
+  }
+}
+
+// ---------- care_notes recorder ----------
+//
+// PRD §6.9 / Spec §6.10 — persistence for the patient-asides feature. The
+// handler does name-resolution against patientCtx.careTeam in process; this
+// class owns only the SQL.
+
+export class PgCareNotesRecorder implements CareNotesRecorder {
+  constructor(private client: PgClient) {}
+
+  async insert(input: CareNotesRecordInput): Promise<{ id: string }> {
+    const result = await this.client.query<{ id: string }>(
+      `INSERT INTO care_notes (
+         patient_id, session_id, turn_index, source, recipient_role,
+         recipient_user_id, candidate_user_ids, mentioned_name,
+         disambiguation_status, note_text, note_language
+       ) VALUES ($1, $2, $3, 'patient_request', 'caregiver', $4, $5, $6, $7, $8, $9)
+       RETURNING id`,
+      [
+        input.patientId,
+        input.sessionId,
+        input.turnIndex,
+        input.recipientUserId,
+        input.candidateUserIds.length > 0 ? input.candidateUserIds : null,
+        input.mentionedName,
+        input.disambiguationStatus,
+        input.noteText,
+        input.noteLanguage,
+      ],
+    );
+    if (result.rows.length === 0) {
+      throw new Error('care_notes INSERT returned no rows');
+    }
+    return { id: result.rows[0].id };
+  }
+
+  async findRecentAmbiguous(
+    sessionId: string,
+    maxAgeMinutes = 5,
+  ): Promise<RecentAmbiguousNote | null> {
+    const result = await this.client.query<{
+      id: string;
+      mentioned_name: string | null;
+      candidate_user_ids: string[] | null;
+    }>(
+      `SELECT id, mentioned_name, candidate_user_ids
+       FROM care_notes
+       WHERE session_id = $1
+         AND disambiguation_status = 'ambiguous'
+         AND created_at >= NOW() - ($2 || ' minutes')::interval
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [sessionId, String(maxAgeMinutes)],
+    );
+    if (result.rows.length === 0) return null;
+    const r = result.rows[0];
+    return {
+      id: r.id,
+      mentionedName: r.mentioned_name,
+      candidateUserIds: r.candidate_user_ids ?? [],
+    };
+  }
+
+  async updateToResolved(
+    id: string,
+    recipientUserId: string,
+    mentionedName: string | null,
+  ): Promise<void> {
+    await this.client.query(
+      `UPDATE care_notes
+         SET recipient_user_id = $1,
+             mentioned_name = $2,
+             disambiguation_status = 'resolved',
+             candidate_user_ids = NULL,
+             updated_at = NOW()
+       WHERE id = $3`,
+      [recipientUserId, mentionedName, id],
+    );
+  }
+
+  async findDuplicateInTurn(
+    sessionId: string,
+    turnIndex: number,
+    noteText: string,
+  ): Promise<{ id: string } | null> {
+    const result = await this.client.query<{ id: string }>(
+      `SELECT id FROM care_notes
+       WHERE session_id = $1 AND turn_index = $2 AND note_text = $3
+       LIMIT 1`,
+      [sessionId, turnIndex, noteText],
+    );
+    if (result.rows.length === 0) return null;
+    return { id: result.rows[0].id };
   }
 }

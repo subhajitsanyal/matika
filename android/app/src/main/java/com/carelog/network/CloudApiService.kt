@@ -132,6 +132,42 @@ interface CloudApiService {
     suspend fun endSession(
         @Path("sessionId") sessionId: String
     ): Response<Unit>
+
+    // ── Care Notes (PRD §6.9 / Spec §4.6) ───────────────────────
+    // Patient-originated asides captured during conversational sessions
+    // (see backend/lambdas/care-notes). The caregiver UI surfaces them
+    // on CareNotesScreen with two tabs (unacked / resolved) + ack.
+
+    /**
+     * List care notes for a patient. Defaults to `unacknowledged`;
+     * pass `status="acknowledged"` for the Resolved tab.
+     */
+    @GET("patients/{patientId}/care-notes")
+    suspend fun getCareNotes(
+        @Path("patientId") patientId: String,
+        @Query("status") status: String = "unacknowledged",
+        @Query("limit") limit: Int = 50,
+        @Query("cursor") cursor: String? = null
+    ): CareNotesListResponse
+
+    /**
+     * Acknowledge a care note. Idempotent — a re-ack returns the
+     * existing ack timestamp + user, without re-stamping.
+     */
+    @POST("patients/{patientId}/care-notes/{noteId}/acknowledge")
+    suspend fun acknowledgeCareNote(
+        @Path("patientId") patientId: String,
+        @Path("noteId") noteId: String
+    ): AcknowledgeCareNoteResponse
+
+    /**
+     * Per-caregiver unread count, fanned out across every patient
+     * linked to the caregiver. Drives the dashboard badge.
+     */
+    @GET("caregivers/{caregiverUserId}/care-notes/unread-count")
+    suspend fun getCareNotesUnreadCount(
+        @Path("caregiverUserId") caregiverUserId: String
+    ): CareNotesUnreadCountResponse
 }
 
 // ── Response Models ──────────────────────────────────────────
@@ -330,4 +366,53 @@ data class SendInviteRequest(
     val recipient_email: String?,
     val recipient_phone: String?,
     val temporary_password: String?
+)
+
+// ── Care Notes Models (PRD §6.9 / Spec §4.6) ────────────────
+
+/**
+ * A single care note row as returned by the care-notes lambda's list
+ * endpoint. Field names mirror the JSON exactly (camelCase) — moshi
+ * will deserialize without a custom adapter.
+ */
+data class CareNoteItem(
+    val id: String,
+    val patientId: String,
+    val patientShortId: String?,
+    val sessionId: String?,
+    val turnIndex: Int?,
+    val source: String,                // 'patient_request' | 'matika_observation' (v2.1) | 'doctor_note' (Phase 2)
+    val recipientRole: String,         // 'caregiver' (v2.0) | 'doctor' (Phase 2)
+    val recipientUserId: String?,
+    val recipientDisplayName: String?,
+    val candidateUserIds: List<String>?,
+    val mentionedName: String?,
+    val disambiguationStatus: String,  // 'resolved' | 'resolved_default' | 'ambiguous' | 'no_match'
+    val noteText: String,
+    val noteLanguage: String,
+    val acknowledgedAt: String?,
+    val acknowledgedBy: String?,
+    val createdAt: String
+)
+
+data class CareNotesListResponse(
+    val items: List<CareNoteItem>,
+    val nextCursor: String?,
+    val unacknowledgedCount: Int
+)
+
+data class AcknowledgeCareNoteResponse(
+    val id: String,
+    val acknowledgedAt: String,
+    val acknowledgedBy: String
+)
+
+data class CareNotesUnreadCountResponse(
+    val count: Int,
+    val perPatient: List<CareNotesPerPatientCount>
+)
+
+data class CareNotesPerPatientCount(
+    val patientShortId: String,
+    val count: Int
 )

@@ -187,6 +187,11 @@ output "alert_crud_invoke_arn" {
   value = aws_lambda_function.alert_crud.invoke_arn
 }
 
+# PRD §6.9 / Spec §4.6 — caregiver-facing Care Notes endpoints.
+output "care_notes_invoke_arn" {
+  value = aws_lambda_function.care_notes.invoke_arn
+}
+
 output "threshold_crud_invoke_arn" {
   value = aws_lambda_function.threshold_crud.invoke_arn
 }

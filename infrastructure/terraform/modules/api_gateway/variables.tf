@@ -141,6 +141,16 @@ variable "alert_crud_invoke_arn" {
   default     = ""
 }
 
+# PRD §6.9 / Spec §4.6 — wires the three Care Notes endpoints
+# (GET /patients/{patientId}/care-notes,
+#  POST /patients/{patientId}/care-notes/{noteId}/acknowledge,
+#  GET /caregivers/{caregiverUserId}/care-notes/unread-count).
+variable "care_notes_invoke_arn" {
+  description = "Invoke ARN for matika-<env>-care-notes (list/acknowledge/unread-count)"
+  type        = string
+  default     = ""
+}
+
 # ============================================================
 # V2 — Bedrock-backed Lambdas
 # ============================================================

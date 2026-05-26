@@ -41,6 +41,7 @@ import type {
   SessionState,
   SessionType,
   Turn,
+  CareTeamMember,
 } from './context/types';
 
 import { detectEscalation, EscalationSignal, SessionContext as SignalSessionContext, RoutingDecision } from '../escalation/signal_detectors';
@@ -63,6 +64,8 @@ import type {
   CreatePatientFromVoiceInput,
 } from './patient_from_voice';
 import { CreatePatientFromVoiceError } from './patient_from_voice';
+import type { CareNotesRecorder, CareNotesRecordInput, CareNoteDisambiguationStatus } from './care_notes_recorder';
+import { resolveRecipient, isDisambiguationOf, buildAmbiguousDirective } from './care_notes_recorder';
 
 // ---------- Public types ----------
 
@@ -158,6 +161,23 @@ export interface TurnResponseBody {
     s3Keys: string[];
     errors: string[];
   };
+  // Spec §6.10 — present only when this turn emitted record_note
+  // actions. Tracks per-row resolution outcome so bench evidence can
+  // match against the care_notes RDS state without round-tripping
+  // through the API.
+  careNotes?: {
+    recorded: number;
+    updated: number;       // sentinel-update resolutions of prior ambiguous rows
+    skippedDuplicate: number;
+    failed: number;
+    rows: Array<{
+      id: string | null;
+      disambiguationStatus: CareNoteDisambiguationStatus;
+      recipientUserId: string | null;
+      mentionedName: string | null;
+    }>;
+    errors: string[];
+  };
 }
 
 export interface TurnResponse {
@@ -228,6 +248,12 @@ export interface HandlerDeps {
   // sessions stay in placeholder mode forever (acceptable for tests,
   // not for prod).
   pivotedPatientLookup?: PivotedPatientLookup;
+  // PRD §6.9 / Spec §6.10 — care notes capture. When wired, every
+  // record_note action emitted on a patient_logging turn is resolved
+  // against patientCtx.careTeam and persisted to the care_notes table.
+  // Optional — when missing, record_note actions are swallowed silently
+  // (acceptable for tests; in prod the lambda always wires it).
+  careNotesRecorder?: CareNotesRecorder;
   config: HandlerConfig;
   // Pluggable clock for tests; defaults to Date.now
   now?: () => number;
@@ -576,12 +602,39 @@ export async function handleTurn(event: TurnRequest, deps: HandlerDeps): Promise
   const mergedCaptured = mergeCaptured(turnCtx.sessionState.capturedThisSession, parsed.extractedValues);
   const newPending = parsed.extractedValues.filter((v) => v.status === 'pending_confirmation');
   const newStillNeeded = computeStillNeeded(turnCtx.sessionState.stillNeeded, mergedCaptured);
-  const newHistory = appendToHistory(
+  let newHistory = appendToHistory(
     turnCtx.recentTurns,
     event.transcript,
     parsed.responseText,
     new Date(now()),
   );
+
+  // 8a. Care notes capture (PRD §6.9 / Spec §6.10). Resolves any
+  //     record_note actions against patientCtx.careTeam, INSERTs/UPDATEs
+  //     into care_notes, and (when a note lands ambiguous) appends a
+  //     synthetic 'system' message to newHistory so the LLM's next turn
+  //     asks the disambiguation question. Best-effort: failures here
+  //     don't fail the turn — caregivers can re-ask, transcript is
+  //     preserved.
+  const careNotesResult = await maybeProcessCareNoteActions({
+    sessionType: turnCtx.sessionState.sessionType,
+    actions: parsed.actions,
+    careTeam: patientCtx.careTeam,
+    patientInternalId: patientCtx.patient.id,
+    sessionId: event.sessionId,
+    turnIndex: event.turnSequence,
+    sessionLanguage: turnCtx.sessionState.language,
+    placeholder: patientCtx.placeholder ?? false,
+    recorder: deps.careNotesRecorder,
+  });
+  if (careNotesResult && careNotesResult.ambiguousDirectives.length > 0) {
+    const directiveTurns: Turn[] = careNotesResult.ambiguousDirectives.map((text) => ({
+      role: 'system',
+      text,
+      timestamp: new Date(now()),
+    }));
+    newHistory = [...newHistory, ...directiveTurns];
+  }
 
   // 8b. Sliding-window summarization (spec §6.7). If history overflows the
   //     window AND a summarizer is wired up, compress the overflow into the
@@ -771,6 +824,7 @@ export async function handleTurn(event: TurnRequest, deps: HandlerDeps): Promise
     ...(observationResult.written > 0 || observationResult.failed > 0
       ? { observations: observationResult }
       : {}),
+    ...(careNotesResult ? { careNotes: careNotesResult.summary } : {}),
   };
 
   // Record total turn latency in CloudWatch by stamping it in the response
@@ -1048,6 +1102,7 @@ function buildPlaceholderPatientContext(
     topics: [],
     recentSessions: [],
     pendingRecommendations: [],
+    careTeam: [], // placeholder sessions have no patient row yet → no persona_links
     placeholder: true,
   };
 }
@@ -1689,6 +1744,185 @@ async function maybeWriteFhirObservations(args: {
   return result;
 }
 
+// PRD §6.9 / Spec §6.10 — care notes capture.
+//
+// For each record_note action emitted on a patient_logging turn:
+//   1. Resolve the spoken referent against patientCtx.careTeam.
+//   2. If resolution is `resolved` AND there's a recent same-session
+//      ambiguous note whose candidates include this user, UPDATE that
+//      row (sentinel-update pattern §6.10 #4c) — preserves note count.
+//   3. Else check (sessionId, turnIndex, noteText) for an existing
+//      duplicate (§6.10 #6 idempotency) — skip if found.
+//   4. Else INSERT a fresh row.
+//
+// Caps total processed actions at 2 per turn (§6.4). All errors are
+// caught and surfaced via the returned summary; the parent turn always
+// returns 200 — the spoken acknowledgment already went out, the user
+// shouldn't see a failed save.
+//
+// Skips entirely when:
+//   - sessionType !== 'patient_logging' (caregiver / onboarding sessions
+//     have a different purpose; we don't capture caregiver-asides as
+//     patient-originated notes)
+//   - patient is still in the placeholder pre-pivot state (no patient
+//     row exists yet to FK against)
+//   - no record_note actions emitted
+//   - no recorder is wired in deps
+async function maybeProcessCareNoteActions(args: {
+  sessionType: SessionType;
+  actions: StructuredOutput['actions'];
+  careTeam: CareTeamMember[];
+  patientInternalId: string;
+  sessionId: string;
+  turnIndex: number;
+  sessionLanguage: SessionState['language'];
+  placeholder: boolean;
+  recorder: CareNotesRecorder | undefined;
+}): Promise<{
+  summary: NonNullable<TurnResponseBody['careNotes']>;
+  ambiguousDirectives: string[]; // synthetic system messages to append to history
+} | null> {
+  if (args.sessionType !== 'patient_logging') return null;
+  if (args.placeholder) return null;
+  const recordNoteActions = args.actions.filter((a) => a.type === 'record_note');
+  if (recordNoteActions.length === 0) return null;
+  if (!args.recorder) {
+    console.warn('care_notes_skipped_recorder_not_wired', {
+      sessionId: args.sessionId,
+      requested: recordNoteActions.length,
+    });
+    return null;
+  }
+
+  // Cap at 2 per turn (Spec §6.4 + system_v2.md rule 14).
+  const capped = recordNoteActions.slice(0, 2);
+  const droppedOverCap = recordNoteActions.length - capped.length;
+  if (droppedOverCap > 0) {
+    console.warn('care_notes_over_cap_dropped', {
+      sessionId: args.sessionId,
+      turnIndex: args.turnIndex,
+      requested: recordNoteActions.length,
+      kept: capped.length,
+    });
+  }
+
+  const summary: NonNullable<TurnResponseBody['careNotes']> = {
+    recorded: 0,
+    updated: 0,
+    skippedDuplicate: 0,
+    failed: 0,
+    rows: [],
+    errors: [],
+  };
+  const ambiguousDirectives: string[] = [];
+
+  for (const action of capped) {
+    try {
+      // Validate: noteText is mandatory and non-empty.
+      const noteText = (action.noteText ?? '').trim();
+      if (noteText === '') {
+        summary.failed++;
+        summary.errors.push('record_note action missing noteText');
+        continue;
+      }
+      const recipientRole = action.recipientRole ?? 'caregiver';
+      // v2.0 only writes caregiver-recipient notes; doctor-recipient is
+      // Phase 2 and the lambda layer rejects it now to avoid silently
+      // burying notes nothing surfaces.
+      if (recipientRole !== 'caregiver') {
+        summary.failed++;
+        summary.errors.push(`recipientRole ${recipientRole} not supported in v2.0`);
+        continue;
+      }
+      const noteLanguage = action.noteLanguage ?? args.sessionLanguage;
+      const mentionedName = action.mentionedName ?? null;
+
+      const resolution = resolveRecipient(mentionedName, args.careTeam);
+
+      // Sentinel-update pattern (§6.10 #4c): if we just resolved a single
+      // candidate AND there's a recent ambiguous note whose candidates
+      // include this user, UPDATE the prior row rather than inserting a
+      // duplicate.
+      if (resolution.status === 'resolved' && resolution.recipientUserId) {
+        const recentAmbiguous = await args.recorder.findRecentAmbiguous(args.sessionId);
+        if (recentAmbiguous && isDisambiguationOf(resolution, recentAmbiguous)) {
+          await args.recorder.updateToResolved(
+            recentAmbiguous.id,
+            resolution.recipientUserId,
+            resolution.mentionedName,
+          );
+          summary.updated++;
+          summary.rows.push({
+            id: recentAmbiguous.id,
+            disambiguationStatus: 'resolved',
+            recipientUserId: resolution.recipientUserId,
+            mentionedName: resolution.mentionedName,
+          });
+          continue;
+        }
+      }
+
+      // Idempotency (§6.10 #6): skip if (sessionId, turnIndex, noteText)
+      // already exists — protects against Lambda-retry-after-success.
+      const duplicate = await args.recorder.findDuplicateInTurn(
+        args.sessionId,
+        args.turnIndex,
+        noteText,
+      );
+      if (duplicate) {
+        summary.skippedDuplicate++;
+        summary.rows.push({
+          id: duplicate.id,
+          disambiguationStatus: resolution.status,
+          recipientUserId: resolution.recipientUserId,
+          mentionedName: resolution.mentionedName,
+        });
+        continue;
+      }
+
+      const input: CareNotesRecordInput = {
+        patientId: args.patientInternalId,
+        sessionId: args.sessionId,
+        turnIndex: args.turnIndex,
+        noteText,
+        mentionedName: resolution.mentionedName,
+        recipientUserId: resolution.recipientUserId,
+        candidateUserIds: resolution.candidateUserIds,
+        disambiguationStatus: resolution.status,
+        noteLanguage,
+      };
+      const { id } = await args.recorder.insert(input);
+      summary.recorded++;
+      summary.rows.push({
+        id,
+        disambiguationStatus: resolution.status,
+        recipientUserId: resolution.recipientUserId,
+        mentionedName: resolution.mentionedName,
+      });
+
+      // §6.10 #4b — when the note lands ambiguous, queue a synthetic
+      // system directive so the LLM asks the disambig question next turn.
+      if (resolution.status === 'ambiguous') {
+        const candidateNames = args.careTeam
+          .filter((m) => resolution.candidateUserIds.includes(m.userId))
+          .map((m) => m.name);
+        ambiguousDirectives.push(buildAmbiguousDirective(mentionedName, candidateNames));
+      }
+    } catch (e) {
+      summary.failed++;
+      const message = e instanceof Error ? e.message : String(e);
+      summary.errors.push(message);
+      console.error('care_note_processing_failed', {
+        sessionId: args.sessionId,
+        turnIndex: args.turnIndex,
+        message,
+      });
+    }
+  }
+
+  return { summary, ambiguousDirectives };
+}
+
 // ---------- Streaming handler ----------
 //
 // SSE-based variant. Architecture is in place; events emit AFTER the full
@@ -1885,12 +2119,33 @@ export async function handleTurnStream(
     const mergedCaptured = mergeCaptured(turnCtx.sessionState.capturedThisSession, parsed.extractedValues);
     const newPending = parsed.extractedValues.filter((v) => v.status === 'pending_confirmation');
     const newStillNeeded = computeStillNeeded(turnCtx.sessionState.stillNeeded, mergedCaptured);
-    const newHistory = appendToHistory(
+    let newHistory = appendToHistory(
       turnCtx.recentTurns,
       event.transcript,
       parsed.responseText,
       new Date(now()),
     );
+
+    // Care notes capture (PRD §6.9 / Spec §6.10) — same flow as handleTurn.
+    const careNotesResult = await maybeProcessCareNoteActions({
+      sessionType: turnCtx.sessionState.sessionType,
+      actions: parsed.actions,
+      careTeam: patientCtx.careTeam,
+      patientInternalId: patientCtx.patient.id,
+      sessionId: event.sessionId,
+      turnIndex: event.turnSequence,
+      sessionLanguage: turnCtx.sessionState.language,
+      placeholder: patientCtx.placeholder ?? false,
+      recorder: deps.careNotesRecorder,
+    });
+    if (careNotesResult && careNotesResult.ambiguousDirectives.length > 0) {
+      const directiveTurns: Turn[] = careNotesResult.ambiguousDirectives.map((text) => ({
+        role: 'system',
+        text,
+        timestamp: new Date(now()),
+      }));
+      newHistory = [...newHistory, ...directiveTurns];
+    }
 
     // Sliding-window summarization (spec §6.7) — same flow as handleTurn.
     const { trimmedHistory, newConversationSummary, summarizerTelemetry } =

@@ -26,7 +26,10 @@ export type ActionType =
   | 'escalate_emergency'
   | 'pause_session'
   | 'complete_session'
-  | 'confirm_value';
+  | 'confirm_value'
+  | 'record_note';
+
+export type CareNoteRecipientRole = 'caregiver' | 'doctor';
 
 export type EscalationReason =
   | 'implausible_value'
@@ -49,6 +52,13 @@ export interface ExtractedValue {
 export interface Action {
   type: ActionType;
   reason?: string;
+  // Spec §6.10 — present iff type === 'record_note'. The LLM emits the raw
+  // referent (mentionedName) and a third-person noteText; recipient resolution
+  // is the handler's responsibility post-parse.
+  noteText?: string;
+  mentionedName?: string | null;
+  recipientRole?: CareNoteRecipientRole;
+  noteLanguage?: 'en-IN' | 'hi-IN' | 'bn-IN';
 }
 
 export interface TtsHints {

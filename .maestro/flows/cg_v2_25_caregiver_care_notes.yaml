@@ -1,0 +1,77 @@
+# CG-V2-25 — caregiver opens CareNotesScreen for Jane and acknowledges a note.
+#
+# Phase 4 done-check (docs/care-notes-execution-plan.md §4). Mirrors
+# cg_v2_23_caregiver_alerts_list structurally but tests the new
+# PRD §6.9 / Spec §4.6 surface — patient-asides inbox with ack flow.
+#
+# Pre-requisite live state on staging:
+#   - Jane PT has at least one unacknowledged care_notes row.
+#     The 2026-05-25 synthetic invoke landed note
+#     a28ef4b8-cfa0-4c51-8095-293f297dfee4 with note_text
+#     "Patient would like cholesterol added to their daily tracking
+#     protocol." that this flow expects to find.
+#   - If that row has been acked manually, either run the synthetic
+#     invoke again from /tmp/staging-care-note-turn.json OR adjust
+#     the substring assertion below to match whatever note text
+#     currently lands.
+#
+# Env vars:
+#   MATIKA_CAREGIVER_EMAIL    — sanyalsubhajit2010+cg@gmail.com
+#   MATIKA_CAREGIVER_PASSWORD — buri123@S
+#
+# Run:
+#   scripts/maestro-run.sh --no-install cg_v2_25_caregiver_care_notes
+
+appId: com.carelog
+---
+- launchApp:
+    clearState: true
+
+# Caregiver login
+- extendedWaitUntil: { visible: { id: login_email }, timeout: 15000 }
+- tapOn: { id: login_email }
+- inputText: ${MATIKA_CAREGIVER_EMAIL}
+- tapOn: { id: login_password }
+- inputText: ${MATIKA_CAREGIVER_PASSWORD}
+- hideKeyboard
+- tapOn: { id: login_button }
+
+# Caregiver home — History icon visible signals the surface is ready
+# (same anchor as cg_v2_23).
+- extendedWaitUntil: { visible: { id: caregiver_home_history }, timeout: 60000 }
+
+# Tap Jane's patient card to expand it.
+- tapOn: "Jane PT"
+
+# Expanded state reveals OutlinedButton labelled "Notes" on its own row
+# below the existing Logs/Alerts row (CaregiverHomeScreen.kt — added
+# Phase 4). The text label "Notes" is unique on the dashboard.
+- extendedWaitUntil: { visible: "Notes", timeout: 10000 }
+- tapOn: "Notes"
+
+# CareNotesScreen mounts. The root Scaffold carries testTag
+# `care_notes_screen` (ui/relative/CareNotesScreen.kt).
+- extendedWaitUntil: { visible: { id: care_notes_screen }, timeout: 15000 }
+
+# Default tab is Unacknowledged. The cholesterol care_note row should be
+# visible — assert on the note_text via regex so we don't fight line-wrap
+# (maestro_lessons: text matches are full-string, never substring).
+- extendedWaitUntil: { visible: ".*cholesterol.*", timeout: 10000 }
+
+# Tab label includes the (N) badge while unacked > 0.
+- assertVisible: "Unacknowledged \\(\\d+\\)"
+
+# Tap Acknowledge. Multiple rows could exist, but on staging this
+# screen has exactly one unacked row (the cholesterol note). Tapping
+# the button text is unambiguous in that state.
+- tapOn: "Acknowledge"
+
+# After ack: the row moves to Resolved tab. The Unacked tab should now
+# either show the (N) badge dropped to nothing OR a (0) — assert on
+# the empty-state copy as the most stable signal.
+- extendedWaitUntil: { visible: "No new notes", timeout: 15000 }
+
+# Switch to the Resolved tab. The just-acked row should appear here.
+- tapOn:
+    id: care_notes_tab_resolved
+- extendedWaitUntil: { visible: ".*cholesterol.*", timeout: 10000 }
